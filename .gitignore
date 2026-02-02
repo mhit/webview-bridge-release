@@ -1,0 +1,23 @@
+# .NET
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# Build
+publish/
+out/
+
+# Logs
+*.log
+
+# Local settings
+appsettings.Development.json
+token.txt
