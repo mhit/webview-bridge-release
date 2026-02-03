@@ -1,4 +1,5 @@
 pub mod core;
+pub mod webview;
 use std::net::SocketAddr;
 use axum::{routing::get, Router};
 
