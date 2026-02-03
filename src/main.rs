@@ -1,3 +1,4 @@
+pub mod core;
 use std::net::SocketAddr;
 use axum::{routing::get, Router};
 
