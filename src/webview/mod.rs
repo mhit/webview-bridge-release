@@ -1,15 +1,22 @@
-use std::ptr;
 use windows::{
-    core::*,
     Win32::Foundation::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::System::LibraryLoader::GetModuleHandleW,
+    core::{Result, Error, HSTRING, PCWSTR, w},
 };
-use webview2_com::*;
-use crate::core::SessionStatus;
 
 pub struct WebViewWindow {
     hwnd: HWND,
+}
+
+// Custom window procedure that delegates to DefWindowProcW
+unsafe extern "system" fn default_window_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 impl WebViewWindow {
@@ -17,12 +24,12 @@ impl WebViewWindow {
     pub fn create(title: &str, visible: bool) -> Result<Self> {
         unsafe {
             let instance = GetModuleHandleW(None)?;
-            let window_class = w!("WebViewBridgeWindow");
+            let window_class_name: PCWSTR = w!("WebViewBridgeWindow").into();
 
             let wc = WNDCLASSW {
                 hInstance: instance.into(),
-                lpszClassName: window_class,
-                lpfnWndProc: Some(DefWindowProcW),
+                lpszClassName: window_class_name,
+                lpfnWndProc: Some(default_window_proc),
                 ..Default::default()
             };
 
@@ -34,10 +41,13 @@ impl WebViewWindow {
                 WS_OVERLAPPED // 擬似ヘッドレス用（非表示または画面外）
             };
 
+            let title_hstring: HSTRING = HSTRING::from(title);
+            let title_pcwstr: PCWSTR = PCWSTR::from(&title_hstring);
+
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
-                window_class,
-                HSTRING::from(title),
+                window_class_name,
+                title_pcwstr,
                 style,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -46,7 +56,7 @@ impl WebViewWindow {
                 None,
                 None,
                 instance,
-                None,
+                std::ptr::null(),
             );
 
             if hwnd.0 == 0 {

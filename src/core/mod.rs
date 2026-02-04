@@ -1,6 +1,70 @@
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
+
+pub mod profile;
+
+// ============================================================================
+// Command Types for Main Thread Communication
+// ============================================================================
+
+/// Main thread command enum
+#[derive(Debug)]
+pub enum AppCommand {
+    CreateSession {
+        options: SessionOptions,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    Navigate {
+        id: String,
+        url: String,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    GetStatus {
+        id: String,
+        resp_tx: oneshot::Sender<Result<SessionStatusInfo, String>>,
+    },
+    ExecuteScript {
+        id: String,
+        script: String,
+        request_id: String,
+        resp_tx: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    CloseSession {
+        id: String,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    Act {
+        id: String,
+        action: ActionItem,
+        resp_tx: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+}
+
+/// Action item for Act API (OpenClaw compatible)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type")]
+pub enum ActionItem {
+    #[serde(rename = "click")]
+    Click { reference: String },
+    #[serde(rename = "type")]
+    Type { reference: String, text: String },
+    #[serde(rename = "hover")]
+    Hover { reference: String },
+    #[serde(rename = "focus")]
+    Focus { reference: String },
+    #[serde(rename = "blur")]
+    Blur { reference: String },
+}
+
+/// Session status info for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStatusInfo {
+    pub id: String,
+    pub status: String,
+    pub url: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionOptions {

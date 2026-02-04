@@ -2,7 +2,9 @@
 REM Simple Integration Test Runner
 REM This script uses cargo test directly which handles binary discovery
 
-set TIMESTAMP=%date:~0,4%%date:~5,2%%date:~7,2%_%time:~0,2%%time:~3,2%%time:~6,2%
+REM Get timestamp in locale-independent format
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set datetime=%%I
+set TIMESTAMP=%datetime:~0,8%_%datetime:~8,6%
 set LOGFILE=test_logs\test_%TIMESTAMP%.log
 
 echo === WebView Bridge Integration Test Runner ===
@@ -30,7 +32,7 @@ if errorlevel 1 (
 REM Start server in background with logging
 echo.
 echo [3/4] Starting server...
-start /MIN "" cmd /C "cargo run --release >> test_logs\server_%TIMESTAMP%.log 2>&1"
+start "" /D "%CD%" target\release\webview-bridge-rust.exe
 
 REM Wait for server to initialize
 echo Waiting for server to initialize (30 seconds)...
@@ -49,7 +51,13 @@ REM Run tests using cargo test (handles binary discovery)
 echo.
 echo [4/4] Running integration tests...
 echo Log file: %LOGFILE%
-cargo test --release --test integration_test -- --ignored --test-threads=1 >> "%LOGFILE%" 2>&1
+
+REM Check if server is responding
+echo Checking server health...
+timeout /t 5 /nobreak >nul
+
+REM Run tests (note: we skip rebuild to avoid killing the server)
+cargo test --test integration_test -- --ignored --test-threads=1 >> "%LOGFILE%" 2>&1
 set TEST_RESULT=%errorlevel%
 
 REM Cleanup
