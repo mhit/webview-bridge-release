@@ -1,0 +1,7 @@
+{
+  "timestamp": "2026-02-04T15:56:59Z",
+  "changed_file": "src/webview/mod.rs",
+  "test_command": "cargo test",
+  "related_test": "",
+  "recommendation": "テストの実行を推奨します"
+}

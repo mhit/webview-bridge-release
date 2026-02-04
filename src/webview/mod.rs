@@ -5,6 +5,11 @@ use windows::{
     core::{Result, Error, HSTRING, PCWSTR, w},
 };
 
+pub mod webview_instance;
+pub mod window;
+
+pub use webview_instance::WebViewInstance;
+
 pub struct WebViewWindow {
     hwnd: HWND,
 }
