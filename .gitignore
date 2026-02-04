@@ -1,9 +1,13 @@
-# .NET
+# Rust
+target/
+Cargo.lock
+*.pdb
+
+# .NET (legacy - remove after full migration)
 bin/
 obj/
 *.dll
 *.exe
-*.pdb
 
 # IDE
 .vs/
@@ -17,7 +21,16 @@ out/
 
 # Logs
 *.log
+test_logs/
 
 # Local settings
 appsettings.Development.json
 token.txt
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Session/Cache
+.serena/
+.claude/local/
