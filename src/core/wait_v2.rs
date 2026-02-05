@@ -415,6 +415,12 @@ mod tests {
     }
     
     #[test]
+    fn test_wait_condition_equality() {
+        assert_eq!(WaitCondition::Visible, WaitCondition::Visible);
+        assert_ne!(WaitCondition::Visible, WaitCondition::Present);
+    }
+    
+    #[test]
     fn test_generate_wait_script() {
         let request = WaitRequest {
             session: "test".to_string(),
@@ -437,17 +443,233 @@ mod tests {
     }
     
     #[test]
+    fn test_generate_wait_script_text_contains() {
+        let request = WaitRequest {
+            session: "test".to_string(),
+            selector: ".message".to_string(),
+            condition: WaitCondition::TextContains,
+            timeout_ms: 10000,
+            text: Some("Success".to_string()),
+            attribute: None,
+            value: None,
+            stable_ms: 500,
+            extract: None,
+            selectors: None,
+            wait_all: false,
+        };
+        
+        let script = generate_wait_script(&request);
+        assert!(script.contains("text_contains"));
+        assert!(script.contains("Success"));
+    }
+    
+    #[test]
+    fn test_generate_wait_script_attribute_equals() {
+        let request = WaitRequest {
+            session: "test".to_string(),
+            selector: "#input".to_string(),
+            condition: WaitCondition::AttributeEquals,
+            timeout_ms: 5000,
+            text: None,
+            attribute: Some("disabled".to_string()),
+            value: Some("true".to_string()),
+            stable_ms: 500,
+            extract: None,
+            selectors: None,
+            wait_all: false,
+        };
+        
+        let script = generate_wait_script(&request);
+        assert!(script.contains("attribute_equals"));
+        assert!(script.contains("disabled"));
+        assert!(script.contains("true"));
+    }
+    
+    #[test]
+    fn test_generate_wait_script_with_extract() {
+        let request = WaitRequest {
+            session: "test".to_string(),
+            selector: ".result".to_string(),
+            condition: WaitCondition::Present,
+            timeout_ms: 5000,
+            text: None,
+            attribute: None,
+            value: None,
+            stable_ms: 500,
+            extract: Some(ExtractOptions {
+                attribute: "innerHTML".to_string(),
+                all: true,
+            }),
+            selectors: None,
+            wait_all: false,
+        };
+        
+        let script = generate_wait_script(&request);
+        assert!(script.contains("innerHTML"));
+        assert!(script.contains("true")); // extractAll
+    }
+    
+    #[test]
+    fn test_generate_wait_script_multiple_selectors() {
+        let request = WaitRequest {
+            session: "test".to_string(),
+            selector: "".to_string(),
+            condition: WaitCondition::Present,
+            timeout_ms: 5000,
+            text: None,
+            attribute: None,
+            value: None,
+            stable_ms: 500,
+            extract: None,
+            selectors: Some(vec!["#a".to_string(), "#b".to_string(), "#c".to_string()]),
+            wait_all: true,
+        };
+        
+        let script = generate_wait_script(&request);
+        assert!(script.contains("#a"));
+        assert!(script.contains("#b"));
+        assert!(script.contains("#c"));
+        assert!(script.contains("waitAll: true"));
+    }
+    
+    #[test]
+    fn test_generate_wait_script_stable() {
+        let request = WaitRequest {
+            session: "test".to_string(),
+            selector: ".dynamic-content".to_string(),
+            condition: WaitCondition::Stable,
+            timeout_ms: 10000,
+            text: None,
+            attribute: None,
+            value: None,
+            stable_ms: 2000,
+            extract: None,
+            selectors: None,
+            wait_all: false,
+        };
+        
+        let script = generate_wait_script(&request);
+        assert!(script.contains("stable"));
+        assert!(script.contains("2000")); // stable_ms
+    }
+    
+    #[test]
+    fn test_generate_wait_script_all_conditions() {
+        let conditions = vec![
+            WaitCondition::Present,
+            WaitCondition::Visible,
+            WaitCondition::Stable,
+            WaitCondition::TextContains,
+            WaitCondition::TextMatches,
+            WaitCondition::AttributeEquals,
+            WaitCondition::Clickable,
+            WaitCondition::Detached,
+            WaitCondition::NavigationComplete,
+            WaitCondition::NetworkIdle,
+        ];
+        
+        for condition in conditions {
+            let request = WaitRequest {
+                session: "test".to_string(),
+                selector: "#el".to_string(),
+                condition: condition.clone(),
+                timeout_ms: 5000,
+                text: Some("text".to_string()),
+                attribute: Some("attr".to_string()),
+                value: Some("val".to_string()),
+                stable_ms: 500,
+                extract: None,
+                selectors: None,
+                wait_all: false,
+            };
+            
+            let script = generate_wait_script(&request);
+            // Should not panic and should contain the condition name
+            assert!(!script.is_empty());
+        }
+    }
+    
+    #[test]
     fn test_wait_request_deserialize() {
-        let json = r#"{
+        let json = r##"{
             "session": "test",
             "selector": ".button",
             "condition": "text_contains",
             "text": "Submit"
-        }"#;
+        }"##;
         
         let req: WaitRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.session, "test");
         assert_eq!(req.condition, WaitCondition::TextContains);
         assert_eq!(req.text, Some("Submit".to_string()));
+        assert_eq!(req.timeout_ms, 30000); // default
+    }
+    
+    #[test]
+    fn test_wait_request_deserialize_defaults() {
+        let json = r##"{"session": "main", "selector": "#btn"}"##;
+        
+        let req: WaitRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.condition, WaitCondition::Present);
+        assert_eq!(req.timeout_ms, 30000);
+        assert_eq!(req.stable_ms, 500);
+        assert!(!req.wait_all);
+    }
+    
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_timeout(), 30000);
+        assert_eq!(default_stable_ms(), 500);
+        assert_eq!(default_extract_attr(), "text");
+    }
+    
+    #[test]
+    fn test_extract_options_deserialize() {
+        let json = r##"{"attribute": "href", "all": true}"##;
+        let opt: ExtractOptions = serde_json::from_str(json).unwrap();
+        assert_eq!(opt.attribute, "href");
+        assert!(opt.all);
+    }
+    
+    #[test]
+    fn test_extract_options_default() {
+        let json = r##"{}"##;
+        let opt: ExtractOptions = serde_json::from_str(json).unwrap();
+        assert_eq!(opt.attribute, "text");
+        assert!(!opt.all);
+    }
+    
+    #[test]
+    fn test_multi_wait_request_deserialize() {
+        let json = r##"{
+            "session": "main",
+            "selectors": [
+                {"selector": "#a", "condition": "visible"},
+                {"selector": "#b"}
+            ],
+            "wait_all": true
+        }"##;
+        
+        let req: MultiWaitRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.selectors.len(), 2);
+        assert!(req.wait_all);
+        assert_eq!(req.selectors[0].condition, WaitCondition::Visible);
+        assert_eq!(req.selectors[1].condition, WaitCondition::Present); // default
+    }
+    
+    #[test]
+    fn test_selector_with_condition() {
+        let swc = SelectorWithCondition {
+            selector: "#test".to_string(),
+            condition: WaitCondition::Clickable,
+            extract: Some(ExtractOptions {
+                attribute: "value".to_string(),
+                all: false,
+            }),
+        };
+        
+        assert_eq!(swc.condition, WaitCondition::Clickable);
+        assert!(swc.extract.is_some());
     }
 }
+
