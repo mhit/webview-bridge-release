@@ -305,7 +305,9 @@
 
 ## 🚀 Phase 7: セッション管理 v2 `cc:WIP`
 
-> 設計: docs/PROTOCOL_V2.md
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション3.1](docs/PROTOCOL_V2.md#31-セッション管理-v2)
+> 📅 工数: 13h (4+4+2+3)
+> 🛠️ API: `/v2/session/*`
 
 ### 7.1 名前付きセッション `cc:TODO`
 
@@ -340,6 +342,10 @@
 
 ## 📋 Phase 8: イベント駆動待機 `cc:TODO`
 
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション3.2](docs/PROTOCOL_V2.md#32-イベント駆動通知)
+> 📅 工数: 13h (3+4+6)
+> 🛠️ API: `/v2/wait`, WebSocket
+
 ### 8.1 MutationObserver注入 `cc:TODO`
 
 - [ ] DOM変化監視スクリプト作成
@@ -363,6 +369,11 @@
 ---
 
 ## 📋 Phase 9: スクリーンショット v2 `cc:TODO`
+
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション3.3, 8](docs/PROTOCOL_V2.md#33-スマートスクリーンショット)
+> 📅 工数: 15h (3+6+4+2)
+> 🛠️ API: `/v2/screenshot`
+> 📋 付録: デバイスプリセット (PROTOCOL_V2.md 付録)
 
 ### 9.1 要素指定キャプチャ `cc:TODO`
 
@@ -394,6 +405,10 @@
 
 ## 📋 Phase 10: 宣言的ゴールAPI `cc:TODO`
 
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション3.4](docs/PROTOCOL_V2.md#34-宣言的ゴールapi)
+> 📅 工数: 11h (4+3+4)
+> 🛠️ API: `/v2/goal`
+
 ### 10.1 ゴールパーサー `cc:TODO`
 
 - [ ] `POST /v2/goal` エンドポイント
@@ -416,7 +431,9 @@
 
 ## 📋 Phase 11: マクロスクリプト `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション5
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション5](docs/PROTOCOL_V2.md#5-マクロスクリプト設計)
+> 📅 工数: 16h (6+4+3+3)
+> 🛠️ API: `/v2/macro`, `/v2/macro/register`
 
 ### 11.1 JSマクロエンジン `cc:TODO`
 
@@ -450,7 +467,9 @@
 
 ## 📋 Phase 12: メディア収集 & 動画分析 `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション6
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション6](docs/PROTOCOL_V2.md#6-メディア収集設計)
+> 📅 工数: 14h (4+4+4+2)
+> 🛠️ API: `/v2/media/*`
 
 ### 12.1 画像一括収集 `cc:TODO`
 
@@ -500,7 +519,8 @@
 
 ## 📋 Phase 13: レガシープロトコル廃止 `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション10
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション10](docs/PROTOCOL_V2.md#10-レガシープロトコル廃止方針)
+> 📅 工数: 8h (2+4+2)
 
 ### 13.1 非推奨マーキング `cc:TODO`
 
@@ -525,7 +545,9 @@
 
 ## 🧠 Phase 14: AI統合 (Gemini) `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション11-14
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション11-14](docs/PROTOCOL_V2.md#11-ai-in-the-loop-設計)
+> 📅 工数: 23h (3+6+8+6)
+> 🛠️ API: `/v2/ai/*`, `/v2/config/ai`
 
 ### 14.1 AI設定基盤 `cc:TODO`
 
@@ -568,7 +590,9 @@
 
 ## 📥 Phase 15: ダウンロード & ストレージ管理 `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション6.7-6.9
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション6.7-6.9](docs/PROTOCOL_V2.md#67-ブラウザダウンロード機能)
+> 📅 工数: 18h (6+4+4+4)
+> 🛠️ API: `/v2/download/*`, `/v2/storage/*`, `/v2/media/files/*`
 
 ### 15.1 ブラウザダウンロード機能 `cc:TODO`
 
@@ -594,7 +618,7 @@
 
 ### 15.4 ファイルライフサイクル `cc:TODO`
 
-- [ ] session_ref によるファイルグルーピング
+- [ ] file_ref によるファイルグルーピング
 - [ ] デフォルトTTL (24時間)
 - [ ] `POST /v2/media/persist` 永続化
 - [ ] `POST /v2/media/extend` TTL延長
@@ -611,7 +635,10 @@
 
 ## 🔗 Phase 16: 通信設計 (Webhook/Batch) `cc:TODO`
 
-> 設計: docs/PROTOCOL_V2.md セクション15-17
+> 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション16-17](docs/PROTOCOL_V2.md#16-ai通信設計)
+> 📅 工数: 18h (4+6+4+4)
+> 🛠️ API: `/v2/jobs/*`, `/v2/batch`, WebSocket
+> 📚 エラーコード: PROTOCOL_V2.md セクション18.5
 
 ### 16.1 非同期ジョブ管理 `cc:TODO`
 
