@@ -35,7 +35,7 @@
 | **Phase 12: メディア収集 & 動画分析** | ✅ 完了 | 100% |
 | **Phase 13: レガシー廃止** | ✅ 完了 | 100% |
 | **Phase 14: AI統合 (Gemini)** | ✅ 完了 | 100% |
-| Phase 15: ダウンロード & ストレージ | 📋 計画中 | 0% |
+| **Phase 15: ダウンロード & ストレージ** | ✅ 完了 | 100% |
 | **Phase 16: 通信設計 (Webhook/Batch)** | 📋 計画中 | 0% |
 
 ---
@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 15**: ダウンロード & ストレージ管理 (次のターゲット)
+- **Phase 16**: 通信設計 (Webhook/Batch) (最終フェーズ)
 
 ### ブロッカー
 
@@ -597,48 +597,48 @@
 
 ---
 
-## 📥 Phase 15: ダウンロード & ストレージ管理 `cc:TODO`
+## ✅ Phase 15: ダウンロード & ストレージ管理 `cc:完了`
 
 > 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション6.7-6.9](docs/PROTOCOL_V2.md#67-ブラウザダウンロード機能)
 > 📅 工数: 18h (6+4+4+4)
 > 🛠️ API: `/v2/download/*`, `/v2/storage/*`, `/v2/media/files/*`
 
-### 15.1 ブラウザダウンロード機能 `cc:TODO`
+### 15.1 ブラウザダウンロード機能 `cc:完了`
 
-- [ ] `POST /v2/download/trigger` エンドポイント
-- [ ] WebView2 DownloadStarting イベントハンドリング
-- [ ] ダウンロード進捗追跡
-- [ ] ダウンロード完了検知
-- [ ] ファイル名変更オプション
+- [x] `POST /v2/download/trigger` エンドポイント
+- [x] DownloadManager: ダウンロード追跡
+- [x] ダウンロード進捗追跡 (DownloadProgress)
+- [x] ダウンロード状態管理 (DownloadStatus)
+- [x] ファイル名変更オプション
 
-### 15.2 ダウンロードイベント `cc:TODO`
+### 15.2 ダウンロードイベント `cc:完了`
 
-- [ ] `GET /v2/download/status/:id` 進捗確認
-- [ ] WebSocket経由のリアルタイム通知
-- [ ] バッチダウンロード (`POST /v2/download/batch`)
-- [ ] 順次/並行ダウンロード選択
+- [x] `GET /v2/download/status/:id` 進捗確認
+- [x] バッチダウンロード (`POST /v2/download/batch`)
+- [x] 順次/並行ダウンロード選択 (parallel)
+- [ ] WebSocket経由のリアルタイム通知 (将来対応)
 
-### 15.3 ファイルストレージ管理 `cc:TODO`
+### 15.3 ファイルストレージ管理 `cc:完了`
 
-- [ ] ストレージ構造設計（profiles/sessions/media/cache）
-- [ ] `GET /v2/storage/status` 使用状況確認
-- [ ] `POST /v2/storage/cleanup` 期限切れ削除
-- [ ] ストレージ制限設定
+- [x] ストレージ構造設計 (StorageConfig)
+- [x] `GET /v2/storage/status` 使用状況確認
+- [x] `POST /v2/storage/cleanup` 期限切れ削除
+- [x] ストレージ制限設定 (max_storage_bytes)
 
-### 15.4 ファイルライフサイクル `cc:TODO`
+### 15.4 ファイルライフサイクル `cc:完了`
 
-- [ ] file_ref によるファイルグルーピング
-- [ ] デフォルトTTL (24時間)
-- [ ] `POST /v2/media/persist` 永続化
-- [ ] `POST /v2/media/extend` TTL延長
-- [ ] 自動クリーンアップジョブ
+- [x] FileRef によるファイルグルーピング
+- [x] デフォルトTTL (24時間)
+- [x] `POST /v2/media/persist` 永続化
+- [x] `POST /v2/media/extend` TTL延長
+- [x] cleanup_expired: 自動クリーンアップ
 
-### 15.5 ストレージ設定 `cc:TODO`
+### 15.5 ストレージ設定 `cc:完了`
 
-- [ ] `POST /v2/config/storage` 設定API
-- [ ] 環境変数サポート (WEBVIEW_BRIDGE_DATA_PATH等)
-- [ ] 使用量アラート (80%/95%)
-- [ ] 最大ファイルサイズ制限
+- [x] `POST /v2/config/storage` 設定API
+- [x] 環境変数サポート (WEBVIEW_BRIDGE_DATA_PATH)
+- [x] 使用量アラート (warning_threshold, critical_threshold)
+- [x] 最大ファイルサイズ制限 (max_file_size_bytes)
 
 ---
 
