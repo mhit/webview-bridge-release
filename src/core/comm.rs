@@ -181,12 +181,21 @@ pub struct WebhookConfig {
     pub retry: WebhookRetry,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookRetry {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
     #[serde(default = "default_backoff_ms")]
     pub backoff_ms: u64,
+}
+
+impl Default for WebhookRetry {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            backoff_ms: default_backoff_ms(),
+        }
+    }
 }
 
 fn default_max_attempts() -> u32 {
@@ -467,6 +476,19 @@ mod tests {
     }
     
     #[test]
+    fn test_job_fail() {
+        let mut manager = JobManager::new();
+        
+        let id = manager.create_job(JobType::AiAnalysis, None);
+        manager.start_job(&id);
+        manager.fail_job(&id, "API error");
+        
+        let job = manager.get_job(&id).unwrap();
+        assert_eq!(job.status, JobStatus::Failed);
+        assert_eq!(job.error, Some("API error".to_string()));
+    }
+    
+    #[test]
     fn test_job_cancel() {
         let mut manager = JobManager::new();
         
@@ -476,6 +498,80 @@ mod tests {
         assert!(manager.cancel_job(&id));
         let job = manager.get_job(&id).unwrap();
         assert_eq!(job.status, JobStatus::Cancelled);
+    }
+    
+    #[test]
+    fn test_job_cancel_completed_fails() {
+        let mut manager = JobManager::new();
+        
+        let id = manager.create_job(JobType::Screenshot, None);
+        manager.start_job(&id);
+        manager.complete_job(&id, serde_json::json!({}));
+        
+        // Cannot cancel completed job
+        assert!(!manager.cancel_job(&id));
+    }
+    
+    #[test]
+    fn test_job_list_all() {
+        let mut manager = JobManager::new();
+        
+        manager.create_job(JobType::Download, None);
+        manager.create_job(JobType::Extract, None);
+        manager.create_job(JobType::AiAnalysis, None);
+        
+        let all_jobs = manager.list_jobs(None);
+        assert_eq!(all_jobs.len(), 3);
+    }
+    
+    #[test]
+    fn test_job_list_with_filter() {
+        let mut manager = JobManager::new();
+        
+        let id1 = manager.create_job(JobType::Download, None);
+        let id2 = manager.create_job(JobType::Extract, None);
+        manager.create_job(JobType::AiAnalysis, None);
+        
+        manager.start_job(&id1);
+        manager.start_job(&id2);
+        manager.complete_job(&id1, serde_json::json!({}));
+        
+        let running = manager.list_jobs(Some(JobStatus::Running));
+        assert_eq!(running.len(), 1);
+        
+        let completed = manager.list_jobs(Some(JobStatus::Completed));
+        assert_eq!(completed.len(), 1);
+        
+        let pending = manager.list_jobs(Some(JobStatus::Pending));
+        assert_eq!(pending.len(), 1);
+    }
+    
+    #[test]
+    fn test_job_get_not_found() {
+        let manager = JobManager::new();
+        assert!(manager.get_job("nonexistent").is_none());
+    }
+    
+    #[test]
+    fn test_job_type_serialization() {
+        let job_type = JobType::Download;
+        let json = serde_json::to_string(&job_type).unwrap();
+        assert!(json.contains("download"));
+        
+        let custom = JobType::Custom("my_job".to_string());
+        let json = serde_json::to_string(&custom).unwrap();
+        assert!(json.contains("my_job"));
+    }
+    
+    #[test]
+    fn test_webhook_config_defaults() {
+        let config: WebhookConfig = serde_json::from_str(r#"{"url": "https://example.com/hook"}"#).unwrap();
+        assert_eq!(config.url, "https://example.com/hook");
+        assert!(config.headers.is_empty());
+        assert!(config.events.is_empty());
+        assert!(config.secret.is_none());
+        assert_eq!(config.retry.max_attempts, 3);
+        assert_eq!(config.retry.backoff_ms, 1000);
     }
     
     #[test]
@@ -491,6 +587,28 @@ mod tests {
     }
     
     #[test]
+    fn test_webhook_payload_consistent_signature() {
+        let mut payload1 = WebhookPayload {
+            event: "test".to_string(),
+            timestamp: "12345".to_string(),
+            data: serde_json::json!({}),
+            signature: None,
+        };
+        
+        let mut payload2 = WebhookPayload {
+            event: "test".to_string(),
+            timestamp: "12345".to_string(),
+            data: serde_json::json!({}),
+            signature: None,
+        };
+        
+        payload1.sign("secret");
+        payload2.sign("secret");
+        
+        assert_eq!(payload1.signature, payload2.signature);
+    }
+    
+    #[test]
     fn test_event_message() {
         let msg = EventMessage::new(
             event_types::DOWNLOAD_COMPLETED,
@@ -500,6 +618,35 @@ mod tests {
         
         assert_eq!(msg.event_type, "download_completed");
         assert_eq!(msg.session, Some("main".to_string()));
+    }
+    
+    #[test]
+    fn test_event_message_no_session() {
+        let msg = EventMessage::new(
+            event_types::ERROR,
+            None,
+            serde_json::json!({"message": "test error"})
+        );
+        
+        assert_eq!(msg.event_type, "error");
+        assert!(msg.session.is_none());
+    }
+    
+    #[test]
+    fn test_event_types() {
+        assert_eq!(event_types::DOWNLOAD_STARTED, "download_started");
+        assert_eq!(event_types::JOB_COMPLETED, "job_completed");
+        assert_eq!(event_types::SESSION_ACQUIRED, "session_acquired");
+        assert_eq!(event_types::DOM_CHANGE, "dom_change");
+    }
+    
+    #[test]
+    fn test_error_codes() {
+        assert_eq!(error_codes::SESSION_NOT_FOUND, "WBP2_001");
+        assert_eq!(error_codes::AI_NOT_AVAILABLE, "WBP2_100");
+        assert_eq!(error_codes::DOWNLOAD_NOT_FOUND, "WBP2_110");
+        assert_eq!(error_codes::JOB_NOT_FOUND, "WBP2_120");
+        assert_eq!(error_codes::INTERNAL_ERROR, "WBP2_099");
     }
     
     #[test]
@@ -528,5 +675,45 @@ mod tests {
         
         assert_eq!(batch.operations.len(), 2);
         assert_eq!(batch.operations[1].depends_on, vec!["op1"]);
+    }
+    
+    #[test]
+    fn test_batch_operation_result() {
+        let result = BatchOperationResult {
+            id: "op1".to_string(),
+            success: true,
+            status_code: 200,
+            response: serde_json::json!({"data": "test"}),
+            error: None,
+        };
+        
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("op1"));
+        assert!(json.contains("200"));
+        assert!(!json.contains("error"));  // None should be skipped
+    }
+    
+    #[test]
+    fn test_event_subscription() {
+        let sub: EventSubscription = serde_json::from_str(r#"{
+            "action": "subscribe",
+            "events": ["download_completed", "job_failed"],
+            "session_filter": "main"
+        }"#).unwrap();
+        
+        assert_eq!(sub.action, "subscribe");
+        assert_eq!(sub.events.len(), 2);
+        assert_eq!(sub.session_filter, Some("main".to_string()));
+    }
+    
+    #[test]
+    fn test_webhook_event_serialization() {
+        let event = WebhookEvent::JobCompleted;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("job_completed"));
+        
+        let event = WebhookEvent::All;
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("all"));
     }
 }

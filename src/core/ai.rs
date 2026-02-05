@@ -515,6 +515,19 @@ mod tests {
     }
     
     #[test]
+    fn test_ai_config_is_available() {
+        let mut config = AiConfig::default();
+        config.api_key = None;
+        assert!(!config.is_available(), "Should not be available without API key");
+        
+        config.api_key = Some("test-key".to_string());
+        assert!(config.is_available(), "Should be available with API key");
+        
+        config.enabled = false;
+        assert!(!config.is_available(), "Should not be available when disabled");
+    }
+    
+    #[test]
     fn test_budget_check() {
         let mut config = AiConfig::default();
         config.daily_budget_usd = Some(1.0);
@@ -523,6 +536,15 @@ mod tests {
         assert!(config.can_use(0.3));
         assert!(config.can_use(0.5));
         assert!(!config.can_use(0.6));
+    }
+    
+    #[test]
+    fn test_budget_no_limit() {
+        let mut config = AiConfig::default();
+        config.daily_budget_usd = None;
+        
+        // No limit should always allow
+        assert!(config.can_use(1000000.0));
     }
     
     #[test]
@@ -535,12 +557,54 @@ mod tests {
     }
     
     #[test]
+    fn test_mask_credit_cards_no_spaces() {
+        let text = "Card: 1234567890123456";
+        let masked = SensitiveDataMasker::mask_credit_cards(text);
+        assert!(masked.contains("****"));
+    }
+    
+    #[test]
+    fn test_mask_credit_cards_multiple() {
+        let text = "Card1: 1111 2222 3333 4444 Card2: 5555 6666 7777 8888";
+        let masked = SensitiveDataMasker::mask_credit_cards(text);
+        assert!(masked.contains("1111"));
+        assert!(masked.contains("5555"));
+        assert!(!masked.contains("4444"));
+        assert!(!masked.contains("8888"));
+    }
+    
+    #[test]
     fn test_mask_emails() {
         let text = "Email: john.doe@example.com";
         let masked = SensitiveDataMasker::mask_emails(text);
         assert!(masked.contains("****"));
         assert!(masked.contains("jo"));
         assert!(masked.contains("@example.com"));
+    }
+    
+    #[test]
+    fn test_mask_emails_short() {
+        let text = "Email: ab@test.org";
+        let masked = SensitiveDataMasker::mask_emails(text);
+        assert!(masked.contains("ab"));
+        assert!(masked.contains("@test.org"));
+    }
+    
+    #[test]
+    fn test_mask_emails_multiple() {
+        let text = "alice@example.com and bob.smith@company.co.jp";
+        let masked = SensitiveDataMasker::mask_emails(text);
+        assert!(masked.contains("al****@example.com"));
+        assert!(masked.contains("bo****@company.co.jp"));
+    }
+    
+    #[test]
+    fn test_mask_all_combined() {
+        let text = "Email: user@example.com, Card: 1234 5678 9012 3456";
+        let masked = SensitiveDataMasker::mask_all(text);
+        assert!(masked.contains("****"));
+        assert!(!masked.contains("3456")); // Card masked
+        assert!(!masked.contains("user@")); // Email masked
     }
     
     #[test]
@@ -553,5 +617,114 @@ mod tests {
             &[]
         );
         assert!(image_prompt.contains("product image"));
+    }
+    
+    #[test]
+    fn test_gemini_prompt_composition() {
+        let prompt = GeminiClient::generate_image_analysis_prompt(
+            &ImageAnalysisType::Composition,
+            &[]
+        );
+        assert!(prompt.contains("composition"));
+        assert!(prompt.contains("Rule of thirds"));
+    }
+    
+    #[test]
+    fn test_gemini_prompt_brand() {
+        let prompt = GeminiClient::generate_image_analysis_prompt(
+            &ImageAnalysisType::BrandConsistency,
+            &[]
+        );
+        assert!(prompt.contains("brand"));
+        assert!(prompt.contains("Logo"));
+    }
+    
+    #[test]
+    fn test_gemini_prompt_custom() {
+        let criteria = vec!["背景の清潔さ".to_string(), "商品の見栄え".to_string()];
+        let prompt = GeminiClient::generate_image_analysis_prompt(
+            &ImageAnalysisType::Custom,
+            &criteria
+        );
+        assert!(prompt.contains("背景の清潔さ"));
+        assert!(prompt.contains("商品の見栄え"));
+    }
+    
+    #[test]
+    fn test_gemini_extract_prompt() {
+        let prompt = GeminiClient::generate_extract_prompt(
+            "商品名と価格",
+            None
+        );
+        assert!(prompt.contains("商品名と価格"));
+        assert!(prompt.contains("JSON"));
+    }
+    
+    #[test]
+    fn test_gemini_extract_prompt_with_schema() {
+        let schema = serde_json::json!({
+            "name": "string",
+            "price": "number"
+        });
+        let prompt = GeminiClient::generate_extract_prompt(
+            "商品情報",
+            Some(&schema)
+        );
+        assert!(prompt.contains("schema"));
+        assert!(prompt.contains("name"));
+    }
+    
+    #[test]
+    fn test_usage_tracker() {
+        let mut tracker = AiUsageTracker::new();
+        
+        tracker.log(AiLogEntry {
+            timestamp: "2026-02-05T12:00:00Z".to_string(),
+            request_type: "login".to_string(),
+            model: "gemini-2.0-flash".to_string(),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            estimated_cost_usd: Some(0.001),
+            success: true,
+            error: None,
+        });
+        
+        assert_eq!(tracker.total_requests, 1);
+        assert_eq!(tracker.total_input_tokens, 100);
+        assert_eq!(tracker.total_output_tokens, 50);
+        assert!((tracker.total_cost_usd - 0.001).abs() < 0.0001);
+        
+        let stats = tracker.get_daily_stats();
+        assert_eq!(stats["total_requests"], 1);
+    }
+    
+    #[test]
+    fn test_login_status_serialization() {
+        let status = LoginStatus::Success;
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("success"));
+        
+        let status = LoginStatus::CaptchaDetected;
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("captcha_detected"));
+    }
+    
+    #[test]
+    fn test_image_analysis_type_default() {
+        let analysis_type = ImageAnalysisType::default();
+        assert_eq!(analysis_type, ImageAnalysisType::ProductQuality);
+    }
+    
+    #[test]
+    fn test_gemini_client_creation() {
+        let mut config = AiConfig::default();
+        config.api_key = None;
+        
+        assert!(GeminiClient::new(&config).is_none());
+        
+        config.api_key = Some("test-key".to_string());
+        let client = GeminiClient::new(&config);
+        assert!(client.is_some());
+        assert_eq!(client.unwrap().api_key, "test-key");
     }
 }
