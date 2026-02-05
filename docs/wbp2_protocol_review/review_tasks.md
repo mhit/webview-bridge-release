@@ -28,9 +28,9 @@ PROTOCOL_V2.mdは複数のセッションで機能を追加しながら作成さ
 - `session_ref` (ファイル参照) と `session` (ブラウザ) の区別が曖昧
 
 **修正内容**:
-- [ ] 3.1のレスポンスを `session` に統一
-- [ ] すべてのAPIで `session` パラメータを確認
-- [ ] `session_ref` → `file_ref` に名称変更
+- [x] 3.1のレスポンスを `session` に統一 ✅
+- [x] すべてのAPIで `session` パラメータを確認 ✅
+- [x] `session_ref` → `file_ref` に名称変更 ✅
 - [ ] 用語定義（15.2）を文書冒頭に移動
 
 ---
@@ -45,9 +45,9 @@ PROTOCOL_V2.mdは複数のセッションで機能を追加しながら作成さ
 - 16.4で `/v2/jobs/:id` に統一と決定したが、前半は未修正
 
 **修正内容**:
-- [ ] 6.3の `/v2/media/job/:id` → `/v2/jobs/:id`
-- [ ] 6.7の `/v2/download/status/:id` → `/v2/jobs/:id`
-- [ ] すべてのジョブ関連レスポンスを統一フォーマットに
+- [x] 6.3の `/v2/media/job/:id` → `/v2/jobs/:id` ✅
+- [x] 6.7の `/v2/download/status/:id` → `/v2/jobs/:id` ✅
+- [x] すべてのジョブ関連レスポンスを統一フォーマットに ✅
 
 ---
 
@@ -63,7 +63,7 @@ PROTOCOL_V2.mdは複数のセッションで機能を追加しながら作成さ
 **修正内容**:
 - [ ] 6.6と6.8を統合し、一箇所で説明
 - [ ] API一覧で重複を排除
-- [ ] session_ref → file_ref に統一
+- [x] session_ref → file_ref に統一 ✅
 
 ---
 
