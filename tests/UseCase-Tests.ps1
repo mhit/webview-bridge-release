@@ -147,6 +147,41 @@ function Test-Execute($Script, $TestId, $Name) {
     return $result
 }
 
+# Test: Act (Click/Type)
+function Test-Click($RefAttr, $TestId, $Name) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Api-Post "/act/$SessionId" @{ 
+        kind     = "click"
+        ref_attr = $RefAttr
+    }
+    $success = ($null -ne $result)
+    Write-TestResult $TestId $Name $success "" $sw.ElapsedMilliseconds
+    return $success
+}
+
+function Test-Type($RefAttr, $Text, $TestId, $Name) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Api-Post "/act/$SessionId" @{ 
+        kind     = "type"
+        ref_attr = $RefAttr
+        text     = $Text
+    }
+    $success = ($null -ne $result)
+    Write-TestResult $TestId $Name $success "" $sw.ElapsedMilliseconds
+    return $success
+}
+
+function Test-Press($Key, $TestId, $Name) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Api-Post "/act/$SessionId" @{ 
+        kind = "press"
+        text = $Key
+    }
+    $success = ($null -ne $result)
+    Write-TestResult $TestId $Name $success "" $sw.ElapsedMilliseconds
+    return $success
+}
+
 # Close Session
 function Close-Session {
     if ($SessionId) {
@@ -285,9 +320,89 @@ try {
             Test-Navigate "https://httpbin.org/cookies" "LOGIN-02" "Verify Cookies"
             Test-WaitForSelector "body" "LOGIN-03" "Page Loaded"
         }
+        "login-form" {
+            Write-TestHeader "Login Form Test (The Internet)"
+            
+            # Step 1: Navigate to test login page
+            # Using "The Internet" - a known test site for automation
+            Test-Navigate "https://the-internet.herokuapp.com/login" "LF-01" "Navigate to Login Page"
+            
+            # Step 2: Wait for login form to fully load
+            Start-Sleep -Seconds 5
+            Test-WaitForSelector "#username" "LF-02" "Wait for Username Field"
+            
+            # Step 3: Type username using JavaScript
+            Test-Execute "document.getElementById('username').value = 'tomsmith'; return document.getElementById('username').value;" "LF-03" "Enter Username"
+            
+            # Step 4: Type password
+            Test-Execute "document.getElementById('password').value = 'SuperSecretPassword!'; return 'password set';" "LF-04" "Enter Password"
+            
+            # Step 5: Verify form values before submit
+            Test-Execute "return 'User: ' + document.getElementById('username').value + ', Pass length: ' + document.getElementById('password').value.length;" "LF-05" "Verify Form Values"
+            
+            # Step 6: Submit form via form.submit() instead of click
+            Test-Execute "document.getElementById('login').submit(); return 'submitted';" "LF-06" "Submit Login Form"
+            
+            # Step 7: Wait for page to load after redirect (longer wait)
+            Start-Sleep -Seconds 5
+            
+            # Step 8: Check current URL to verify redirect
+            $urlResult = Test-Execute "return window.location.pathname;" "LF-07" "Check URL After Login"
+            
+            # Step 9: Try to find any content on the page
+            Test-WaitForSelector "body" "LF-08" "Wait for Page Body"
+            
+            # Step 10: Extract page content to see what happened
+            Test-Extract "body" "LF-09" "Extract Page Content"
+            
+            # Step 11: Take screenshot
+            Test-Screenshot "LF-10" "Screenshot After Login"
+            
+            # Step 12: Verify cookies are set
+            Test-GetCookies
+        }
+        "login-session" {
+            Write-TestHeader "Login Session Persistence Test"
+            
+            # Test 1: Login and set cookies
+            Test-Navigate "https://httpbin.org/cookies/set/session_id/abc123" "LS-01" "Set Session Cookie"
+            Start-Sleep -Seconds 2
+            
+            # Test 2: Verify cookie was set
+            $cookies = Api-Get "/cookies/$SessionId"
+            if ($cookies) {
+                Write-TestResult "LS-02" "Verify Cookie Set" $true "Got cookies"
+            }
+            else {
+                Write-TestResult "LS-02" "Verify Cookie Set" $false "No cookies"
+            }
+            
+            # Test 3: Navigate to authenticated page
+            Test-Navigate "https://httpbin.org/cookies" "LS-03" "Navigate to Cookie Check"
+            Test-WaitForSelector "pre" "LS-04" "Wait for Response"
+            
+            # Test 4: Extract and verify session cookie
+            $extracted = Test-Extract "pre" "LS-05" "Extract Cookie JSON"
+            
+            # Test 5: Set additional auth cookie
+            Test-Navigate "https://httpbin.org/cookies/set/auth_token/xyz789" "LS-06" "Set Auth Token"
+            Start-Sleep -Seconds 2
+            
+            # Test 6: Verify both cookies exist
+            Test-Navigate "https://httpbin.org/cookies" "LS-07" "Check Both Cookies"
+            Test-WaitForSelector "pre" "LS-08" "Wait for Response"
+            Test-Extract "pre" "LS-09" "Extract All Cookies"
+            
+            # Test 7: Delete cookies via API
+            Test-Navigate "https://httpbin.org/cookies/delete?session_id=" "LS-10" "Delete Session Cookie"
+            
+            # Test 8: Verify cookie was deleted
+            Test-Navigate "https://httpbin.org/cookies" "LS-11" "Verify Cookie Deleted"
+            Test-Extract "pre" "LS-12" "Extract Remaining Cookies"
+        }
         default {
             Write-Host "Unknown test: $TestCase" -ForegroundColor Red
-            Write-Host "Available: basic, UC-01 to UC-10, login, all" -ForegroundColor Yellow
+            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, all" -ForegroundColor Yellow
         }
     }
 }
