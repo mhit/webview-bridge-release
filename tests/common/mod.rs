@@ -2,6 +2,8 @@
 //!
 //! Shared helpers, fixtures, and test infrastructure.
 
+pub mod test_server;
+
 use axum::Router;
 use std::sync::atomic::{AtomicU16, Ordering};
 use tokio::net::TcpListener;
