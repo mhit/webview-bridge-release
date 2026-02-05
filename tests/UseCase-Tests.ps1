@@ -400,9 +400,81 @@ try {
             Test-Navigate "https://httpbin.org/cookies" "LS-11" "Verify Cookie Deleted"
             Test-Extract "pre" "LS-12" "Extract Remaining Cookies"
         }
+        "profile-isolation" {
+            Write-TestHeader "Profile Isolation Test (Multi-Session)"
+            
+            # This test verifies that different profiles have isolated storage
+            # Create two sessions with different profiles and verify cookies are not shared
+            
+            # Step 1: Create session with profile A and set cookie
+            Write-Host "Creating Profile A session..." -ForegroundColor Cyan
+            $profileA = "profile_a_test"
+            $bodyA = @{ profile = $profileA; headless = $false } | ConvertTo-Json
+            $sessionA = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $bodyA -ContentType "application/json"
+            $sidA = $sessionA.id
+            Write-Host "Profile A Session: $sidA" -ForegroundColor Gray
+            Start-Sleep -Seconds 8
+            
+            # Set cookie in Profile A
+            Invoke-RestMethod -Uri "$ServerUrl/navigate/$sidA" -Method Post -Body '{"url":"https://httpbin.org/cookies/set/profile_cookie/PROFILE_A_VALUE"}' -ContentType "application/json" | Out-Null
+            Start-Sleep -Seconds 3
+            
+            # Verify cookie is set in Profile A
+            $resultA = Invoke-RestMethod -Uri "$ServerUrl/execute/$sidA" -Method Post -Body '{"script":"return document.cookie"}' -ContentType "application/json"
+            Write-TestResult "PI-01" "Set Cookie in Profile A" ($null -ne $resultA) ""
+            
+            # Step 2: Create session with profile B
+            Write-Host "Creating Profile B session..." -ForegroundColor Cyan
+            $profileB = "profile_b_test"
+            $bodyB = @{ profile = $profileB; headless = $false } | ConvertTo-Json
+            $sessionB = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $bodyB -ContentType "application/json"
+            $sidB = $sessionB.id
+            Write-Host "Profile B Session: $sidB" -ForegroundColor Gray
+            Start-Sleep -Seconds 8
+            
+            # Navigate to cookies page in Profile B
+            Invoke-RestMethod -Uri "$ServerUrl/navigate/$sidB" -Method Post -Body '{"url":"https://httpbin.org/cookies"}' -ContentType "application/json" | Out-Null
+            Start-Sleep -Seconds 3
+            
+            # Check cookies in Profile B (should NOT have Profile A's cookie)
+            $extractB = Invoke-RestMethod -Uri "$ServerUrl/extract/$sidB" -Method Post -Body '{"selector":"pre"}' -ContentType "application/json"
+            $hasCookieFromA = $false
+            if ($extractB.data) {
+                $content = $extractB.data -join ""
+                $hasCookieFromA = $content -like "*PROFILE_A_VALUE*"
+            }
+            Write-TestResult "PI-02" "Profile B Isolated (No A's Cookie)" (-not $hasCookieFromA) "Isolation: $(-not $hasCookieFromA)"
+            
+            # Step 3: Set different cookie in Profile B
+            Invoke-RestMethod -Uri "$ServerUrl/navigate/$sidB" -Method Post -Body '{"url":"https://httpbin.org/cookies/set/profile_cookie/PROFILE_B_VALUE"}' -ContentType "application/json" | Out-Null
+            Start-Sleep -Seconds 3
+            Write-TestResult "PI-03" "Set Cookie in Profile B" $true ""
+            
+            # Step 4: Verify Profile A still has its original cookie
+            Invoke-RestMethod -Uri "$ServerUrl/navigate/$sidA" -Method Post -Body '{"url":"https://httpbin.org/cookies"}' -ContentType "application/json" | Out-Null
+            Start-Sleep -Seconds 3
+            $extractA = Invoke-RestMethod -Uri "$ServerUrl/extract/$sidA" -Method Post -Body '{"selector":"pre"}' -ContentType "application/json"
+            $hasOriginalCookie = $false
+            $hasBCookie = $false
+            if ($extractA.data) {
+                $content = $extractA.data -join ""
+                $hasOriginalCookie = $content -like "*PROFILE_A_VALUE*"
+                $hasBCookie = $content -like "*PROFILE_B_VALUE*"
+            }
+            Write-TestResult "PI-04" "Profile A Has Original Cookie" $hasOriginalCookie ""
+            Write-TestResult "PI-05" "Profile A Isolated (No B's Cookie)" (-not $hasBCookie) "Isolation: $(-not $hasBCookie)"
+            
+            # Cleanup: Close both sessions
+            Invoke-RestMethod -Uri "$ServerUrl/close/$sidA" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+            Invoke-RestMethod -Uri "$ServerUrl/close/$sidB" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "Both sessions closed" -ForegroundColor Gray
+            
+            # Skip normal session cleanup since we handled it
+            $script:SessionId = $null
+        }
         default {
             Write-Host "Unknown test: $TestCase" -ForegroundColor Red
-            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, all" -ForegroundColor Yellow
+            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, profile-isolation, all" -ForegroundColor Yellow
         }
     }
 }
