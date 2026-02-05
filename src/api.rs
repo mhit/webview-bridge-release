@@ -144,7 +144,9 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         // WebDriver Protocol endpoints (Selenium compatible)
         .merge(crate::webdriver::webdriver_router(bounded_tx.clone()))
         // MCP (Model Context Protocol) endpoints
-        .merge(crate::mcp::mcp_router(bounded_tx))
+        .merge(crate::mcp::mcp_router(bounded_tx.clone()))
+        // CDP (Chrome DevTools Protocol) endpoints
+        .merge(crate::cdp::cdp_router(bounded_tx))
 }
 
 async fn health_check() -> &'static str {

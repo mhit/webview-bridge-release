@@ -1,4 +1,5 @@
 pub mod api;
+pub mod cdp;
 pub mod core;
 pub mod mcp;
 pub mod webdriver;
@@ -13,32 +14,62 @@ use crate::core::{AppCommand, SessionManager};
 
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
 
+// Number of concurrent command processors
+const COMMAND_PROCESSOR_COUNT: usize = 4;
+
 #[tokio::main]
 async fn main() {
     // Initialize logging
     tracing_subscriber::fmt::init();
     tracing::info!("WebView Bridge Server starting...");
 
-    // Create SessionManager
-    let manager = Arc::new(SessionManager::new(10));
+    // Create SessionManager with higher capacity
+    let manager = Arc::new(SessionManager::new(20));
 
-    // Create command channels
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<AppCommand>();
+    // Create command channels with bounded capacity for backpressure
+    let (cmd_tx, cmd_rx) = mpsc::channel::<AppCommand>(1000);
+    let cmd_rx = Arc::new(tokio::sync::Mutex::new(cmd_rx));
 
-    // Spawn command processor task
-    let manager_clone = manager.clone();
+    // Spawn multiple command processor tasks for parallelism
+    for i in 0..COMMAND_PROCESSOR_COUNT {
+        let manager_clone = manager.clone();
+        let cmd_rx_clone = cmd_rx.clone();
+        tokio::spawn(async move {
+            tracing::debug!("Command processor {} started", i);
+            loop {
+                let cmd = {
+                    let mut rx = cmd_rx_clone.lock().await;
+                    rx.recv().await
+                };
+                match cmd {
+                    Some(cmd) => {
+                        process_command_async(cmd, &manager_clone).await;
+                    }
+                    None => break,
+                }
+            }
+            tracing::debug!("Command processor {} stopped", i);
+        });
+    }
+
+    // Convert to unbounded for API compatibility
+    // (API uses unbounded, we convert to bounded internally)
+    let (unbounded_tx, mut unbounded_rx) = mpsc::unbounded_channel::<AppCommand>();
     tokio::spawn(async move {
-        while let Some(cmd) = cmd_rx.recv().await {
-            process_command_async(cmd, &manager_clone).await;
+        while let Some(cmd) = unbounded_rx.recv().await {
+            if cmd_tx.send(cmd).await.is_err() {
+                tracing::error!("Failed to forward command to processor");
+                break;
+            }
         }
     });
 
     // Create API router
-    let app = api::create_router(cmd_tx, 0);
+    let app = api::create_router(unbounded_tx, 0);
 
     // Run server
     let addr = SocketAddr::from(([127, 0, 0, 1], 9400));
-    tracing::info!("listening on {}", addr);
+    tracing::info!("listening on {} with {} command processors", addr, COMMAND_PROCESSOR_COUNT);
 
     match axum::serve(
         tokio::net::TcpListener::bind(&addr).await.unwrap(),

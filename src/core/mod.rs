@@ -469,8 +469,8 @@ impl SessionManager {
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
-                    // No commands, sleep a bit to avoid maxing CPU
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    // No commands, use shorter sleep for better responsiveness
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     // Channel closed, exit
