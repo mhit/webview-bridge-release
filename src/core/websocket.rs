@@ -315,4 +315,102 @@ mod tests {
         hub.unregister_client("client1").await;
         assert_eq!(hub.client_count().await, 0);
     }
+    
+    #[test]
+    fn test_event_hub_default() {
+        let hub = EventHub::default();
+        // Verify it doesn't panic
+        let _ = hub.subscribe_global();
+    }
+    
+    #[tokio::test]
+    async fn test_session_subscribe() {
+        let hub = EventHub::new();
+        let mut rx = hub.subscribe_session("test_session").await;
+        
+        hub.publish_to_session("test_session", WbpEvent::Ping {
+            timestamp: WbpEvent::timestamp(),
+        }).await;
+        
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, WbpEvent::Ping { .. }));
+    }
+    
+    #[test]
+    fn test_wbp_event_timestamp() {
+        let ts = WbpEvent::timestamp();
+        assert!(!ts.is_empty());
+        // Format is like "1234567890.123Z"
+        assert!(ts.ends_with('Z'));
+        assert!(ts.contains('.'));
+    }
+    
+    #[test]
+    fn test_wbp_event_dom_change() {
+        let event = WbpEvent::DomChange {
+            session: "test".to_string(),
+            selector: Some(".container".to_string()),
+            change_type: "added".to_string(),
+            timestamp: WbpEvent::timestamp(),
+        };
+        
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("dom_change"));
+        assert!(json.contains("test"));
+    }
+    
+    #[test]
+    fn test_wbp_event_navigation() {
+        let event = WbpEvent::Navigation {
+            session: "main".to_string(),
+            url: "https://example.com".to_string(),
+            status: "completed".to_string(),
+            timestamp: WbpEvent::timestamp(),
+        };
+        
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("navigation"));
+        assert!(json.contains("example.com"));
+    }
+    
+    #[test]
+    fn test_wbp_event_error() {
+        let event = WbpEvent::Error {
+            session: "test".to_string(),
+            message: "Something went wrong".to_string(),
+            code: "ERR001".to_string(),
+            timestamp: WbpEvent::timestamp(),
+        };
+        
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("error"));
+        assert!(json.contains("Something went wrong"));
+    }
+    
+    #[test]
+    fn test_wbp_event_connected() {
+        let event = WbpEvent::Connected {
+            client_id: "abc123".to_string(),
+            timestamp: WbpEvent::timestamp(),
+        };
+        
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("connected"));
+        assert!(json.contains("abc123"));
+    }
+    
+    #[tokio::test]
+    async fn test_multiple_clients() {
+        let hub = EventHub::new();
+        
+        hub.register_client("client1", vec!["s1".to_string()]).await;
+        hub.register_client("client2", vec!["s2".to_string()]).await;
+        hub.register_client("client3", vec!["s1".to_string(), "s2".to_string()]).await;
+        
+        assert_eq!(hub.client_count().await, 3);
+        
+        hub.unregister_client("client2").await;
+        assert_eq!(hub.client_count().await, 2);
+    }
 }
+
