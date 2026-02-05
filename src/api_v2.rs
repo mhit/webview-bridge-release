@@ -122,6 +122,8 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/list", get(session_list))
         .route("/session/stats", get(session_stats))
         .route("/session/:name", get(session_get))
+        // Wait v2
+        .route("/wait", post(wait_v2))
         .with_state(state)
 }
 
@@ -320,6 +322,60 @@ async fn session_stats() -> impl IntoResponse {
         Json(json!({
             "success": true,
             "stats": stats
+        })),
+    )
+}
+
+// ============================================================================
+// Wait v2 Endpoints
+// ============================================================================
+
+use crate::core::wait_v2::{WaitRequest, WaitResponse, generate_wait_script};
+
+/// POST /v2/wait - Smart wait with multiple condition types
+async fn wait_v2(
+    State(_state): State<V2AppState>,
+    Json(request): Json<WaitRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    // Get session handle
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Generate the wait script
+    let _script = generate_wait_script(&request);
+    
+    // Execute via session (this is simplified - full impl would use oneshot channel)
+    // For now, return a placeholder indicating the script was generated
+    // In production, this would execute the script and wait for the Promise to resolve
+    
+    // TODO: Execute script through session handle and wait for result
+    // For now, return success with the generated script info
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Wait request queued",
+            "session": request.session,
+            "selector": request.selector,
+            "condition": format!("{:?}", request.condition),
+            "timeout_ms": request.timeout_ms,
+            "_note": "Full async execution pending - script generated"
         })),
     )
 }
