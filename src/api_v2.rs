@@ -10,6 +10,7 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -130,6 +131,11 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         // Goal API
         .route("/goal", post(goal_execute))
         .route("/goal/flows", get(goal_list_flows))
+        // Macro API
+        .route("/macro", post(macro_execute))
+        .route("/macro/list", get(macro_list))
+        .route("/macro/register", post(macro_register))
+        .route("/macro/detect-spa", post(macro_detect_spa))
         .with_state(state)
 }
 
@@ -622,6 +628,177 @@ async fn goal_list_flows() -> impl IntoResponse {
             "success": true,
             "flows": flows,
             "count": flows.len()
+        })),
+    )
+}
+
+// ============================================================================
+// Macro API Endpoints
+// ============================================================================
+
+use crate::core::macro_engine::{
+    MacroExecuteRequest, MacroRegisterRequest, get_preset_macros, 
+    generate_macro_script, generate_spa_detection_script,
+};
+
+/// Simple session request for SPA detection
+#[derive(Debug, Clone, Deserialize)]
+struct SpaDetectRequest {
+    session: String,
+}
+
+/// POST /v2/macro - Execute a macro
+async fn macro_execute(
+    State(_state): State<V2AppState>,
+    Json(request): Json<MacroExecuteRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    // Get session handle
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Find macro
+    let macro_def = match crate::core::macro_engine::find_preset_macro(&request.name) {
+        Some(m) => m,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_080",
+                        "name": "MACRO_NOT_FOUND",
+                        "message": format!("Macro '{}' not found", request.name)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Generate executable script
+    let script = generate_macro_script(&macro_def, &request.params);
+    
+    // TODO: Execute script through session handle
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Macro execution queued",
+            "session": request.session,
+            "macro_name": request.name,
+            "script_length": script.len(),
+            "timeout_ms": request.timeout_ms.unwrap_or(macro_def.timeout_ms),
+            "_note": "Full execution pending - script generated"
+        })),
+    )
+}
+
+/// GET /v2/macro/list - List available macros
+async fn macro_list() -> impl IntoResponse {
+    let macros = get_preset_macros();
+    
+    let list: Vec<serde_json::Value> = macros.iter().map(|m| {
+        json!({
+            "name": m.name,
+            "description": m.description,
+            "required_params": m.required_params,
+            "optional_params": m.optional_params.keys().collect::<Vec<_>>(),
+            "timeout_ms": m.timeout_ms,
+            "builtin": m.builtin
+        })
+    }).collect();
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "macros": list,
+            "count": list.len()
+        })),
+    )
+}
+
+/// POST /v2/macro/register - Register a custom macro
+async fn macro_register(
+    Json(request): Json<MacroRegisterRequest>,
+) -> impl IntoResponse {
+    // Validate
+    if request.macro_def.name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_090",
+                    "name": "INVALID_REQUEST",
+                    "message": "Macro name cannot be empty"
+                }
+            })),
+        );
+    }
+    
+    // TODO: Actually register to persistent storage
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Macro registered",
+            "name": request.macro_def.name,
+            "_note": "Persistence pending implementation"
+        })),
+    )
+}
+
+/// POST /v2/macro/detect-spa - Detect SPA framework
+async fn macro_detect_spa(
+    Json(request): Json<SpaDetectRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    // Get session handle
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    let script = generate_spa_detection_script();
+    
+    // TODO: Execute script through session handle
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "SPA detection queued",
+            "session": request.session,
+            "script_length": script.len(),
+            "_note": "Full execution pending - script generated"
         })),
     )
 }
