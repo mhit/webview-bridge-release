@@ -120,6 +120,7 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/release", post(session_release))
         .route("/session/destroy", delete(session_destroy))
         .route("/session/list", get(session_list))
+        .route("/session/stats", get(session_stats))
         .route("/session/:name", get(session_get))
         .with_state(state)
 }
@@ -307,6 +308,20 @@ async fn session_get(
             })),
         ),
     }
+}
+
+/// GET /v2/session/stats
+async fn session_stats() -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let stats = manager.stats();
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "stats": stats
+        })),
+    )
 }
 
 #[cfg(test)]

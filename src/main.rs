@@ -1,9 +1,7 @@
 pub mod api;
 pub mod api_v2;
-pub mod cdp;
 pub mod core;
 pub mod mcp;
-pub mod webdriver;
 pub mod webview;
 
 use std::net::SocketAddr;

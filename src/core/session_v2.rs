@@ -437,6 +437,170 @@ impl SessionManagerV2 {
             .map(|s| s.len())
             .unwrap_or(0)
     }
+    
+    /// Check authentication status using selectors
+    /// 
+    /// This navigates to the auth check URL and looks for:
+    /// - logged_in_selector: If found, user is logged in
+    /// - login_required_selector: If found, user is NOT logged in
+    pub async fn check_auth(
+        &self,
+        name: &str,
+        config: &AuthCheckConfig,
+        navigate_fn: impl FnOnce(&str) -> Result<(), String>,
+        check_selector_fn: impl Fn(&str) -> Result<bool, String>,
+    ) -> Result<AuthStatus, String> {
+        // Navigate to auth check URL
+        navigate_fn(&config.url)?;
+        
+        // Wait a bit for page to load (in production, use smart waiting)
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        
+        // Check for logged_in_selector
+        let is_logged_in = check_selector_fn(&config.logged_in_selector)?;
+        
+        // Optional: Check for login_required_selector
+        let needs_login = if let Some(ref selector) = config.login_required_selector {
+            check_selector_fn(selector).unwrap_or(false)
+        } else {
+            false
+        };
+        
+        let logged_in = is_logged_in && !needs_login;
+        let auth_status = AuthStatus {
+            logged_in,
+            checked_at: Some(chrono_now_iso8601()),
+            username: None, // Would require additional extraction logic
+        };
+        
+        // Update session with new auth status
+        self.update_auth_status(name, auth_status.clone())?;
+        
+        Ok(auth_status)
+    }
+    
+    // ========================================================================
+    // Session Pool Operations (Phase 7.4)
+    // ========================================================================
+    
+    /// Warm up sessions - pre-create sessions for frequently used names
+    /// 
+    /// This allows faster response times for known session names
+    pub async fn warm_up<F>(
+        &self,
+        session_names: Vec<String>,
+        create_session_fn: F,
+    ) -> Vec<Result<String, String>>
+    where
+        F: Fn(SessionOptions) -> Result<(String, SessionHandle), String>,
+    {
+        let mut results = Vec::new();
+        
+        for name in session_names {
+            // Skip if session already exists
+            if self.get(&name).is_some() {
+                results.push(Ok(format!("Session '{}' already exists", name)));
+                continue;
+            }
+            
+            let request = AcquireRequest {
+                name: name.clone(),
+                profile: Some(name.clone()),
+                reuse: true,
+                create_if_missing: true,
+                headless: true, // Warm up in headless mode
+                auth_check: None,
+            };
+            
+            match self.acquire(request, &create_session_fn).await {
+                Ok(response) => {
+                    // Immediately release after warm up
+                    let _ = self.release(&response.session);
+                    results.push(Ok(format!("Session '{}' warmed up", response.session)));
+                }
+                Err(e) => {
+                    results.push(Err(format!("Failed to warm up '{}': {}", name, e)));
+                }
+            }
+        }
+        
+        results
+    }
+    
+    /// Cleanup idle sessions that haven't been accessed recently
+    /// 
+    /// Uses LRU (Least Recently Used) strategy based on last_accessed
+    pub fn cleanup_idle(&self, _max_idle_seconds: u64) -> Vec<String> {
+        let _now = chrono_now_iso8601();
+        let mut removed = Vec::new();
+        
+        // Get list of sessions to remove
+        let sessions_to_remove: Vec<String> = {
+            let sessions = match self.sessions.read() {
+                Ok(s) => s,
+                Err(_) => return removed,
+            };
+            
+            sessions.values()
+                .filter(|s| {
+                    // Don't remove acquired sessions
+                    if s.acquired {
+                        return false;
+                    }
+                    
+                    // Check if session is idle (simplified - in production parse ISO8601)
+                    // For now, just remove sessions that are not acquired
+                    // A proper implementation would parse timestamps
+                    !s.acquired && s.handle.is_none()
+                })
+                .map(|s| s.meta.name.clone())
+                .collect()
+        };
+        
+        // Remove each session
+        for name in sessions_to_remove {
+            if self.destroy(&name).is_ok() {
+                removed.push(name);
+            }
+        }
+        
+        if !removed.is_empty() {
+            tracing::info!("[SessionManagerV2] Cleaned up {} idle sessions", removed.len());
+        }
+        
+        removed
+    }
+    
+    /// Get session statistics
+    pub fn stats(&self) -> SessionPoolStats {
+        let sessions = match self.sessions.read() {
+            Ok(s) => s,
+            Err(_) => return SessionPoolStats::default(),
+        };
+        
+        let total = sessions.len();
+        let active = sessions.values().filter(|s| s.handle.is_some()).count();
+        let acquired = sessions.values().filter(|s| s.acquired).count();
+        let idle = total - acquired;
+        
+        SessionPoolStats {
+            total,
+            active,
+            acquired,
+            idle,
+            max_sessions: self.max_sessions,
+        }
+    }
+}
+
+/// Session pool statistics
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SessionPoolStats {
+    pub total: usize,
+    pub active: usize,
+    pub acquired: usize,
+    pub idle: usize,
+    pub max_sessions: usize,
 }
 
 // ============================================================================

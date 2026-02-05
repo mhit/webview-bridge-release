@@ -111,7 +111,7 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         main_thread_id,
     };
     
-    // Create bounded channel for WebDriver/MCP
+    // Create bounded channel for MCP
     let (bounded_tx, mut bounded_rx) = mpsc::channel::<AppCommand>(100);
     
     // Forward bounded to unbounded
@@ -141,12 +141,8 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         .route("/profile/create", post(create_profile))
         .route("/profile/:name", delete(delete_profile))
         .with_state(state)
-        // WebDriver Protocol endpoints (Selenium compatible)
-        .merge(crate::webdriver::webdriver_router(bounded_tx.clone()))
         // MCP (Model Context Protocol) endpoints
-        .merge(crate::mcp::mcp_router(bounded_tx.clone()))
-        // CDP (Chrome DevTools Protocol) endpoints
-        .merge(crate::cdp::cdp_router(bounded_tx))
+        .merge(crate::mcp::mcp_router(bounded_tx))
 }
 
 async fn health_check() -> &'static str {
