@@ -69,9 +69,27 @@ WebView Bridge Protocol v2 (WBP2) は、**AIエージェントおよびプログ
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+### 1.4 用語定義
+
+| カテゴリ | 用語 | 説明 |
+|---------|------|------|
+| **ブラウザ** | `session` | ブラウザセッション（名前付き、例: "rakuten"） |
+| | `profile` | ブラウザプロファイル（Cookie等永続化） |
+| | `webview` | WebView2インスタンス |
+| **ファイル** | `file_ref` | ファイル参照ID（例: "downloads_001"） |
+| | `files_url` | ファイル一覧URL |
+| **ジョブ** | `job_id` | 非同期ジョブのID |
+| | `status` | ジョブ状態 (pending\|running\|completed\|failed) |
+| | `progress` | 進捗情報（percent、ETA等） |
+| **AI** | `ai_mode` | AI機能使用フラグ |
+| | `ai_config` | AI設定（APIキー、モデル等） |
+
+> 詳細な用語定義は [15.2 用語統一](#152-用語統一) を参照
+
 ---
 
 ## 2. 現状分析
+
 
 ### 2.1 現在サポートしているプロトコル
 
@@ -914,7 +932,7 @@ curl -O "http://localhost:9400/v2/media/files/video_analysis_123/audio.mp3"
 $result = Invoke-RestMethod -Uri "http://localhost:9400/v2/media/video/analyze" `
     -Method Post -Body $jsonBody -ContentType "application/json"
 
-$ref = $result.session_ref
+$ref = $result.file_ref
 
 # キーフレームをダウンロード
 foreach ($file in $result.keyframes.files) {
@@ -1084,7 +1102,9 @@ webview.add_DownloadStarting(|sender, args| {
 
 ### 6.8 ファイルストレージ管理
 
-### ストレージ構造
+> **関連**: ファイル参照API仕様は [6.6 メディアファイル参照システム](#66-メディアファイル参照システム) を参照
+
+#### ストレージ構造
 
 ```
 $WEBVIEW_BRIDGE_DATA/
@@ -1095,7 +1115,7 @@ $WEBVIEW_BRIDGE_DATA/
 ├── sessions/                    # セッション状態
 │   └── sessions.json
 ├── media/                       # メディアファイル（管理対象）
-│   ├── downloads_001/           # session_refごと
+│   ├── downloads_001/           # file_refごと
 │   │   ├── report.pdf
 │   │   └── data.xlsx
 │   ├── video_analysis_123/
@@ -1106,6 +1126,7 @@ $WEBVIEW_BRIDGE_DATA/
 └── cache/                       # キャッシュ（自動削除）
     └── temp/
 ```
+
 
 ### ファイルライフサイクル
 
@@ -2454,7 +2475,7 @@ ws.onmessage = (event) => {
 
 ### 18.2 要検討
 
-- [ ] Phase番号の再整理（機能グループ化）
+- [x] Phase番号の再整理（機能グループ化）✅
 - [ ] MCP Tool定義の具体化
 - [ ] エラーコード体系の統一
 - [ ] レート制限設計
