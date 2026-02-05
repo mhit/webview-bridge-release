@@ -637,4 +637,269 @@ mod tests {
         assert_eq!(download_ids.len(), 2);
         assert!(manager.batches.contains_key(&batch_id));
     }
+    
+    #[test]
+    fn test_download_fail() {
+        let mut manager = DownloadManager::new();
+        let id = manager.start_download("https://example.com/fail.zip", None);
+        manager.fail_download(&id, "Network error");
+        
+        let progress = manager.get_progress(&id).unwrap();
+        assert_eq!(progress.status, DownloadStatus::Failed);
+        assert_eq!(progress.error, Some("Network error".to_string()));
+    }
+    
+    #[test]
+    fn test_download_fail_nonexistent() {
+        let mut manager = DownloadManager::new();
+        manager.fail_download("nonexistent", "Error");
+        // Should not panic
+    }
+    
+    #[test]
+    fn test_update_nonexistent() {
+        let mut manager = DownloadManager::new();
+        manager.update_progress("nonexistent", 100, Some(200));
+        assert!(manager.get_progress("nonexistent").is_none());
+    }
+    
+    #[test]
+    fn test_complete_nonexistent() {
+        let mut manager = DownloadManager::new();
+        manager.complete_download("nonexistent", None);
+    }
+    
+    #[test]
+    fn test_update_no_total() {
+        let mut manager = DownloadManager::new();
+        let id = manager.start_download("https://example.com/file.zip", None);
+        manager.update_progress(&id, 500, None);
+        
+        let progress = manager.get_progress(&id).unwrap();
+        assert!(progress.percent.is_none());
+    }
+    
+    #[test]
+    fn test_update_zero_total() {
+        let mut manager = DownloadManager::new();
+        let id = manager.start_download("https://example.com/file.zip", None);
+        manager.update_progress(&id, 0, Some(0));
+        
+        let progress = manager.get_progress(&id).unwrap();
+        assert!(progress.percent.is_none());
+    }
+    
+    #[test]
+    fn test_storage_persist() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        
+        manager.persist(&ref_id).unwrap();
+        
+        let file_ref = manager.get_file_ref(&ref_id).unwrap();
+        assert!(file_ref.persistent);
+        assert_eq!(file_ref.expires_at, "never");
+    }
+    
+    #[test]
+    fn test_storage_persist_not_found() {
+        let mut manager = StorageManager::default();
+        assert!(manager.persist("nonexistent").is_err());
+    }
+    
+    #[test]
+    fn test_storage_extend_ttl() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        
+        let new_expires = manager.extend_ttl(&ref_id, 3600).unwrap();
+        let secs: u64 = new_expires.parse().unwrap();
+        assert!(secs > 0);
+    }
+    
+    #[test]
+    fn test_storage_extend_ttl_persistent() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        manager.persist(&ref_id).unwrap();
+        
+        let result = manager.extend_ttl(&ref_id, 3600).unwrap();
+        assert_eq!(result, "never");
+    }
+    
+    #[test]
+    fn test_storage_extend_ttl_not_found() {
+        let mut manager = StorageManager::default();
+        assert!(manager.extend_ttl("nonexistent", 3600).is_err());
+    }
+    
+    #[test]
+    fn test_add_file_not_found() {
+        let mut manager = StorageManager::default();
+        let file = FileInfo {
+            filename: "test.txt".to_string(),
+            path: "/tmp/test.txt".to_string(),
+            size: 100,
+            mime_type: "text/plain".to_string(),
+            created_at: chrono_now_iso8601(),
+        };
+        assert!(manager.add_file("nonexistent", file).is_err());
+    }
+    
+    #[test]
+    fn test_add_file_too_large() {
+        let config = StorageConfig {
+            max_file_size_bytes: 100,
+            ..Default::default()
+        };
+        let mut manager = StorageManager::new(config);
+        let ref_id = manager.create_file_ref();
+        
+        let file = FileInfo {
+            filename: "big.bin".to_string(),
+            path: "/tmp/big.bin".to_string(),
+            size: 1000,
+            mime_type: "application/octet-stream".to_string(),
+            created_at: chrono_now_iso8601(),
+        };
+        assert!(manager.add_file(&ref_id, file).is_err());
+    }
+    
+    #[test]
+    fn test_storage_warning() {
+        let config = StorageConfig {
+            max_storage_bytes: 1000,
+            warning_threshold: 0.5,
+            critical_threshold: 0.9,
+            max_file_size_bytes: 1000,
+            ..Default::default()
+        };
+        let mut manager = StorageManager::new(config);
+        let ref_id = manager.create_file_ref();
+        
+        let file = FileInfo {
+            filename: "f.bin".to_string(),
+            path: "/tmp/f.bin".to_string(),
+            size: 600,
+            mime_type: "application/octet-stream".to_string(),
+            created_at: chrono_now_iso8601(),
+        };
+        manager.add_file(&ref_id, file).unwrap();
+        
+        assert_eq!(manager.get_status().alert_level, AlertLevel::Warning);
+    }
+    
+    #[test]
+    fn test_storage_critical() {
+        let config = StorageConfig {
+            max_storage_bytes: 1000,
+            warning_threshold: 0.5,
+            critical_threshold: 0.9,
+            max_file_size_bytes: 1000,
+            ..Default::default()
+        };
+        let mut manager = StorageManager::new(config);
+        let ref_id = manager.create_file_ref();
+        
+        let file = FileInfo {
+            filename: "f.bin".to_string(),
+            path: "/tmp/f.bin".to_string(),
+            size: 950,
+            mime_type: "application/octet-stream".to_string(),
+            created_at: chrono_now_iso8601(),
+        };
+        manager.add_file(&ref_id, file).unwrap();
+        
+        assert_eq!(manager.get_status().alert_level, AlertLevel::Critical);
+    }
+    
+    #[test]
+    fn test_cleanup_dry_run() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        
+        if let Some(fr) = manager.file_refs.get_mut(&ref_id) {
+            fr.expires_at = "0".to_string();
+            fr.files.push(FileInfo {
+                filename: "old.txt".to_string(),
+                path: "/tmp/old.txt".to_string(),
+                size: 100,
+                mime_type: "text/plain".to_string(),
+                created_at: "0".to_string(),
+            });
+        }
+        
+        let result = manager.cleanup_expired(true);
+        assert!(result.dry_run);
+        assert_eq!(result.files_deleted, 1);
+        assert!(manager.get_file_ref(&ref_id).is_some());
+    }
+    
+    #[test]
+    fn test_cleanup_actual() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        
+        if let Some(fr) = manager.file_refs.get_mut(&ref_id) {
+            fr.expires_at = "0".to_string();
+        }
+        
+        manager.cleanup_expired(false);
+        assert!(manager.get_file_ref(&ref_id).is_none());
+    }
+    
+    #[test]
+    fn test_cleanup_persistent_preserved() {
+        let mut manager = StorageManager::default();
+        let ref_id = manager.create_file_ref();
+        manager.persist(&ref_id).unwrap();
+        
+        manager.cleanup_expired(false);
+        assert!(manager.get_file_ref(&ref_id).is_some());
+    }
+    
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_download_dir(), "downloads");
+        assert_eq!(default_download_timeout(), 300000);
+        assert_eq!(default_parallel(), 3);
+        assert_eq!(default_max_storage(), 10 * 1024 * 1024 * 1024);
+        assert_eq!(default_max_file_size(), 1024 * 1024 * 1024);
+        assert_eq!(default_ttl(), 24 * 60 * 60);
+        assert_eq!(default_warning_threshold(), 0.80);
+        assert_eq!(default_critical_threshold(), 0.95);
+        assert!(default_true());
+    }
+    
+    #[test]
+    fn test_chrono_helpers() {
+        let now = chrono_now_iso8601();
+        let _: u64 = now.parse().unwrap();
+        
+        assert_eq!(chrono_add_seconds("1000", 500), "1500");
+        assert_eq!(chrono_add_seconds("invalid", 500), "500");
+    }
+    
+    #[test]
+    fn test_status_equality() {
+        assert_eq!(DownloadStatus::Pending, DownloadStatus::Pending);
+        assert_ne!(DownloadStatus::Pending, DownloadStatus::Completed);
+    }
+    
+    #[test]
+    fn test_deserialize() {
+        let json = r#"{"session":"main","url":"https://x.com/f.zip"}"#;
+        let req: DownloadTriggerRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.session, "main");
+        assert_eq!(req.directory, "downloads");
+        
+        let json2 = r#"{"session":"s","urls":["a","b"]}"#;
+        let req2: BatchDownloadRequest = serde_json::from_str(json2).unwrap();
+        assert_eq!(req2.parallel, 3);
+        
+        let json3 = r#"{}"#;
+        let req3: CleanupRequest = serde_json::from_str(json3).unwrap();
+        assert!(req3.expired_only);
+    }
 }
+

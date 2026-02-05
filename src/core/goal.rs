@@ -525,6 +525,10 @@ mod tests {
         assert_eq!(classify_error("timeout waiting for element"), ErrorCategory::Transient);
         assert_eq!(classify_error("Element not found: #btn"), ErrorCategory::Transient);
         assert_eq!(classify_error("Network error occurred"), ErrorCategory::Transient);
+        assert_eq!(classify_error("connection refused"), ErrorCategory::Transient);
+        assert_eq!(classify_error("element not visible"), ErrorCategory::Transient);
+        assert_eq!(classify_error("page still loading"), ErrorCategory::Transient);
+        assert_eq!(classify_error("stale element reference"), ErrorCategory::Transient);
     }
     
     #[test]
@@ -532,6 +536,15 @@ mod tests {
         assert_eq!(classify_error("Invalid selector syntax"), ErrorCategory::Permanent);
         assert_eq!(classify_error("Unauthorized access"), ErrorCategory::Permanent);
         assert_eq!(classify_error("Session closed"), ErrorCategory::Permanent);
+        assert_eq!(classify_error("forbidden resource"), ErrorCategory::Permanent);
+        assert_eq!(classify_error("page not found 404"), ErrorCategory::Permanent);
+        assert_eq!(classify_error("syntax error in script"), ErrorCategory::Permanent);
+    }
+    
+    #[test]
+    fn test_classify_error_unknown() {
+        assert_eq!(classify_error("some random error"), ErrorCategory::Unknown);
+        assert_eq!(classify_error(""), ErrorCategory::Unknown);
     }
     
     #[test]
@@ -540,7 +553,22 @@ mod tests {
         assert_eq!(calculate_delay(0, &config), 1000);
         assert_eq!(calculate_delay(1, &config), 2000);
         assert_eq!(calculate_delay(2, &config), 4000);
+        assert_eq!(calculate_delay(3, &config), 8000);
         assert_eq!(calculate_delay(10, &config), 10000); // capped at max_delay
+    }
+    
+    #[test]
+    fn test_calculate_delay_custom() {
+        let config = RetryConfig {
+            initial_delay_ms: 500,
+            multiplier: 3.0,
+            max_delay_ms: 5000,
+            ..Default::default()
+        };
+        assert_eq!(calculate_delay(0, &config), 500);
+        assert_eq!(calculate_delay(1, &config), 1500);
+        assert_eq!(calculate_delay(2, &config), 4500);
+        assert_eq!(calculate_delay(3, &config), 5000); // capped
     }
     
     #[test]
@@ -551,6 +579,12 @@ mod tests {
         
         let search = find_preset_flow("search");
         assert!(search.is_some());
+        
+        let extract = find_preset_flow("extract_list");
+        assert!(extract.is_some());
+        
+        let nonexistent = find_preset_flow("nonexistent");
+        assert!(nonexistent.is_none());
     }
     
     #[test]
@@ -571,6 +605,90 @@ mod tests {
     }
     
     #[test]
+    fn test_generate_fill_script() {
+        let mut params = HashMap::new();
+        params.insert("value".to_string(), serde_json::json!("test@example.com"));
+        
+        let request = GoalRequest {
+            session: "test".to_string(),
+            goal_type: GoalType::Fill,
+            target: "#email".to_string(),
+            params,
+            retry: RetryConfig::default(),
+            timeout_ms: 5000,
+            chain: None,
+        };
+        
+        let script = generate_goal_script(&request);
+        assert!(script.contains("#email"));
+        assert!(script.contains("test@example.com"));
+    }
+    
+    #[test]
+    fn test_generate_navigate_script() {
+        let request = GoalRequest {
+            session: "test".to_string(),
+            goal_type: GoalType::Navigate,
+            target: "https://example.com".to_string(),
+            params: HashMap::new(),
+            retry: RetryConfig::default(),
+            timeout_ms: 5000,
+            chain: None,
+        };
+        
+        let script = generate_goal_script(&request);
+        assert!(script.contains("https://example.com"));
+    }
+    
+    #[test]
+    fn test_generate_wait_script() {
+        let request = GoalRequest {
+            session: "test".to_string(),
+            goal_type: GoalType::Wait,
+            target: "#loading".to_string(),
+            params: HashMap::new(),
+            retry: RetryConfig::default(),
+            timeout_ms: 5000,
+            chain: None,
+        };
+        
+        let script = generate_goal_script(&request);
+        assert!(script.contains("#loading"));
+    }
+    
+    #[test]
+    fn test_generate_extract_script() {
+        let request = GoalRequest {
+            session: "test".to_string(),
+            goal_type: GoalType::Extract,
+            target: ".product-price".to_string(),
+            params: HashMap::new(),
+            retry: RetryConfig::default(),
+            timeout_ms: 5000,
+            chain: None,
+        };
+        
+        let script = generate_goal_script(&request);
+        assert!(script.contains(".product-price"));
+    }
+    
+    #[test]
+    fn test_generate_scroll_script() {
+        let request = GoalRequest {
+            session: "test".to_string(),
+            goal_type: GoalType::Scroll,
+            target: "bottom".to_string(),
+            params: HashMap::new(),
+            retry: RetryConfig::default(),
+            timeout_ms: 5000,
+            chain: None,
+        };
+        
+        let script = generate_goal_script(&request);
+        assert!(script.contains("scroll"));
+    }
+    
+    #[test]
     fn test_flow_registry() {
         let mut registry = FlowRegistry::new();
         
@@ -586,4 +704,109 @@ mod tests {
         assert!(registry.get("login").is_some()); // Fallback to preset
         assert!(registry.list().contains(&"my_flow".to_string()));
     }
+    
+    #[test]
+    fn test_flow_registry_list() {
+        let registry = FlowRegistry::new();
+        let list = registry.list();
+        
+        // Should include default presets
+        assert!(list.contains(&"login".to_string()));
+        assert!(list.contains(&"search".to_string()));
+    }
+    
+    #[test]
+    fn test_should_retry() {
+        let config = RetryConfig::default();
+        
+        // Transient - should retry
+        assert!(should_retry("timeout occurred", &config));
+        assert!(should_retry("element not found", &config));
+        
+        // Permanent - should not retry
+        assert!(!should_retry("invalid selector", &config));
+        assert!(!should_retry("session closed", &config));
+    }
+    
+    #[test]
+    fn test_should_retry_unknown_with_match() {
+        let mut config = RetryConfig::default();
+        config.retry_on = vec!["custom_error".to_string()];
+        
+        assert!(should_retry("custom_error happened", &config));
+        assert!(!should_retry("unknown_error", &config));
+    }
+    
+    #[test]
+    fn test_retry_config_default() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.initial_delay_ms, 1000);
+        assert_eq!(config.multiplier, 2.0);
+        assert_eq!(config.max_delay_ms, 10000);
+        assert!(config.retry_on.contains(&"timeout".to_string()));
+    }
+    
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_timeout(), 30000);
+        assert_eq!(default_max_retries(), 3);
+        assert_eq!(default_initial_delay(), 1000);
+        assert_eq!(default_multiplier(), 2.0);
+        assert_eq!(default_max_delay(), 10000);
+    }
+    
+    #[test]
+    fn test_goal_type_equality() {
+        assert_eq!(GoalType::Click, GoalType::Click);
+        assert_ne!(GoalType::Click, GoalType::Fill);
+    }
+    
+    #[test]
+    fn test_goal_request_deserialize() {
+        let json = r##"{
+            "session": "main",
+            "type": "click",
+            "target": "#btn"
+        }"##;
+        
+        let req: GoalRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.session, "main");
+        assert_eq!(req.goal_type, GoalType::Click);
+        assert_eq!(req.target, "#btn");
+        assert_eq!(req.timeout_ms, 30000); // default
+    }
+    
+    #[test]
+    fn test_goal_request_with_params() {
+        let json = r##"{
+            "session": "main",
+            "type": "fill",
+            "target": "#email",
+            "params": {"value": "test@test.com"},
+            "timeout_ms": 5000
+        }"##;
+        
+        let req: GoalRequest = serde_json::from_str(json).unwrap();
+        assert!(req.params.contains_key("value"));
+        assert_eq!(req.timeout_ms, 5000);
+    }
+    
+    #[test]
+    fn test_error_category_equality() {
+        assert_eq!(ErrorCategory::Transient, ErrorCategory::Transient);
+        assert_ne!(ErrorCategory::Transient, ErrorCategory::Permanent);
+    }
+    
+    #[test]
+    fn test_preset_flow_steps() {
+        let login = find_preset_flow("login").unwrap();
+        
+        // Check step structure
+        assert!(!login.steps.is_empty());
+        for step in &login.steps {
+            assert!(!step.target.is_empty());
+        }
+    }
 }
+
