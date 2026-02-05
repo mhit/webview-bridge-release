@@ -223,6 +223,7 @@ pub trait ResponseAssertions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
     
     #[tokio::test]
     async fn test_server_creation() {
