@@ -7,6 +7,7 @@ use uuid::Uuid;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 pub mod profile;
+pub mod screenshot_v2;
 pub mod session_v2;
 pub mod wait_v2;
 pub mod websocket;

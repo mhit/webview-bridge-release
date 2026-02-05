@@ -124,6 +124,9 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/:name", get(session_get))
         // Wait v2
         .route("/wait", post(wait_v2))
+        // Screenshot v2
+        .route("/screenshot", post(screenshot_v2))
+        .route("/screenshot/devices", get(screenshot_devices))
         .with_state(state)
 }
 
@@ -376,6 +379,153 @@ async fn wait_v2(
             "condition": format!("{:?}", request.condition),
             "timeout_ms": request.timeout_ms,
             "_note": "Full async execution pending - script generated"
+        })),
+    )
+}
+
+// ============================================================================
+// Screenshot v2 Endpoints
+// ============================================================================
+
+use crate::core::screenshot_v2::{
+    ScreenshotRequest, CaptureMode, get_device_presets, find_device_preset,
+    generate_wait_for_images_script, generate_element_screenshot_script,
+    generate_full_page_dimensions_script, generate_hide_elements_script,
+};
+
+/// POST /v2/screenshot - Advanced screenshot with modes and device emulation
+async fn screenshot_v2(
+    State(_state): State<V2AppState>,
+    Json(request): Json<ScreenshotRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    // Get session handle
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Build response based on capture mode
+    let mode_info = match request.mode {
+        CaptureMode::Viewport => "viewport",
+        CaptureMode::FullPage => "full_page",
+        CaptureMode::Element => "element",
+    };
+    
+    // Device emulation info
+    let device_info = if let Some(ref device_name) = request.device {
+        if let Some(preset) = find_device_preset(device_name) {
+            Some(json!({
+                "name": preset.name,
+                "viewport": {
+                    "width": preset.viewport.width,
+                    "height": preset.viewport.height
+                },
+                "is_mobile": preset.viewport.is_mobile
+            }))
+        } else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_090",
+                        "name": "INVALID_REQUEST",
+                        "message": format!("Unknown device preset: {}", device_name)
+                    }
+                })),
+            );
+        }
+    } else {
+        None
+    };
+    
+    // Generate appropriate scripts based on mode
+    let scripts: Vec<String> = {
+        let mut s = Vec::new();
+        
+        // Wait for images if requested
+        if request.wait_for_images {
+            s.push(generate_wait_for_images_script(request.timeout_ms));
+        }
+        
+        // Hide elements if requested
+        if let Some(ref selectors) = request.hide_selectors {
+            s.push(generate_hide_elements_script(selectors));
+        }
+        
+        // Mode-specific scripts
+        match request.mode {
+            CaptureMode::Element => {
+                if let Some(ref selector) = request.selector {
+                    s.push(generate_element_screenshot_script(selector, request.padding.unwrap_or(0)));
+                }
+            }
+            CaptureMode::FullPage => {
+                s.push(generate_full_page_dimensions_script());
+            }
+            CaptureMode::Viewport => {
+                // No additional scripts needed
+            }
+        }
+        
+        s
+    };
+    
+    // TODO: Execute scripts through session handle and capture screenshot
+    // For now, return success with the request info
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Screenshot request queued",
+            "session": request.session,
+            "mode": mode_info,
+            "format": format!("{:?}", request.format).to_lowercase(),
+            "quality": request.quality,
+            "device": device_info,
+            "scripts_count": scripts.len(),
+            "_note": "Full implementation pending - scripts generated"
+        })),
+    )
+}
+
+/// GET /v2/screenshot/devices - List available device presets
+async fn screenshot_devices() -> impl IntoResponse {
+    let presets = get_device_presets();
+    
+    let devices: Vec<serde_json::Value> = presets.iter().map(|p| {
+        json!({
+            "name": p.name,
+            "viewport": {
+                "width": p.viewport.width,
+                "height": p.viewport.height,
+                "device_scale_factor": p.viewport.device_scale_factor
+            },
+            "is_mobile": p.viewport.is_mobile,
+            "has_touch": p.viewport.has_touch
+        })
+    }).collect();
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "devices": devices,
+            "count": devices.len()
         })),
     )
 }
