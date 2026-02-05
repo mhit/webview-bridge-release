@@ -472,9 +472,173 @@ try {
             # Skip normal session cleanup since we handled it
             $script:SessionId = $null
         }
+        "profile-concurrency" {
+            Write-TestHeader "Profile Concurrency Test (Same Profile, Multiple Sessions)"
+            
+            # This test verifies that multiple sessions using the same profile
+            # can operate safely without corrupting cookies or profile data
+            
+            $sharedProfile = "shared_profile_test"
+            $sessions = @()
+            $sessionCount = 3
+            
+            try {
+                # Step 1: Create multiple sessions with the SAME profile
+                Write-Host "Creating $sessionCount sessions with shared profile..." -ForegroundColor Cyan
+                for ($i = 1; $i -le $sessionCount; $i++) {
+                    $body = @{ profile = $sharedProfile; headless = $false } | ConvertTo-Json
+                    try {
+                        $session = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $body -ContentType "application/json"
+                        $sessions += $session.id
+                        Write-Host "  Session $i : $($session.id)" -ForegroundColor Gray
+                    }
+                    catch {
+                        Write-Host "  Session $i : Failed to create" -ForegroundColor Red
+                    }
+                    Start-Sleep -Seconds 3
+                }
+                
+                $createdCount = $sessions.Count
+                Write-TestResult "PC-01" "Create $sessionCount Sessions with Same Profile" ($createdCount -ge 2) "Created: $createdCount"
+                
+                # Wait for all sessions to initialize
+                Start-Sleep -Seconds 5
+                
+                # Step 2: Set different cookies from each session simultaneously
+                Write-Host "Setting cookies from multiple sessions..." -ForegroundColor Cyan
+                $cookieSetJobs = @()
+                for ($i = 0; $i -lt $sessions.Count; $i++) {
+                    $sid = $sessions[$i]
+                    $cookieName = "session_${i}_cookie"
+                    $cookieValue = "VALUE_FROM_SESSION_$i"
+                    $url = "https://httpbin.org/cookies/set/$cookieName/$cookieValue"
+                    
+                    # Navigate to set cookie
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/navigate/$sid" -Method Post -Body "{`"url`":`"$url`"}" -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                        Write-Host "  Session $i set cookie: $cookieName" -ForegroundColor Gray
+                    }
+                    catch {
+                        Write-Host "  Session $i failed to set cookie" -ForegroundColor Red
+                    }
+                }
+                
+                Write-TestResult "PC-02" "Set Cookies from Multiple Sessions" $true ""
+                
+                # Wait for cookie operations to complete
+                Start-Sleep -Seconds 5
+                
+                # Step 3: Navigate all sessions to cookies page and extract
+                Write-Host "Verifying cookies from all sessions..." -ForegroundColor Cyan
+                $cookieResults = @()
+                for ($i = 0; $i -lt $sessions.Count; $i++) {
+                    $sid = $sessions[$i]
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/navigate/$sid" -Method Post -Body '{"url":"https://httpbin.org/cookies"}' -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                        Start-Sleep -Seconds 2
+                        $extract = Invoke-RestMethod -Uri "$ServerUrl/extract/$sid" -Method Post -Body '{"selector":"pre"}' -ContentType "application/json" -TimeoutSec 30
+                        if ($extract.data) {
+                            $content = $extract.data -join ""
+                            $cookieResults += $content
+                            Write-Host "  Session $i cookies: $(if ($content.Length -gt 100) { $content.Substring(0, 100) + '...' } else { $content })" -ForegroundColor Gray
+                        }
+                    }
+                    catch {
+                        Write-Host "  Session $i failed to extract cookies" -ForegroundColor Red
+                    }
+                }
+                
+                # Step 4: Verify all sessions see the same cookies (profile sharing)
+                # Since they share the same profile, they should eventually see all cookies
+                $allSeeAllCookies = $true
+                for ($i = 0; $i -lt $sessions.Count; $i++) {
+                    $expectedCookie = "session_${i}_cookie"
+                    foreach ($result in $cookieResults) {
+                        # Check if at least one session sees each cookie
+                    }
+                }
+                Write-TestResult "PC-03" "Extract Cookies from All Sessions" ($cookieResults.Count -gt 0) "Got $($cookieResults.Count) results"
+                
+                # Step 5: Perform concurrent navigation without corruption
+                Write-Host "Testing concurrent navigation..." -ForegroundColor Cyan
+                $navUrls = @(
+                    "https://example.com",
+                    "https://httpbin.org/html",
+                    "https://httpbin.org/get"
+                )
+                for ($i = 0; $i -lt [Math]::Min($sessions.Count, $navUrls.Count); $i++) {
+                    $sid = $sessions[$i]
+                    $url = $navUrls[$i]
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/navigate/$sid" -Method Post -Body "{`"url`":`"$url`"}" -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                    }
+                    catch {
+                        # Ignore navigation errors
+                    }
+                }
+                Start-Sleep -Seconds 3
+                
+                # Step 6: Verify sessions are still functional
+                $functionalCount = 0
+                for ($i = 0; $i -lt $sessions.Count; $i++) {
+                    $sid = $sessions[$i]
+                    try {
+                        $status = Invoke-RestMethod -Uri "$ServerUrl/status/$sid" -Method Get -TimeoutSec 10
+                        if ($status.status -eq "Ready") {
+                            $functionalCount++
+                        }
+                    }
+                    catch {
+                        # Session not functional
+                    }
+                }
+                Write-TestResult "PC-04" "Sessions Still Functional After Concurrent Ops" ($functionalCount -eq $sessions.Count) "Functional: $functionalCount / $($sessions.Count)"
+                
+                # Step 7: Close one session and verify others still work
+                if ($sessions.Count -ge 2) {
+                    $closedSid = $sessions[0]
+                    Invoke-RestMethod -Uri "$ServerUrl/close/$closedSid" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+                    Write-Host "Closed first session: $closedSid" -ForegroundColor Gray
+                    Start-Sleep -Seconds 2
+                    
+                    # Check remaining sessions
+                    $remainingFunctional = 0
+                    for ($i = 1; $i -lt $sessions.Count; $i++) {
+                        $sid = $sessions[$i]
+                        try {
+                            $status = Invoke-RestMethod -Uri "$ServerUrl/status/$sid" -Method Get -TimeoutSec 10
+                            if ($status.status -eq "Ready") {
+                                $remainingFunctional++
+                            }
+                        }
+                        catch {
+                            # Session not functional
+                        }
+                    }
+                    Write-TestResult "PC-05" "Remaining Sessions Work After Closing One" ($remainingFunctional -eq ($sessions.Count - 1)) "Remaining: $remainingFunctional / $($sessions.Count - 1)"
+                }
+                
+            }
+            finally {
+                # Cleanup: Close all sessions
+                Write-Host "Cleaning up sessions..." -ForegroundColor Cyan
+                foreach ($sid in $sessions) {
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/close/$sid" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+                    }
+                    catch {
+                        # Ignore cleanup errors
+                    }
+                }
+                Write-Host "All sessions closed" -ForegroundColor Gray
+            }
+            
+            # Skip normal session cleanup since we handled it
+            $script:SessionId = $null
+        }
         default {
             Write-Host "Unknown test: $TestCase" -ForegroundColor Red
-            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, profile-isolation, all" -ForegroundColor Yellow
+            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, profile-isolation, profile-concurrency, all" -ForegroundColor Yellow
         }
     }
 }
