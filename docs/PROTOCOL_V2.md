@@ -350,7 +350,447 @@ POST /v2/goal
 | 10.2 自動リトライ | エラー時の自己回復 | 3h |
 | 10.3 プリセットフロー | 「ログインして」等の定義 | 4h |
 
+### Phase 11: マクロスクリプト (優先度: 高)
+
+| タスク | 詳細 | 工数 |
+|--------|------|------|
+| 11.1 JSマクロエンジン | WebView2内でJS実行、複数ステップ一括 | 6h |
+| 11.2 よくあるパターン定義 | リスト抽出、ページネーション等 | 4h |
+| 11.3 SPA対応 | クライアントサイドレンダリング待機 | 3h |
+| 11.4 マクロ登録API | カスタムマクロの保存・実行 | 3h |
+
+### Phase 12: メディア収集 (優先度: 中)
+
+| タスク | 詳細 | 工数 |
+|--------|------|------|
+| 12.1 画像一括収集 | ページ内画像の抽出・ダウンロード | 4h |
+| 12.2 YouTube字幕取得 | yt-dlp連携、字幕ファイル生成 | 4h |
+| 12.3 動画ダウンロード | yt-dlp経由の動画取得 | 4h |
+| 12.4 メディアキャッシュ | 重複ダウンロード防止 | 2h |
+
 ---
+
+## 5. マクロスクリプト設計
+
+### 5.1 設計思想
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    マクロスクリプト設計思想                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [問題: 通信オーバーヘッド]                                     │
+│                                                                 │
+│  従来のアプローチ:                                              │
+│    AI → navigate(url)     → サーバー → WebView2                │
+│    AI → waitForSelector() → サーバー → WebView2                │
+│    AI → extract(selector) → サーバー → WebView2                │
+│    AI → click(next)       → サーバー → WebView2                │
+│    AI → waitForSelector() → サーバー → WebView2                │
+│    AI → extract(selector) → サーバー → WebView2                │
+│    ...                                                          │
+│    → 6回の通信、AIコンテキスト消費大                            │
+│                                                                 │
+│  マクロアプローチ:                                              │
+│    AI → execute_macro({                                         │
+│           type: "paginated_list",                               │
+│           selector: ".item",                                    │
+│           next_button: ".next",                                 │
+│           max_pages: 5                                          │
+│         })                                                      │
+│    → 1回の通信、WebView2内で全処理完結                          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 JSマクロエンジン
+
+WebView2内で動作するJavaScriptエンジン。複数のステップを一括実行。
+
+```javascript
+// WebView2内で実行されるマクロ例
+(async function(config) {
+    const results = [];
+    let pageNum = 1;
+    
+    while (pageNum <= config.max_pages) {
+        // 要素が表示されるまで待機
+        await waitFor(config.selector, { timeout: 10000 });
+        
+        // データ抽出
+        const items = document.querySelectorAll(config.selector);
+        items.forEach(item => {
+            results.push({
+                text: item.innerText,
+                href: item.querySelector('a')?.href,
+                img: item.querySelector('img')?.src
+            });
+        });
+        
+        // 次のページへ
+        const nextBtn = document.querySelector(config.next_button);
+        if (!nextBtn || nextBtn.disabled) break;
+        
+        nextBtn.click();
+        await waitForNavigation();
+        pageNum++;
+    }
+    
+    return results;
+})(__CONFIG__);
+```
+
+### 5.3 よくあるパターン (プリセットマクロ)
+
+#### リスト抽出 (extract_list)
+
+```http
+POST /v2/macro
+{
+    "session": "default",
+    "macro": "extract_list",
+    "config": {
+        "item_selector": ".product-card",
+        "fields": {
+            "name": ".product-name",
+            "price": ".product-price",
+            "image": "img@src",        // @attributeで属性取得
+            "link": "a@href"
+        },
+        "filter": {                     // オプション: 不要な要素を除外
+            "exclude_text": ["広告", "PR"],
+            "min_price": 1000
+        },
+        "transform": {                  // オプション: データ変換
+            "price": "parseInt(value.replace(/[^0-9]/g, ''))"
+        }
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "items": [
+        {"name": "商品A", "price": 1980, "image": "...", "link": "..."},
+        {"name": "商品B", "price": 2480, "image": "...", "link": "..."},
+        ...
+    ],
+    "count": 24,
+    "filtered_count": 2  // 除外された数
+}
+```
+
+#### ページネーション (paginated_extract)
+
+```http
+POST /v2/macro
+{
+    "session": "default",
+    "macro": "paginated_extract",
+    "config": {
+        "item_selector": ".search-result",
+        "fields": {...},
+        "pagination": {
+            "type": "click",           // click | scroll | url_param
+            "next_button": ".next-page",
+            "max_pages": 10,
+            "wait_after_click": 2000   // ms
+        },
+        // または無限スクロール対応
+        "pagination": {
+            "type": "scroll",
+            "scroll_container": "window",
+            "max_scrolls": 20,
+            "no_new_items_threshold": 3  // 新しいアイテムが3回なければ終了
+        }
+    }
+}
+```
+
+#### SPA待機 (wait_for_spa)
+
+```http
+POST /v2/macro
+{
+    "session": "default",
+    "macro": "wait_for_spa",
+    "config": {
+        "trigger": {
+            "action": "click",
+            "selector": "#load-more"
+        },
+        "wait_for": {
+            "type": "mutation",        // mutation | network_idle | element
+            "selector": ".new-content",
+            "timeout": 10000
+        },
+        "extract_after": {
+            "selector": ".item",
+            "fields": {...}
+        }
+    }
+}
+```
+
+### 5.4 カスタムマクロ登録
+
+```http
+# マクロ登録
+POST /v2/macro/register
+{
+    "name": "rakuten_product_search",
+    "description": "楽天市場の商品検索結果を取得",
+    "script": "
+        (async function(config) {
+            // 検索
+            const input = document.querySelector('input[name=\"sitem\"]');
+            input.value = config.keyword;
+            input.form.submit();
+            
+            await waitFor('.searchresultitem', { timeout: 15000 });
+            
+            // 抽出
+            const items = [];
+            document.querySelectorAll('.searchresultitem').forEach(el => {
+                items.push({
+                    name: el.querySelector('.title')?.innerText,
+                    price: el.querySelector('.price')?.innerText,
+                    shop: el.querySelector('.shopname')?.innerText,
+                    url: el.querySelector('a')?.href
+                });
+            });
+            
+            return items;
+        })(__CONFIG__);
+    ",
+    "config_schema": {
+        "keyword": { "type": "string", "required": true }
+    }
+}
+
+# 登録したマクロの実行
+POST /v2/macro
+{
+    "session": "rakuten",
+    "macro": "rakuten_product_search",
+    "config": {
+        "keyword": "ゲーミングマウス"
+    }
+}
+```
+
+---
+
+## 6. メディア収集設計
+
+### 6.1 画像一括収集
+
+```http
+POST /v2/media/images
+{
+    "session": "default",
+    "source": {
+        "type": "page",              // page | selector | urls
+        "selector": ".gallery img",  // type=selectorの場合
+        "urls": ["..."]              // type=urlsの場合
+    },
+    "filter": {
+        "min_width": 200,
+        "min_height": 200,
+        "exclude_patterns": ["icon", "logo", "avatar"]
+    },
+    "download": {
+        "format": "original",        // original | jpeg | png | webp
+        "max_size": 5000000,         // 5MB
+        "concurrent": 5
+    },
+    "output": {
+        "type": "base64",            // base64 | file | zip
+        "path": "/downloads/images"  // type=file/zipの場合
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "images": [
+        {
+            "url": "https://example.com/image1.jpg",
+            "width": 800,
+            "height": 600,
+            "size": 125000,
+            "data": "iVBORw0KGgo..."  // type=base64の場合
+        },
+        ...
+    ],
+    "total": 15,
+    "downloaded": 12,
+    "filtered": 3
+}
+```
+
+### 6.2 YouTube字幕取得
+
+```http
+POST /v2/media/youtube/subtitles
+{
+    "url": "https://www.youtube.com/watch?v=xxxxx",
+    "languages": ["ja", "en"],        // 優先順位
+    "format": "text",                 // text | srt | vtt | json
+    "include_auto_generated": true
+}
+
+# レスポンス
+{
+    "success": true,
+    "video_id": "xxxxx",
+    "title": "動画タイトル",
+    "duration": 600,
+    "subtitles": {
+        "language": "ja",
+        "auto_generated": false,
+        "content": "00:00 こんにちは\n00:05 今日は...",
+        // または format=json の場合
+        "segments": [
+            {"start": 0, "end": 5, "text": "こんにちは"},
+            {"start": 5, "end": 10, "text": "今日は..."}
+        ]
+    }
+}
+```
+
+### 6.3 動画ダウンロード (yt-dlp連携)
+
+```http
+POST /v2/media/youtube/download
+{
+    "url": "https://www.youtube.com/watch?v=xxxxx",
+    "format": {
+        "video": "best[height<=1080]",
+        "audio": "bestaudio",
+        "merge": true
+    },
+    "output": {
+        "type": "file",
+        "path": "/downloads/videos",
+        "filename_template": "%(title)s.%(ext)s"
+    },
+    "options": {
+        "extract_audio": false,       // 音声のみ抽出
+        "add_metadata": true,
+        "embed_thumbnail": true
+    }
+}
+
+# レスポンス（ダウンロード開始）
+{
+    "success": true,
+    "job_id": "dl_12345",
+    "status": "downloading",
+    "progress_url": "/v2/media/job/dl_12345"
+}
+
+# 進捗確認
+GET /v2/media/job/dl_12345
+{
+    "job_id": "dl_12345",
+    "status": "completed",           // pending | downloading | completed | error
+    "progress": 100,
+    "file": {
+        "path": "/downloads/videos/動画タイトル.mp4",
+        "size": 150000000,
+        "duration": 600
+    }
+}
+```
+
+### 6.4 サイト対応状況
+
+yt-dlpは多くのサイトに対応:
+
+| サイト | 対応機能 |
+|--------|---------|
+| YouTube | 動画、字幕、プレイリスト、ライブ |
+| Twitter/X | 動画、GIF |
+| TikTok | 動画 |
+| Vimeo | 動画 |
+| ニコニコ動画 | 動画、コメント |
+| bilibili | 動画 |
+| その他 | 1000+サイト対応 |
+
+---
+
+## 7. SPA (Single Page Application) 対応
+
+### 7.1 クライアントサイドレンダリング検出
+
+```javascript
+// WebView2内で実行される検出スクリプト
+(function() {
+    // React/Vue/Angular等のSPA検出
+    const isSPA = 
+        window.__REACT_DEVTOOLS_GLOBAL_HOOK__ ||
+        window.__VUE__ ||
+        window.ng ||
+        document.querySelector('[ng-app]') ||
+        document.querySelector('[data-reactroot]') ||
+        document.querySelector('#app[data-v-app]');
+    
+    return {
+        is_spa: !!isSPA,
+        framework: detectFramework(),
+        initial_content_loaded: document.readyState === 'complete'
+    };
+})();
+```
+
+### 7.2 SPA用待機戦略
+
+```http
+POST /v2/wait
+{
+    "session": "default",
+    "strategy": "spa_ready",
+    "config": {
+        "framework_detection": true,
+        "wait_conditions": [
+            { "type": "network_idle", "threshold": 500 },
+            { "type": "dom_stable", "threshold": 1000 },
+            { "type": "selector_present", "selector": ".content" }
+        ],
+        "timeout": 15000
+    }
+}
+```
+
+---
+
+## 8. 設計原則の補足
+
+### 8.1 通信回数最小化
+
+| 操作 | 従来 | WBP2 |
+|------|------|------|
+| ページネーション5ページ | 15回以上 | 1回 |
+| 商品リスト抽出+フィルター | 10回以上 | 1回 |
+| YouTube字幕取得 | N/A | 1回 |
+| 画像一括収集20枚 | 21回 | 1回 |
+
+### 8.2 AIコンテキスト効率
+
+```
+従来:
+  User: "楽天で商品検索して"
+  AI: navigate → wait → type → click → wait → extract → ...
+  → 複数ターンのやり取り、コンテキスト消費大
+
+WBP2:
+  User: "楽天で商品検索して"
+  AI: execute_macro("rakuten_product_search", {keyword: "..."})
+  → 1ターンで完結、結果のみ返却
+```
+
+
 
 ## 5. 既存プロトコルの今後
 
