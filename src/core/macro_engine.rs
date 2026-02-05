@@ -683,6 +683,9 @@ mod tests {
         assert!(script.contains("React"));
         assert!(script.contains("Vue"));
         assert!(script.contains("Angular"));
+        assert!(script.contains("Svelte"));
+        assert!(script.contains("Next.js"));
+        assert!(script.contains("Nuxt"));
     }
     
     #[test]
@@ -693,6 +696,18 @@ mod tests {
         let extract = find_preset_macro("extract_list");
         assert!(extract.is_some());
         assert!(extract.unwrap().builtin);
+        
+        let paginated = find_preset_macro("paginated_extract");
+        assert!(paginated.is_some());
+        
+        let wait_spa = find_preset_macro("wait_for_spa");
+        assert!(wait_spa.is_some());
+        
+        let form_fill = find_preset_macro("form_fill");
+        assert!(form_fill.is_some());
+        
+        let nonexistent = find_preset_macro("nonexistent");
+        assert!(nonexistent.is_none());
     }
     
     #[test]
@@ -719,6 +734,100 @@ mod tests {
     }
     
     #[test]
+    fn test_macro_registry_empty_name() {
+        let mut registry = MacroRegistry::new();
+        
+        let custom = MacroDefinition {
+            name: "".to_string(),
+            description: "Empty name".to_string(),
+            script: "".to_string(),
+            required_params: vec![],
+            optional_params: HashMap::new(),
+            timeout_ms: 5000,
+            builtin: false,
+        };
+        
+        assert!(registry.register(custom).is_err());
+    }
+    
+    #[test]
+    fn test_macro_registry_cannot_overwrite_builtin() {
+        let mut registry = MacroRegistry::new();
+        
+        // Register builtin first
+        let builtin = MacroDefinition {
+            name: "test_builtin".to_string(),
+            description: "Builtin".to_string(),
+            script: "".to_string(),
+            required_params: vec![],
+            optional_params: HashMap::new(),
+            timeout_ms: 5000,
+            builtin: true,
+        };
+        registry.macros.insert("test_builtin".to_string(), builtin);
+        
+        // Try to overwrite
+        let custom = MacroDefinition {
+            name: "test_builtin".to_string(),
+            description: "Custom".to_string(),
+            script: "".to_string(),
+            required_params: vec![],
+            optional_params: HashMap::new(),
+            timeout_ms: 5000,
+            builtin: false,
+        };
+        
+        assert!(registry.register(custom).is_err());
+    }
+    
+    #[test]
+    fn test_macro_registry_cannot_delete_builtin() {
+        let mut registry = MacroRegistry::new();
+        
+        let builtin = MacroDefinition {
+            name: "test_builtin".to_string(),
+            description: "Builtin".to_string(),
+            script: "".to_string(),
+            required_params: vec![],
+            optional_params: HashMap::new(),
+            timeout_ms: 5000,
+            builtin: true,
+        };
+        registry.macros.insert("test_builtin".to_string(), builtin);
+        
+        assert!(registry.delete("test_builtin").is_err());
+    }
+    
+    #[test]
+    fn test_macro_registry_delete_nonexistent() {
+        let mut registry = MacroRegistry::new();
+        // Should succeed (no-op)
+        assert!(registry.delete("nonexistent").is_ok());
+    }
+    
+    #[test]
+    fn test_macro_registry_list() {
+        let mut registry = MacroRegistry::new();
+        
+        let custom = MacroDefinition {
+            name: "aaa_first".to_string(),
+            description: "First".to_string(),
+            script: "".to_string(),
+            required_params: vec![],
+            optional_params: HashMap::new(),
+            timeout_ms: 5000,
+            builtin: false,
+        };
+        registry.register(custom).unwrap();
+        
+        let list = registry.list();
+        // Should include custom and presets
+        assert!(list.len() >= 5);
+        // Should be sorted
+        assert_eq!(list[0].name, "aaa_first");
+    }
+    
+    #[test]
     fn test_generate_macro_script() {
         let macro_def = find_preset_macro("extract_list").unwrap();
         let params: HashMap<String, serde_json::Value> = [
@@ -729,4 +838,112 @@ mod tests {
         assert!(script.contains("__wbp2_waitFor"));
         assert!(script.contains(".item"));
     }
+    
+    #[test]
+    fn test_generate_wait_for_helper() {
+        let script = generate_wait_for_helper();
+        assert!(script.contains("__wbp2_waitFor"));
+        assert!(script.contains("Promise"));
+        assert!(script.contains("querySelector"));
+    }
+    
+    #[test]
+    fn test_generate_wait_for_navigation_helper() {
+        let script = generate_wait_for_navigation_helper();
+        assert!(script.contains("__wbp2_waitForNavigation"));
+        assert!(script.contains("location.href"));
+    }
+    
+    #[test]
+    fn test_generate_wait_for_network_idle_helper() {
+        let script = generate_wait_for_network_idle_helper();
+        assert!(script.contains("__wbp2_waitForNetworkIdle"));
+        assert!(script.contains("fetch"));
+        assert!(script.contains("XMLHttpRequest"));
+    }
+    
+    #[test]
+    fn test_generate_wait_for_dom_stable_helper() {
+        let script = generate_wait_for_dom_stable_helper();
+        assert!(script.contains("__wbp2_waitForDomStable"));
+        assert!(script.contains("MutationObserver"));
+    }
+    
+    #[test]
+    fn test_generate_all_helpers() {
+        let script = generate_all_helpers();
+        assert!(script.contains("__wbp2_waitFor"));
+        assert!(script.contains("__wbp2_waitForNavigation"));
+        assert!(script.contains("__wbp2_waitForNetworkIdle"));
+        assert!(script.contains("__wbp2_waitForDomStable"));
+    }
+    
+    #[test]
+    fn test_spa_framework_equality() {
+        assert_eq!(SpaFramework::React, SpaFramework::React);
+        assert_ne!(SpaFramework::React, SpaFramework::Vue);
+    }
+    
+    #[test]
+    fn test_default_timeout() {
+        assert_eq!(default_timeout(), 30000);
+    }
+    
+    #[test]
+    fn test_macro_definition_deserialize() {
+        let json = r##"{
+            "name": "test",
+            "description": "Test macro",
+            "script": "console.log('test')"
+        }"##;
+        
+        let def: MacroDefinition = serde_json::from_str(json).unwrap();
+        assert_eq!(def.name, "test");
+        assert_eq!(def.timeout_ms, 30000); // default
+        assert!(!def.builtin);
+    }
+    
+    #[test]
+    fn test_macro_execute_request_deserialize() {
+        let json = r##"{
+            "session": "main",
+            "name": "extract_list"
+        }"##;
+        
+        let req: MacroExecuteRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.session, "main");
+        assert_eq!(req.name, "extract_list");
+        assert!(req.timeout_ms.is_none());
+    }
+    
+    #[test]
+    fn test_preset_macro_required_params() {
+        let extract = find_preset_macro("extract_list").unwrap();
+        assert!(extract.required_params.contains(&"selector".to_string()));
+        
+        let paginated = find_preset_macro("paginated_extract").unwrap();
+        assert!(paginated.required_params.contains(&"selector".to_string()));
+        assert!(paginated.required_params.contains(&"next_selector".to_string()));
+        
+        let form = find_preset_macro("form_fill").unwrap();
+        assert!(form.required_params.contains(&"fields".to_string()));
+    }
+    
+    #[test]
+    fn test_preset_macro_optional_params() {
+        let extract = find_preset_macro("extract_list").unwrap();
+        assert!(extract.optional_params.contains_key("container"));
+        assert!(extract.optional_params.contains_key("limit"));
+    }
+    
+    #[test]
+    fn test_macro_script_generation_empty_params() {
+        let macro_def = find_preset_macro("wait_for_spa").unwrap();
+        let params: HashMap<String, serde_json::Value> = HashMap::new();
+        
+        let script = generate_macro_script(&macro_def, &params);
+        assert!(script.contains("__wbp2_waitFor"));
+        assert!(script.contains("{}"));
+    }
 }
+
