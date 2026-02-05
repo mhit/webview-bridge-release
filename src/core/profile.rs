@@ -235,7 +235,6 @@ impl Default for ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
 
     fn create_temp_manager() -> (TempDir, ProfileManager) {

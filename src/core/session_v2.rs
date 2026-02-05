@@ -644,6 +644,7 @@ mod tests {
         let ts = chrono_now_iso8601();
         assert!(ts.contains('T'));
         assert!(ts.ends_with('Z'));
+        assert!(ts.len() >= 20); // YYYY-MM-DDTHH:MM:SSZ
     }
     
     #[test]
@@ -664,4 +665,169 @@ mod tests {
         assert_eq!(parsed.sessions.len(), 1);
         assert!(parsed.sessions.contains_key("test"));
     }
+    
+    #[test]
+    fn test_sessions_file_new() {
+        let file = SessionsFile::new();
+        assert!(file.sessions.is_empty());
+    }
+    
+    #[test]
+    fn test_auth_status_default() {
+        let status = AuthStatus::default();
+        // Verify it doesn't panic
+        assert!(serde_json::to_string(&status).is_ok());
+    }
+    
+    #[test]
+    fn test_session_pool_stats_default() {
+        let stats = SessionPoolStats::default();
+        assert_eq!(stats.total, 0);
+        assert_eq!(stats.active, 0);
+        assert_eq!(stats.acquired, 0);
+        assert_eq!(stats.idle, 0);
+        assert_eq!(stats.max_sessions, 0);
+    }
+    
+    #[test]
+    fn test_acquire_request_deserialize() {
+        let json = r##"{"name": "main"}"##;
+        let req: AcquireRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "main");
+        assert!(req.reuse); // default true
+    }
+    
+    #[test]
+    fn test_acquire_request_with_profile() {
+        let json = r##"{"name": "test", "profile": "my_profile"}"##;
+        let req: AcquireRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.profile, Some("my_profile".to_string()));
+    }
+    
+    #[test]
+    fn test_acquire_request_with_auth_check() {
+        let json = r##"{
+            "name": "test",
+            "auth_check": {"url": "https://example.com", "logged_in_selector": ".logout-btn"}
+        }"##;
+        let req: AcquireRequest = serde_json::from_str(json).unwrap();
+        assert!(req.auth_check.is_some());
+        assert_eq!(req.auth_check.unwrap().logged_in_selector, ".logout-btn");
+    }
+    
+    #[test]
+    fn test_auth_check_config_deserialize() {
+        let json = r##"{"url": "https://example.com", "logged_in_selector": "#user-menu"}"##;
+        let config: AuthCheckConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.logged_in_selector, "#user-menu");
+    }
+    
+    #[test]
+    fn test_named_session_meta_serialization() {
+        let meta = NamedSessionMeta {
+            name: "test".to_string(),
+            profile: "default".to_string(),
+            auth_status: AuthStatus::default(),
+            last_accessed: "2026-02-05T12:00:00Z".to_string(),
+            auto_extend: true,
+            created_at: "2026-02-05T12:00:00Z".to_string(),
+        };
+        
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: NamedSessionMeta = serde_json::from_str(&json).unwrap();
+        
+        assert_eq!(parsed.name, "test");
+        assert_eq!(parsed.profile, "default");
+    }
+    
+    #[test]
+    fn test_default_true() {
+        assert!(default_true());
+    }
+    
+    #[test]
+    fn test_session_list_item_serialize() {
+        let item = SessionListItem {
+            name: "test".to_string(),
+            profile: "default".to_string(),
+            acquired: true,
+            auth_status: AuthStatus::default(),
+            last_accessed: "2026-02-05T12:00:00Z".to_string(),
+            active: true,
+        };
+        
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("test"));
+        assert!(json.contains("acquired"));
+    }
+    
+    #[test]
+    fn test_list_sessions_response_serialize() {
+        let response = ListSessionsResponse {
+            sessions: vec![],
+            total: 0,
+        };
+        
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("sessions"));
+        assert!(json.contains("total"));
+    }
+    
+    #[test]
+    fn test_acquire_response_serialize() {
+        let response = AcquireResponse {
+            session: "main".to_string(),
+            is_new: false,
+            profile: "default".to_string(),
+            auth_status: Some(AuthStatus::default()),
+        };
+        
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("session"));
+        assert!(json.contains("main"));
+    }
+    
+    #[test]
+    fn test_session_manager_new() {
+        let temp_dir = std::env::temp_dir().join("wbp2_test_session_manager");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        
+        let manager = SessionManagerV2::new(temp_dir.clone(), 10);
+        // Verify stats work
+        let stats = manager.stats();
+        assert_eq!(stats.max_sessions, 10);
+        
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+    
+    #[test]
+    fn test_session_manager_with_idle_timeout() {
+        let temp_dir = std::env::temp_dir().join("wbp2_test_session_idle");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        
+        // Just verify it doesn't panic
+        let _manager = SessionManagerV2::new(temp_dir.clone(), 10)
+            .with_idle_timeout(3600);
+        
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+    
+    #[test]
+    fn test_session_manager_stats() {
+        let temp_dir = std::env::temp_dir().join("wbp2_test_session_stats");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        
+        let manager = SessionManagerV2::new(temp_dir.clone(), 5);
+        let stats = manager.stats();
+        
+        assert_eq!(stats.total, 0);
+        assert_eq!(stats.max_sessions, 5);
+        
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
+
