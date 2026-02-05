@@ -7,6 +7,7 @@ use uuid::Uuid;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 pub mod profile;
+pub mod session_v2;
 
 // Export WM_CHECK_QUEUE for use in other modules
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;

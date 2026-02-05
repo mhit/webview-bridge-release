@@ -1,4 +1,5 @@
 pub mod api;
+pub mod api_v2;
 pub mod cdp;
 pub mod core;
 pub mod mcp;
@@ -6,11 +7,13 @@ pub mod webdriver;
 pub mod webview;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
-use crate::core::{AppCommand, SessionManager};
+use crate::core::{AppCommand, SessionManager, SessionHandle, SessionOptions};
+use crate::api_v2::{create_v2_router, init_session_manager_v2, V2AppState};
 
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
 
@@ -25,6 +28,13 @@ async fn main() {
 
     // Create SessionManager with higher capacity
     let manager = Arc::new(SessionManager::new(20));
+    let manager_for_v2 = manager.clone();
+
+    // Initialize v2 session manager
+    let data_dir = std::env::var("WEBVIEW_BRIDGE_DATA_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./data"));
+    init_session_manager_v2(data_dir, 20);
 
     // Create command channels with bounded capacity for backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<AppCommand>(1000);
@@ -64,12 +74,28 @@ async fn main() {
         }
     });
 
-    // Create API router
-    let app = api::create_router(unbounded_tx, 0);
+    // Create v2 API state with session creation callback
+    let v2_state = V2AppState {
+        create_session_fn: Arc::new(move |options: SessionOptions| -> Result<(String, SessionHandle), String> {
+            // Use the v1 session manager to create the actual session
+            let _id = manager_for_v2.create_session(options.clone())?;
+            // Return a dummy handle for now (the actual session runs in its own thread)
+            // In production, we'd need to get the actual handle from the SessionManager
+            Err("Session created but handle not yet available - use v1 API for operations".to_string())
+        }),
+    };
+
+    // Create API router (v1 + v2)
+    let v1_router = api::create_router(unbounded_tx, 0);
+    let v2_router = create_v2_router(v2_state);
+    
+    let app = v1_router.nest("/v2", v2_router);
 
     // Run server
     let addr = SocketAddr::from(([127, 0, 0, 1], 9400));
     tracing::info!("listening on {} with {} command processors", addr, COMMAND_PROCESSOR_COUNT);
+    tracing::info!("v1 API: http://{}/", addr);
+    tracing::info!("v2 API: http://{}/v2/", addr);
 
     match axum::serve(
         tokio::net::TcpListener::bind(&addr).await.unwrap(),
