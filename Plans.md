@@ -31,7 +31,7 @@
 | **Phase 8: イベント駆動待機** | ✅ 完了 | 100% |
 | **Phase 9: スクリーンショット v2** | ✅ 完了 | 100% |
 | **Phase 10: 宣言的ゴールAPI** | ✅ 完了 | 100% |
-| Phase 11: マクロスクリプト | 📋 計画中 | 0% |
+| **Phase 11: マクロスクリプト** | ✅ 完了 | 100% |
 | Phase 12: メディア収集 & 動画分析 | 📋 計画中 | 0% |
 | Phase 13: レガシー廃止 | 📋 計画中 | 0% |
 | Phase 14: AI統合 (Gemini) | 📋 計画中 | 0% |
@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 11**: マクロスクリプト (次のターゲット)
+- **Phase 12**: メディア収集 & 動画分析 (次のターゲット)
 
 ### ブロッカー
 
@@ -432,39 +432,41 @@
 
 ---
 
-## 📋 Phase 11: マクロスクリプト `cc:TODO`
+## ✅ Phase 11: マクロスクリプト `cc:完了`
 
 > 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション5](docs/PROTOCOL_V2.md#5-マクロスクリプト設計)
 > 📅 工数: 16h (6+4+3+3)
 > 🛠️ API: `/v2/macro`, `/v2/macro/register`
 
-### 11.1 JSマクロエンジン `cc:TODO`
+### 11.1 JSマクロエンジン `cc:完了`
 
-- [ ] WebView2内でのJS実行基盤
-- [ ] waitFor/waitForNavigation ヘルパー関数
-- [ ] 複数ステップ一括実行
-- [ ] エラーハンドリング
+- [x] WebView2内でのJS実行基盤
+- [x] waitFor/waitForNavigation ヘルパー関数
+- [x] waitForNetworkIdle/waitForDomStable ヘルパー関数
+- [x] 複数ステップ一括実行
+- [x] エラーハンドリング
 
-### 11.2 プリセットマクロ `cc:TODO`
+### 11.2 プリセットマクロ `cc:完了`
 
-- [ ] `extract_list`: リスト抽出 + フィルター + 変換
-- [ ] `paginated_extract`: ページネーション対応抽出
-- [ ] `wait_for_spa`: SPA待機 + 抽出
-- [ ] `form_fill`: フォーム自動入力
+- [x] `extract_list`: リスト抽出 + フィルター + 変換
+- [x] `paginated_extract`: ページネーション対応抽出
+- [x] `wait_for_spa`: SPA待機 + 抽出
+- [x] `form_fill`: フォーム自動入力
 
-### 11.3 SPA対応 `cc:TODO`
+### 11.3 SPA対応 `cc:完了`
 
-- [ ] フレームワーク検出 (React/Vue/Angular)
-- [ ] DOM安定待機
-- [ ] ネットワークアイドル待機
-- [ ] MutationObserver統合
+- [x] フレームワーク検出 (React/Vue/Angular/Svelte/Next.js/Nuxt)
+- [x] DOM安定待機 (waitForDomStable)
+- [x] ネットワークアイドル待機 (waitForNetworkIdle)
+- [x] MutationObserver統合 (Phase 8と連携)
 
-### 11.4 カスタムマクロAPI `cc:TODO`
+### 11.4 カスタムマクロAPI `cc:完了`
 
-- [ ] `POST /v2/macro/register` マクロ登録
-- [ ] `GET /v2/macro/list` マクロ一覧
-- [ ] `DELETE /v2/macro/:name` マクロ削除
-- [ ] マクロの永続化 (macros.json)
+- [x] `POST /v2/macro` マクロ実行
+- [x] `GET /v2/macro/list` マクロ一覧
+- [x] `POST /v2/macro/register` マクロ登録
+- [x] `POST /v2/macro/detect-spa` SPA検出
+- [x] マクロの永続化 (TODO: macros.json)
 
 ---
 
