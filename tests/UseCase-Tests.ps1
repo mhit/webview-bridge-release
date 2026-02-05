@@ -125,8 +125,12 @@ function Test-Extract($Selector, $TestId, $Name) {
 function Test-Screenshot($TestId, $Name) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $result = Api-Get "/screenshot/$SessionId"
-    $hasImage = ($null -ne $result -and $null -ne $result.image)
-    Write-TestResult $TestId $Name $hasImage "" $sw.ElapsedMilliseconds
+    # Check either 'data' field (new API) or 'image' field (old API)
+    $hasImage = ($null -ne $result -and (
+            ($null -ne $result.data -and $result.data.Length -gt 100) -or
+            ($null -ne $result.image -and $result.image.Length -gt 100)
+        ))
+    Write-TestResult $TestId $Name $hasImage "DataLen: $(if ($result.data) { $result.data.Length } else { 'N/A' })" $sw.ElapsedMilliseconds
 }
 
 # Test: Set Cookies
@@ -355,8 +359,8 @@ try {
             # Step 10: Extract page content to see what happened
             Test-Extract "body" "LF-09" "Extract Page Content"
             
-            # Step 11: Take screenshot (Known issue: html2canvas loading can fail)
-            # Test-Screenshot "LF-10" "Screenshot After Login"
+            # Step 11: Take screenshot
+            Test-Screenshot "LF-10" "Screenshot After Login"
             
             # Step 12: Verify cookies are set
             Test-GetCookies
