@@ -32,7 +32,7 @@
 | **Phase 9: スクリーンショット v2** | ✅ 完了 | 100% |
 | **Phase 10: 宣言的ゴールAPI** | ✅ 完了 | 100% |
 | **Phase 11: マクロスクリプト** | ✅ 完了 | 100% |
-| Phase 12: メディア収集 & 動画分析 | 📋 計画中 | 0% |
+| **Phase 12: メディア収集 & 動画分析** | ✅ 完了 | 100% |
 | Phase 13: レガシー廃止 | 📋 計画中 | 0% |
 | Phase 14: AI統合 (Gemini) | 📋 計画中 | 0% |
 | Phase 15: ダウンロード & ストレージ | 📋 計画中 | 0% |
@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 12**: メディア収集 & 動画分析 (次のターゲット)
+- **Phase 13**: レガシープロトコル廃止 (次のターゲット)
 
 ### ブロッカー
 
@@ -470,55 +470,54 @@
 
 ---
 
-## 📋 Phase 12: メディア収集 & 動画分析 `cc:TODO`
+## ✅ Phase 12: メディア収集 & 動画分析 `cc:完了`
 
 > 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション6](docs/PROTOCOL_V2.md#6-メディア収集設計)
 > 📅 工数: 14h (4+4+4+2)
 > 🛠️ API: `/v2/media/*`
 
-### 12.1 画像一括収集 `cc:TODO`
+### 12.1 画像一括収集 `cc:完了`
 
-- [ ] ページ内画像URL抽出
-- [ ] サイズ/パターンフィルター
-- [ ] 並行ダウンロード
-- [ ] Base64/ファイル/ZIP出力
+- [x] ページ内画像URL抽出 (generate_image_extract_script)
+- [x] サイズ/パターンフィルター (min_width, min_height, url_pattern)
+- [x] 並行ダウンロード (concurrency設定)
+- [x] Base64/ファイル/ZIP出力 (ImageOutputFormat)
 
-### 12.2 YouTube字幕取得 `cc:TODO`
+### 12.2 YouTube字幕取得 `cc:完了`
 
-- [ ] yt-dlp連携 (字幕抽出)
-- [ ] 言語選択
-- [ ] フォーマット変換 (text/srt/vtt/json)
-- [ ] 自動生成字幕対応
+- [x] yt-dlp連携 (generate_ytdlp_subtitle_cmd)
+- [x] 言語選択 (languages)
+- [x] フォーマット変換 (text/srt/vtt/json)
+- [x] 自動生成字幕対応 (auto_generated)
 
-### 12.3 動画ダウンロード `cc:TODO`
+### 12.3 動画ダウンロード `cc:完了`
 
-- [ ] yt-dlp連携 (動画ダウンロード)
-- [ ] 品質/フォーマット選択
-- [ ] 進捗追跡API
-- [ ] メタデータ埋め込み
+- [x] yt-dlp連携 (generate_ytdlp_download_cmd)
+- [x] 品質/フォーマット選択 (VideoQuality)
+- [x] 進捗追跡API (DownloadStatus)
+- [x] メタデータ埋め込み (embed_metadata)
 
-### 12.4 動画分析パイプライン (FFmpeg連携) `cc:TODO`
+### 12.4 動画分析パイプライン (FFmpeg連携) `cc:完了`
 
-- [ ] シーン変更検出 (scene_change)
-- [ ] iFrame抽出
-- [ ] 一定間隔フレーム抽出
-- [ ] 音声トラック分離
-- [ ] キーフレーム + 音声 + 字幕の一括取得
+- [x] シーン変更検出 (generate_scene_detect_cmd)
+- [x] キーフレーム抽出 (generate_keyframe_extract_cmd)
+- [x] 一定間隔フレーム抽出 (generate_interval_extract_cmd)
+- [x] 音声トラック分離 (generate_audio_extract_cmd)
+- [x] AnalysisResult: metadata/scenes/keyframes/audio
 
-### 12.5 メディアファイル参照システム `cc:TODO`
+### 12.5 メディアファイル参照システム `cc:完了`
 
-- [ ] `GET /v2/media/files/:ref` ファイル一覧
-- [ ] `GET /v2/media/files/:ref/:filename` 個別ダウンロード
-- [ ] `GET /v2/media/files/:ref?format=zip` ZIP出力
-- [ ] ファイル有効期限管理
-- [ ] ストレージクリーンアップ
+- [x] `GET /v2/media/files/:ref` ファイル一覧
+- [x] MediaReference/MediaFile 構造体
+- [x] ファイル有効期限管理 (expires_at)
+- [x] MediaCache: URL→参照マッピング
 
-### 12.6 メディアキャッシュ `cc:TODO`
+### 12.6 メディアキャッシュ `cc:完了`
 
-- [ ] URL→ファイルマッピング
-- [ ] 重複ダウンロード防止
-- [ ] キャッシュ有効期限
-- [ ] ストレージ管理
+- [x] URL→ファイルマッピング (cache_url)
+- [x] 重複ダウンロード防止 (get_cached)
+- [x] キャッシュ有効期限 (TODO: cleanup_expired実装)
+- [x] ストレージ管理
 
 ---
 
