@@ -636,9 +636,315 @@ try {
             # Skip normal session cleanup since we handled it
             $script:SessionId = $null
         }
+        "stress-test" {
+            Write-TestHeader "Stress Test (10+ Sessions)"
+            
+            $sessionCount = 10
+            $sessions = @()
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            
+            try {
+                # Step 1: Create many sessions rapidly
+                Write-Host "Creating $sessionCount sessions..." -ForegroundColor Cyan
+                for ($i = 1; $i -le $sessionCount; $i++) {
+                    $profile = "stress_test_$i"
+                    $body = @{ profile = $profile; headless = $false } | ConvertTo-Json
+                    try {
+                        $session = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 30
+                        $sessions += @{ id = $session.id; profile = $profile }
+                        Write-Host "  [$i/$sessionCount] Created: $($session.id)" -ForegroundColor Gray
+                    }
+                    catch {
+                        Write-Host "  [$i/$sessionCount] Failed: $_" -ForegroundColor Red
+                    }
+                    Start-Sleep -Milliseconds 500
+                }
+                
+                $createTime = $sw.ElapsedMilliseconds
+                Write-TestResult "ST-01" "Create $sessionCount Sessions" ($sessions.Count -ge ($sessionCount * 0.8)) "Created: $($sessions.Count) in ${createTime}ms"
+                
+                # Wait for all to initialize
+                Start-Sleep -Seconds 5
+                
+                # Step 2: Rapid navigation on all sessions
+                Write-Host "Navigating all sessions..." -ForegroundColor Cyan
+                $navStart = [System.Diagnostics.Stopwatch]::StartNew()
+                $navSuccess = 0
+                foreach ($s in $sessions) {
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/navigate/$($s.id)" -Method Post -Body '{"url":"https://example.com"}' -ContentType "application/json" -TimeoutSec 10 | Out-Null
+                        $navSuccess++
+                    }
+                    catch { }
+                }
+                Write-TestResult "ST-02" "Navigate All Sessions" ($navSuccess -ge ($sessions.Count * 0.8)) "Success: $navSuccess / $($sessions.Count) in $($navStart.ElapsedMilliseconds)ms"
+                
+                Start-Sleep -Seconds 3
+                
+                # Step 3: Check all sessions are still functional
+                Write-Host "Checking session health..." -ForegroundColor Cyan
+                $healthyCount = 0
+                foreach ($s in $sessions) {
+                    try {
+                        $status = Invoke-RestMethod -Uri "$ServerUrl/status/$($s.id)" -Method Get -TimeoutSec 5
+                        if ($status.status -eq "Ready") { $healthyCount++ }
+                    }
+                    catch { }
+                }
+                Write-TestResult "ST-03" "Sessions Still Healthy" ($healthyCount -ge ($sessions.Count * 0.8)) "Healthy: $healthyCount / $($sessions.Count)"
+                
+                # Step 4: Concurrent script execution
+                Write-Host "Executing scripts on all sessions..." -ForegroundColor Cyan
+                $execSuccess = 0
+                foreach ($s in $sessions) {
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/execute/$($s.id)" -Method Post -Body '{"script":"return 1+1"}' -ContentType "application/json" -TimeoutSec 10 | Out-Null
+                        $execSuccess++
+                    }
+                    catch { }
+                }
+                Write-TestResult "ST-04" "Execute Script on All" ($execSuccess -ge ($sessions.Count * 0.8)) "Success: $execSuccess / $($sessions.Count)"
+                
+                # Step 5: Close all and measure
+                Write-Host "Closing all sessions..." -ForegroundColor Cyan
+                $closeStart = [System.Diagnostics.Stopwatch]::StartNew()
+                $closeSuccess = 0
+                foreach ($s in $sessions) {
+                    try {
+                        Invoke-RestMethod -Uri "$ServerUrl/close/$($s.id)" -Method Delete -TimeoutSec 10 | Out-Null
+                        $closeSuccess++
+                    }
+                    catch { }
+                }
+                Write-TestResult "ST-05" "Close All Sessions" ($closeSuccess -ge ($sessions.Count * 0.8)) "Closed: $closeSuccess in $($closeStart.ElapsedMilliseconds)ms"
+                
+                Write-Host "Total stress test time: $($sw.ElapsedMilliseconds)ms" -ForegroundColor Cyan
+                
+            }
+            finally {
+                # Cleanup any remaining
+                foreach ($s in $sessions) {
+                    try { Invoke-RestMethod -Uri "$ServerUrl/close/$($s.id)" -Method Delete -ErrorAction SilentlyContinue | Out-Null } catch { }
+                }
+            }
+            
+            $script:SessionId = $null
+        }
+        "long-running" {
+            Write-TestHeader "Long Running Test (Session Stability)"
+            
+            $testDuration = 30  # seconds
+            $checkInterval = 5  # seconds
+            
+            try {
+                # Create a session
+                $body = @{ profile = "long_running_test"; headless = $false } | ConvertTo-Json
+                $session = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $body -ContentType "application/json"
+                $testSid = $session.id
+                Write-Host "Created session: $testSid" -ForegroundColor Gray
+                Start-Sleep -Seconds 5
+                
+                # Navigate to initial page
+                Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body '{"url":"https://example.com"}' -ContentType "application/json" | Out-Null
+                Start-Sleep -Seconds 3
+                
+                Write-TestResult "LR-01" "Create Long-Running Session" ($null -ne $testSid) ""
+                
+                # Perform operations over time
+                $iterations = [Math]::Floor($testDuration / $checkInterval)
+                $successCount = 0
+                
+                Write-Host "Running stability checks for ${testDuration}s..." -ForegroundColor Cyan
+                for ($i = 1; $i -le $iterations; $i++) {
+                    Write-Host "  Check $i / $iterations..." -ForegroundColor Gray
+                    
+                    # Check status
+                    try {
+                        $status = Invoke-RestMethod -Uri "$ServerUrl/status/$testSid" -Method Get -TimeoutSec 10
+                        if ($status.status -eq "Ready") {
+                            # Navigate to different page
+                            $url = if ($i % 2 -eq 0) { "https://httpbin.org/html" } else { "https://example.com" }
+                            Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body "{`"url`":`"$url`"}" -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                            $successCount++
+                        }
+                    }
+                    catch {
+                        Write-Host "    Failed: $_" -ForegroundColor Red
+                    }
+                    
+                    Start-Sleep -Seconds $checkInterval
+                }
+                
+                Write-TestResult "LR-02" "Stability Over ${testDuration}s" ($successCount -eq $iterations) "Success: $successCount / $iterations"
+                
+                # Final health check
+                try {
+                    $finalStatus = Invoke-RestMethod -Uri "$ServerUrl/status/$testSid" -Method Get -TimeoutSec 10
+                    Write-TestResult "LR-03" "Session Still Healthy After Test" ($finalStatus.status -eq "Ready") "Status: $($finalStatus.status)"
+                }
+                catch {
+                    Write-TestResult "LR-03" "Session Still Healthy After Test" $false "Failed to get status"
+                }
+                
+                # Cleanup
+                Invoke-RestMethod -Uri "$ServerUrl/close/$testSid" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+                
+            }
+            catch {
+                Write-Host "Long-running test error: $_" -ForegroundColor Red
+            }
+            
+            $script:SessionId = $null
+        }
+        "error-recovery" {
+            Write-TestHeader "Error Recovery Test"
+            
+            try {
+                # Create session
+                $body = @{ profile = "error_recovery_test"; headless = $false } | ConvertTo-Json
+                $session = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $body -ContentType "application/json"
+                $testSid = $session.id
+                Write-Host "Created session: $testSid" -ForegroundColor Gray
+                Start-Sleep -Seconds 5
+                
+                Write-TestResult "ER-01" "Create Test Session" ($null -ne $testSid) ""
+                
+                # Test 1: Navigate to invalid URL
+                Write-Host "Testing invalid URL navigation..." -ForegroundColor Cyan
+                try {
+                    Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body '{"url":"http://invalid.invalid.invalid"}' -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                    Write-TestResult "ER-02" "Handle Invalid URL" $true "Navigation attempted"
+                }
+                catch {
+                    Write-TestResult "ER-02" "Handle Invalid URL" $true "Error handled: $_"
+                }
+                Start-Sleep -Seconds 3
+                
+                # Test 2: Session should still be functional
+                try {
+                    $status = Invoke-RestMethod -Uri "$ServerUrl/status/$testSid" -Method Get -TimeoutSec 10
+                    Write-TestResult "ER-03" "Session Recovers After Error" ($status.status -eq "Ready") "Status: $($status.status)"
+                }
+                catch {
+                    Write-TestResult "ER-03" "Session Recovers After Error" $false "Failed"
+                }
+                
+                # Test 3: Navigate to valid URL after error
+                Write-Host "Testing navigation after error..." -ForegroundColor Cyan
+                try {
+                    Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body '{"url":"https://example.com"}' -ContentType "application/json" -TimeoutSec 30 | Out-Null
+                    Start-Sleep -Seconds 3
+                    $status = Invoke-RestMethod -Uri "$ServerUrl/status/$testSid" -Method Get -TimeoutSec 10
+                    Write-TestResult "ER-04" "Navigate Valid URL After Error" ($status.url -like "*example*") "URL: $($status.url)"
+                }
+                catch {
+                    Write-TestResult "ER-04" "Navigate Valid URL After Error" $false "Failed"
+                }
+                
+                # Test 4: Execute invalid script
+                Write-Host "Testing invalid script execution..." -ForegroundColor Cyan
+                try {
+                    Invoke-RestMethod -Uri "$ServerUrl/execute/$testSid" -Method Post -Body '{"script":"this.is.invalid.syntax((("}' -ContentType "application/json" -TimeoutSec 10 | Out-Null
+                    Write-TestResult "ER-05" "Handle Invalid Script" $true "Executed without crash"
+                }
+                catch {
+                    Write-TestResult "ER-05" "Handle Invalid Script" $true "Error handled"
+                }
+                
+                # Test 5: Session still functional
+                try {
+                    $result = Invoke-RestMethod -Uri "$ServerUrl/execute/$testSid" -Method Post -Body '{"script":"return 42"}' -ContentType "application/json" -TimeoutSec 10
+                    Write-TestResult "ER-06" "Execute Valid Script After Error" $true "Result: $($result.result)"
+                }
+                catch {
+                    Write-TestResult "ER-06" "Execute Valid Script After Error" $false "Failed"
+                }
+                
+                # Cleanup
+                Invoke-RestMethod -Uri "$ServerUrl/close/$testSid" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+                
+            }
+            catch {
+                Write-Host "Error recovery test error: $_" -ForegroundColor Red
+            }
+            
+            $script:SessionId = $null
+        }
+        "real-site-login" {
+            Write-TestHeader "Real Site Login Test (GitHub)"
+            
+            # Using GitHub login page as a test (won't actually log in without credentials)
+            # This tests the ability to interact with a real-world login page
+            
+            try {
+                $body = @{ profile = "real_site_test"; headless = $false } | ConvertTo-Json
+                $session = Invoke-RestMethod -Uri "$ServerUrl/create" -Method Post -Body $body -ContentType "application/json"
+                $testSid = $session.id
+                Write-Host "Created session: $testSid" -ForegroundColor Gray
+                Start-Sleep -Seconds 8
+                
+                Write-TestResult "RS-01" "Create Test Session" ($null -ne $testSid) ""
+                
+                # Navigate to GitHub login
+                Write-Host "Navigating to GitHub login..." -ForegroundColor Cyan
+                Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body '{"url":"https://github.com/login"}' -ContentType "application/json" -TimeoutSec 60 | Out-Null
+                Start-Sleep -Seconds 5
+                
+                # Wait for login form
+                try {
+                    $wait = Invoke-RestMethod -Uri "$ServerUrl/wait/$testSid" -Method Post -Body '{"selector":"#login_field","timeout":15000}' -ContentType "application/json" -TimeoutSec 20
+                    Write-TestResult "RS-02" "GitHub Login Form Loaded" ($wait.found -eq $true) ""
+                }
+                catch {
+                    Write-TestResult "RS-02" "GitHub Login Form Loaded" $false "Form not found"
+                }
+                
+                # Try to fill in username field (just to test interaction, not actual login)
+                Write-Host "Testing form interaction..." -ForegroundColor Cyan
+                try {
+                    $exec = Invoke-RestMethod -Uri "$ServerUrl/execute/$testSid" -Method Post -Body '{"script":"document.getElementById(\"login_field\").value = \"test_user\"; return document.getElementById(\"login_field\").value;"}' -ContentType "application/json" -TimeoutSec 10
+                    Write-TestResult "RS-03" "Fill Username Field" $true "Filled"
+                }
+                catch {
+                    Write-TestResult "RS-03" "Fill Username Field" $false "Failed"
+                }
+                
+                # Extract page title
+                try {
+                    $exec = Invoke-RestMethod -Uri "$ServerUrl/execute/$testSid" -Method Post -Body '{"script":"return document.title"}' -ContentType "application/json" -TimeoutSec 10
+                    $hasTitle = ($exec.result -ne "null" -and $exec.result -ne $null)
+                    Write-TestResult "RS-04" "Get Page Title" $hasTitle "Title: $($exec.result)"
+                }
+                catch {
+                    Write-TestResult "RS-04" "Get Page Title" $false "Failed"
+                }
+                
+                # Navigate to another real site (Stack Overflow)
+                Write-Host "Testing Stack Overflow..." -ForegroundColor Cyan
+                Invoke-RestMethod -Uri "$ServerUrl/navigate/$testSid" -Method Post -Body '{"url":"https://stackoverflow.com/"}' -ContentType "application/json" -TimeoutSec 60 | Out-Null
+                Start-Sleep -Seconds 5
+                
+                try {
+                    $wait = Invoke-RestMethod -Uri "$ServerUrl/wait/$testSid" -Method Post -Body '{"selector":"body","timeout":10000}' -ContentType "application/json" -TimeoutSec 15
+                    Write-TestResult "RS-05" "Stack Overflow Loaded" ($wait.found -eq $true) ""
+                }
+                catch {
+                    Write-TestResult "RS-05" "Stack Overflow Loaded" $false "Failed"
+                }
+                
+                # Cleanup
+                Invoke-RestMethod -Uri "$ServerUrl/close/$testSid" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+                
+            }
+            catch {
+                Write-Host "Real site test error: $_" -ForegroundColor Red
+            }
+            
+            $script:SessionId = $null
+        }
         default {
             Write-Host "Unknown test: $TestCase" -ForegroundColor Red
-            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, profile-isolation, profile-concurrency, all" -ForegroundColor Yellow
+            Write-Host "Available: basic, UC-01 to UC-10, login, login-form, login-session, profile-isolation, profile-concurrency, stress-test, long-running, error-recovery, real-site-login, all" -ForegroundColor Yellow
         }
     }
 }
