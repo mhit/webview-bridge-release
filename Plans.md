@@ -28,7 +28,7 @@
 | Phase 5: ブラウザ互換性 & MCP | ✅ 完了 | 100% |
 | Phase 6: 本番運用準備 | ⚠️ 延期 | 0% |
 | **Phase 7: セッション管理 v2** | ✅ 完了 | 100% |
-| Phase 8: イベント駆動待機 | 📋 計画中 | 0% |
+| **Phase 8: イベント駆動待機** | ✅ 完了 | 100% |
 | Phase 9: スクリーンショット v2 | 📋 計画中 | 0% |
 | Phase 10: 宣言的ゴールAPI | 📋 計画中 | 0% |
 | Phase 11: マクロスクリプト | 📋 計画中 | 0% |
@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 8**: イベント駆動待機 v2 (次のターゲット)
+- **Phase 9**: スクリーンショット v2 (次のターゲット)
 
 ### ブロッカー
 
@@ -340,31 +340,31 @@
 
 ---
 
-## 📋 Phase 8: イベント駆動待機 `cc:TODO`
+## ✅ Phase 8: イベント駆動待機 `cc:完了`
 
 > 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション3.2](docs/PROTOCOL_V2.md#32-イベント駆動通知)
 > 📅 工数: 13h (3+4+6)
 > 🛠️ API: `/v2/wait`, WebSocket
 
-### 8.1 MutationObserver注入 `cc:TODO`
+### 8.1 MutationObserver注入 `cc:完了`
 
-- [ ] DOM変化監視スクリプト作成
-- [ ] イベント集約とデバウンス
-- [ ] 複数セレクター同時監視
+- [x] DOM変化監視スクリプト作成 (generate_wait_script)
+- [x] イベント集約とデバウンス (stable condition)
+- [x] 複数セレクター同時監視 (selectors配列)
 
-### 8.2 スマート待機API `cc:TODO`
+### 8.2 スマート待機API `cc:完了`
 
-- [ ] `POST /v2/wait` 実装
-- [ ] 条件タイプ: present, visible, stable, text_contains
-- [ ] 同時抽出オプション
-- [ ] タイムアウト処理
+- [x] `POST /v2/wait` 実装
+- [x] 条件タイプ: present, visible, stable, text_contains, clickable, detached
+- [x] 同時抽出オプション (extract)
+- [x] タイムアウト処理
 
-### 8.3 WebSocket通知 `cc:TODO`
+### 8.3 WebSocket通知 `cc:完了`
 
-- [ ] WebSocketサーバー追加
-- [ ] セッションごとのイベントチャネル
-- [ ] DOM変化、ナビゲーション、エラーイベント配信
-- [ ] コネクション管理（タイムアウト、再接続）
+- [x] WebSocketサーバー追加 (ws://.../v2/ws)
+- [x] セッションごとのイベントチャネル (EventHub)
+- [x] DOM変化、ナビゲーション、エラーイベント配信 (WbpEvent)
+- [x] コネクション管理（タイムアウト、再接続）
 
 ---
 
