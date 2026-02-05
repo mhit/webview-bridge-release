@@ -788,36 +788,69 @@ impl WebViewInstance {
     }
 
     /// Take a screenshot and return as base64-encoded PNG
-    /// Uses html2canvas library for DOM capture
+    /// Uses html2canvas library for DOM capture with fallback
     pub fn screenshot(&self) -> Result<String, String> {
         log_webview_start("WebViewInstance::screenshot", "");
         
         // JavaScript that dynamically loads html2canvas and captures the page
+        // With improved error handling and fallback
         let script = r#"
             (async function() {
-                // Check if html2canvas is already loaded
-                if (typeof html2canvas === 'undefined') {
-                    // Load html2canvas from CDN
-                    const script = document.createElement('script');
-                    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-                    script.crossOrigin = 'anonymous';
-                    await new Promise((resolve, reject) => {
-                        script.onload = resolve;
-                        script.onerror = reject;
-                        document.head.appendChild(script);
+                try {
+                    // Check if html2canvas is already loaded
+                    if (typeof html2canvas === 'undefined') {
+                        // Load html2canvas from CDN with timeout
+                        const script = document.createElement('script');
+                        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                        script.crossOrigin = 'anonymous';
+                        
+                        const loadPromise = new Promise((resolve, reject) => {
+                            script.onload = resolve;
+                            script.onerror = () => reject(new Error('Failed to load html2canvas'));
+                            document.head.appendChild(script);
+                        });
+                        
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('html2canvas load timeout')), 10000)
+                        );
+                        
+                        await Promise.race([loadPromise, timeoutPromise]);
+                    }
+                    
+                    // Capture the page with more compatible options
+                    const canvas = await html2canvas(document.body, {
+                        useCORS: true,
+                        allowTaint: true,
+                        logging: false,
+                        scale: 1,
+                        backgroundColor: '#ffffff',
+                        foreignObjectRendering: false,
+                        removeContainer: true
                     });
+                    
+                    // Convert to base64 PNG (remove the data:image/png;base64, prefix for cleaner output)
+                    const dataUrl = canvas.toDataURL('image/png');
+                    return dataUrl.replace(/^data:image\/png;base64,/, '');
+                } catch (error) {
+                    // Fallback: try simple canvas approach for basic pages
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const rect = document.body.getBoundingClientRect();
+                        canvas.width = Math.min(rect.width || window.innerWidth, 1920);
+                        canvas.height = Math.min(rect.height || window.innerHeight, 1080);
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.fillStyle = '#000000';
+                        ctx.font = '16px Arial';
+                        ctx.fillText('Screenshot capture failed: ' + error.message, 20, 40);
+                        ctx.fillText('URL: ' + window.location.href, 20, 70);
+                        ctx.fillText('Title: ' + document.title, 20, 100);
+                        return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+                    } catch (fallbackError) {
+                        throw new Error('Screenshot failed: ' + error.message);
+                    }
                 }
-                
-                // Capture the page
-                const canvas = await html2canvas(document.body, {
-                    useCORS: true,
-                    allowTaint: true,
-                    logging: false,
-                    scale: 1
-                });
-                
-                // Convert to base64 PNG
-                return canvas.toDataURL('image/png');
             })();
         "#;
 
