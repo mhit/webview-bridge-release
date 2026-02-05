@@ -180,8 +180,40 @@
 
 ---
 
-## 🔍 最近の完了
+## � Phase 5: ブラウザ自動化ツール互換性 & MCP/ACP対応 `cc:WIP`
 
+### 5.1 WebDriver Protocol互換レイヤー `cc:完了`
+
+- [x] WebDriver W3C仕様準拠エンドポイント
+- [x] /session系API実装
+- [x] /element系API実装
+- [ ] Selenium接続テスト
+
+### 5.2 MCP (Model Context Protocol) 対応 `cc:完了`
+
+- [x] MCP Server実装
+- [x] Tool定義 (browse, click, type, screenshot, extract)
+- [x] Resource定義
+- [ ] Claude/GPT統合テスト
+
+### 5.3 CDP (Chrome DevTools Protocol) 互換 `cc:TODO`
+
+- [ ] CDP WebSocket実装
+- [ ] Page.*ドメイン
+- [ ] Runtime.*ドメイン
+- [ ] Puppeteer接続テスト
+
+### 5.4 SDK/ドライバー `cc:完了`
+
+- [x] Python SDK (sdk/python/webview_bridge.py)
+- [x] JavaScript SDK (sdk/js/webview-bridge.js)
+- [x] TypeScript型定義 (sdk/js/webview-bridge.d.ts)
+
+---
+
+## �🔍 最近の完了
+
+- ✅ Phase 4: 実運用テスト統合完了 (2026-02-05)
 - ✅ Phase 3.2: Screenshot API実装 (2025-02-05)
 - ✅ Phase 3.1: Snapshot API実装 (2025-02-05)
 - ✅ 統合テストにおける 500エラーの修正 (async/await化) (2025-02-05)

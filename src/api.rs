@@ -107,9 +107,21 @@ async fn delete_profile(Path(name): Path<String>) -> impl IntoResponse {
 
 pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: u32) -> Router {
     let state = AppState {
-        cmd_tx,
+        cmd_tx: cmd_tx.clone(),
         main_thread_id,
     };
+    
+    // Create bounded channel for WebDriver/MCP
+    let (bounded_tx, mut bounded_rx) = mpsc::channel::<AppCommand>(100);
+    
+    // Forward bounded to unbounded
+    let unbounded_tx = cmd_tx.clone();
+    tokio::spawn(async move {
+        while let Some(cmd) = bounded_rx.recv().await {
+            let _ = unbounded_tx.send(cmd);
+        }
+    });
+    
     Router::new()
         .route("/health", get(health_check))
         .route("/create", post(create_session))
@@ -129,6 +141,10 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         .route("/profile/create", post(create_profile))
         .route("/profile/:name", delete(delete_profile))
         .with_state(state)
+        // WebDriver Protocol endpoints (Selenium compatible)
+        .merge(crate::webdriver::webdriver_router(bounded_tx.clone()))
+        // MCP (Model Context Protocol) endpoints
+        .merge(crate::mcp::mcp_router(bounded_tx))
 }
 
 async fn health_check() -> &'static str {
