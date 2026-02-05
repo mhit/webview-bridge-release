@@ -532,8 +532,8 @@ jobs:
 ### 8.3 次のアクション
 
 - [x] テストユーティリティモジュール作成 (`tests/common/mod.rs`)
-- [ ] Gemini API 統合テスト環境構築
-- [ ] テストサーバフレームワーク構築
+- [x] Gemini API 統合テスト環境構築 (`tests/gemini_tests.rs` - 14+2テスト)
+- [x] テストサーバフレームワーク構築 (`tests/common/test_server.rs`)
 - [x] APIエンドポイント正常系テスト実装開始 (`tests/integration/api_tests.rs`)
 - [x] criterion ベンチマークセットアップ (`benches/api_benchmark.rs`)
 - [x] CI/CD パイプラインにE2E・パフォーマンステスト追加 (`.github/workflows/test.yml`)
