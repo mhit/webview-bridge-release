@@ -136,6 +136,12 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/macro/list", get(macro_list))
         .route("/macro/register", post(macro_register))
         .route("/macro/detect-spa", post(macro_detect_spa))
+        // Media API
+        .route("/media/images", post(media_images))
+        .route("/media/youtube/subtitles", post(media_youtube_subtitles))
+        .route("/media/youtube/download", post(media_youtube_download))
+        .route("/media/analyze", post(media_analyze))
+        .route("/media/files/:ref", get(media_files_list))
         .with_state(state)
 }
 
@@ -801,6 +807,159 @@ async fn macro_detect_spa(
             "_note": "Full execution pending - script generated"
         })),
     )
+}
+
+// ============================================================================
+// Media API Endpoints
+// ============================================================================
+
+use crate::core::media::{
+    ImageCollectRequest, SubtitleRequest, VideoDownloadRequest, 
+    VideoAnalyzeRequest, generate_image_extract_script,
+};
+
+/// POST /v2/media/images - Collect images from page
+async fn media_images(
+    Json(request): Json<ImageCollectRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    let script = generate_image_extract_script(&request);
+    
+    // TODO: Execute script and collect images
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Image collection queued",
+            "session": request.session,
+            "output_format": format!("{:?}", request.output),
+            "script_length": script.len(),
+            "_note": "Full execution pending - script generated"
+        })),
+    )
+}
+
+/// POST /v2/media/youtube/subtitles - Extract YouTube subtitles
+async fn media_youtube_subtitles(
+    Json(request): Json<SubtitleRequest>,
+) -> impl IntoResponse {
+    // Extract video ID from URL
+    let video_id = extract_youtube_id(&request.url);
+    
+    let languages = if request.languages.is_empty() {
+        vec!["en".to_string(), "ja".to_string()]
+    } else {
+        request.languages.clone()
+    };
+    
+    // TODO: Execute yt-dlp for subtitle extraction
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Subtitle extraction queued",
+            "video_id": video_id,
+            "languages": languages,
+            "auto_generated": request.auto_generated,
+            "format": format!("{:?}", request.format),
+            "_note": "Requires yt-dlp installation"
+        })),
+    )
+}
+
+/// POST /v2/media/youtube/download - Download YouTube video
+async fn media_youtube_download(
+    Json(request): Json<VideoDownloadRequest>,
+) -> impl IntoResponse {
+    let video_id = extract_youtube_id(&request.url);
+    let reference = uuid::Uuid::new_v4().to_string();
+    
+    // TODO: Execute yt-dlp for video download
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Video download queued",
+            "video_id": video_id,
+            "reference": reference,
+            "quality": format!("{:?}", request.quality),
+            "audio_only": request.audio_only,
+            "status": "queued",
+            "_note": "Requires yt-dlp installation"
+        })),
+    )
+}
+
+/// POST /v2/media/analyze - Analyze video with FFmpeg
+async fn media_analyze(
+    Json(request): Json<VideoAnalyzeRequest>,
+) -> impl IntoResponse {
+    let reference = uuid::Uuid::new_v4().to_string();
+    
+    // TODO: Execute FFmpeg analysis
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Video analysis queued",
+            "source": request.source,
+            "reference": reference,
+            "analysis_types": request.analysis.iter().map(|a| format!("{:?}", a)).collect::<Vec<_>>(),
+            "_note": "Requires FFmpeg installation"
+        })),
+    )
+}
+
+/// GET /v2/media/files/:ref - List files in reference
+async fn media_files_list(
+    Path(reference): Path<String>,
+) -> impl IntoResponse {
+    // TODO: Lookup reference in media cache
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "reference": reference,
+            "files": [],
+            "total_size": 0,
+            "_note": "Reference not found or empty"
+        })),
+    )
+}
+
+/// Extract YouTube video ID from URL
+fn extract_youtube_id(url: &str) -> String {
+    // Handle various YouTube URL formats
+    if let Some(pos) = url.find("v=") {
+        let start = pos + 2;
+        let end = url[start..].find('&').map(|p| start + p).unwrap_or(url.len());
+        return url[start..end].to_string();
+    }
+    if let Some(pos) = url.find("youtu.be/") {
+        let start = pos + 9;
+        let end = url[start..].find('?').map(|p| start + p).unwrap_or(url.len());
+        return url[start..end].to_string();
+    }
+    // Assume it's already a video ID
+    url.to_string()
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 pub mod goal;
 pub mod macro_engine;
+pub mod media;
 pub mod profile;
 pub mod screenshot_v2;
 pub mod session_v2;
