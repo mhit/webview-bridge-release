@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
-use crate::core::{AppCommand, SessionManager, SessionHandle, SessionOptions};
+use crate::core::{AppCommand, SessionManager, SessionOptions};
 use crate::api_v2::{create_v2_router, init_session_manager_v2, V2AppState};
 
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
@@ -73,14 +73,18 @@ async fn main() {
     });
 
     // Create v2 API state with session creation callback
+    let unbounded_tx_for_v2 = unbounded_tx.clone();
     let v2_state = V2AppState {
-        create_session_fn: Arc::new(move |options: SessionOptions| -> Result<(String, SessionHandle), String> {
+        create_session_fn: Arc::new(move |options: SessionOptions| -> Result<(String, crate::core::session_v2::SessionHandle), String> {
             // Use the v1 session manager to create the actual session
-            let _id = manager_for_v2.create_session(options.clone())?;
-            // Return a dummy handle for now (the actual session runs in its own thread)
-            // In production, we'd need to get the actual handle from the SessionManager
-            Err("Session created but handle not yet available - use v1 API for operations".to_string())
+            let id = manager_for_v2.create_session(options.clone())?;
+            // V2 SessionHandle just holds the v1 session ID
+            let handle = crate::core::session_v2::SessionHandle {
+                id: id.clone(),
+            };
+            Ok((id, handle))
         }),
+        cmd_tx: unbounded_tx_for_v2,
     };
 
     // Create EventHub for WebSocket

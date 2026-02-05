@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "sessions": {
+    "test_github": {
+      "name": "test_github",
+      "profile": "test_github",
+      "auth_status": {
+        "logged_in": false,
+        "checked_at": null,
+        "username": null
+      },
+      "last_accessed": "2026-02-20T14:20:57Z",
+      "auto_extend": true,
+      "created_at": "2026-02-20T14:20:52Z"
+    },
+    "test_google": {
+      "name": "test_google",
+      "profile": "test_google",
+      "auth_status": {
+        "logged_in": false,
+        "checked_at": null,
+        "username": null
+      },
+      "last_accessed": "2026-02-20T14:19:55Z",
+      "auto_extend": true,
+      "created_at": "2026-02-20T14:19:51Z"
+    },
+    "test_httpbin": {
+      "name": "test_httpbin",
+      "profile": "test_httpbin",
+      "auth_status": {
+        "logged_in": false,
+        "checked_at": null,
+        "username": null
+      },
+      "last_accessed": "2026-02-20T14:19:38Z",
+      "auto_extend": true,
+      "created_at": "2026-02-20T14:18:32Z"
+    }
+  }
+}

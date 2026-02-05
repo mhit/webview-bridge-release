@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use crate::core::session_v2::{
-    AcquireRequest, SessionManagerV2,
+    AcquireRequest, SessionManagerV2, SessionHandle,
 };
-use crate::core::{SessionHandle, SessionOptions};
+use crate::core::SessionOptions;
 
 // ============================================================================
 // Global SessionManagerV2 Instance
@@ -106,11 +106,16 @@ fn error_response(error: Wbp2Error, message: &str) -> impl IntoResponse {
 // V2 Router
 // ============================================================================
 
+use tokio::sync::{mpsc, oneshot};
+use crate::core::AppCommand;
+
 /// App state for v2 API (session creation callback)
 #[derive(Clone)]
 pub struct V2AppState {
     /// Callback to create a new session using the v1 session manager
     pub create_session_fn: Arc<dyn Fn(SessionOptions) -> Result<(String, SessionHandle), String> + Send + Sync>,
+    /// Command sender to communicate with session threads (same as v1)
+    pub cmd_tx: mpsc::UnboundedSender<AppCommand>,
 }
 
 /// Create the v2 API router
@@ -371,17 +376,17 @@ async fn session_stats() -> impl IntoResponse {
 // Wait v2 Endpoints
 // ============================================================================
 
-use crate::core::wait_v2::{WaitRequest, WaitResponse, generate_wait_script};
+use crate::core::wait_v2::WaitRequest;
 
 /// POST /v2/wait - Smart wait with multiple condition types
 async fn wait_v2(
-    State(_state): State<V2AppState>,
+    State(state): State<V2AppState>,
     Json(request): Json<WaitRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
     
-    // Get session handle
-    let _handle = match manager.get_handle(&request.session) {
+    // Get session handle (contains v1 session ID)
+    let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
             return (
@@ -398,27 +403,80 @@ async fn wait_v2(
         }
     };
     
-    // Generate the wait script
-    let _script = generate_wait_script(&request);
+    let session_id = handle.id.clone();
     
-    // Execute via session (this is simplified - full impl would use oneshot channel)
-    // For now, return a placeholder indicating the script was generated
-    // In production, this would execute the script and wait for the Promise to resolve
+    // Use WaitForSelector command
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::WaitForSelector {
+        id: session_id,
+        selector: request.selector.clone(),
+        timeout_ms: request.timeout_ms,
+        resp_tx: tx,
+    };
     
-    // TODO: Execute script through session handle and wait for result
-    // For now, return success with the generated script info
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "message": "Wait request queued",
-            "session": request.session,
-            "selector": request.selector,
-            "condition": format!("{:?}", request.condition),
-            "timeout_ms": request.timeout_ms,
-            "_note": "Full async execution pending - script generated"
-        })),
-    )
+    if state.cmd_tx.send(cmd).is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Failed to send command"
+                }
+            })),
+        );
+    }
+    
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(request.timeout_ms + 1000),
+        rx
+    ).await {
+        Ok(Ok(Ok(found))) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "found": found,
+                "session": request.session,
+                "selector": request.selector,
+                "condition": format!("{:?}", request.condition)
+            })),
+        ),
+        Ok(Ok(Err(e))) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": e
+                }
+            })),
+        ),
+        Ok(Err(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Response channel closed"
+                }
+            })),
+        ),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({
+                "success": false,
+                "found": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "TIMEOUT",
+                    "message": "Wait timed out"
+                }
+            })),
+        ),
+    }
 }
 
 // ============================================================================
@@ -427,34 +485,14 @@ async fn wait_v2(
 
 use crate::core::screenshot_v2::{
     ScreenshotRequest, CaptureMode, get_device_presets, find_device_preset,
-    generate_wait_for_images_script, generate_element_screenshot_script,
-    generate_full_page_dimensions_script, generate_hide_elements_script,
 };
 
 /// POST /v2/screenshot - Advanced screenshot with modes and device emulation
 async fn screenshot_v2(
-    State(_state): State<V2AppState>,
+    State(state): State<V2AppState>,
     Json(request): Json<ScreenshotRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
-    // Get session handle
-    let _handle = match manager.get_handle(&request.session) {
-        Some(h) => h,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({
-                    "success": false,
-                    "error": {
-                        "code": "WBP2_001",
-                        "name": "SESSION_NOT_FOUND",
-                        "message": format!("Session '{}' not found", request.session)
-                    }
-                })),
-            );
-        }
-    };
     
     // Build response based on capture mode
     let mode_info = match request.mode {
@@ -491,54 +529,97 @@ async fn screenshot_v2(
         None
     };
     
-    // Generate appropriate scripts based on mode
-    let scripts: Vec<String> = {
-        let mut s = Vec::new();
-        
-        // Wait for images if requested
-        if request.wait_for_images {
-            s.push(generate_wait_for_images_script(request.timeout_ms));
+    // Get session handle (contains v1 session ID)
+    let handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
         }
-        
-        // Hide elements if requested
-        if let Some(ref selectors) = request.hide_selectors {
-            s.push(generate_hide_elements_script(selectors));
-        }
-        
-        // Mode-specific scripts
-        match request.mode {
-            CaptureMode::Element => {
-                if let Some(ref selector) = request.selector {
-                    s.push(generate_element_screenshot_script(selector, request.padding.unwrap_or(0)));
-                }
-            }
-            CaptureMode::FullPage => {
-                s.push(generate_full_page_dimensions_script());
-            }
-            CaptureMode::Viewport => {
-                // No additional scripts needed
-            }
-        }
-        
-        s
     };
     
-    // TODO: Execute scripts through session handle and capture screenshot
-    // For now, return success with the request info
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "message": "Screenshot request queued",
-            "session": request.session,
-            "mode": mode_info,
-            "format": format!("{:?}", request.format).to_lowercase(),
-            "quality": request.quality,
-            "device": device_info,
-            "scripts_count": scripts.len(),
-            "_note": "Full implementation pending - scripts generated"
-        })),
-    )
+    let session_id = handle.id.clone();
+    
+    // Use Screenshot command
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::Screenshot {
+        id: session_id,
+        resp_tx: tx,
+    };
+    
+    if state.cmd_tx.send(cmd).is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Failed to send command"
+                }
+            })),
+        );
+    }
+    
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(request.timeout_ms),
+        rx
+    ).await {
+        Ok(Ok(Ok(base64_data))) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "session": request.session,
+                "mode": mode_info,
+                "format": format!("{:?}", request.format).to_lowercase(),
+                "quality": request.quality,
+                "device": device_info,
+                "image": base64_data
+            })),
+        ),
+        Ok(Ok(Err(e))) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": e
+                }
+            })),
+        ),
+        Ok(Err(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Response channel closed"
+                }
+            })),
+        ),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "TIMEOUT",
+                    "message": "Screenshot timed out"
+                }
+            })),
+        ),
+    }
 }
 
 /// GET /v2/screenshot/devices - List available device presets
@@ -578,13 +659,13 @@ use crate::core::goal::{
 
 /// POST /v2/goal - Execute a declarative goal
 async fn goal_execute(
-    State(_state): State<V2AppState>,
+    State(state): State<V2AppState>,
     Json(request): Json<GoalRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
     
-    // Get session handle
-    let _handle = match manager.get_handle(&request.session) {
+    // Get session handle (contains the v1 session ID)
+    let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
             return (
@@ -600,6 +681,9 @@ async fn goal_execute(
             );
         }
     };
+    
+    // The handle.id is the v1 session ID
+    let session_id = handle.id.clone();
     
     // Generate script for the goal
     let script = generate_goal_script(&request);
@@ -619,24 +703,448 @@ async fn goal_execute(
         GoalType::Custom => "custom",
     };
     
-    // TODO: Execute script through session handle with retry logic
-    // For now, return success with the request info
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "message": "Goal execution queued",
-            "session": request.session,
-            "goal_type": goal_type_str,
-            "target": request.target,
-            "retry_config": {
-                "max_retries": request.retry.max_retries,
-                "initial_delay_ms": request.retry.initial_delay_ms
-            },
-            "script_length": script.len(),
-            "_note": "Full execution pending - script generated"
-        })),
-    )
+    // Execute based on goal type
+    match request.goal_type {
+        GoalType::Navigate => {
+            // Use Navigate command
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::Navigate {
+                id: session_id.clone(),
+                url: request.target.clone(),
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms),
+                rx
+            ).await {
+                Ok(Ok(Ok(()))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "target": request.target,
+                        "session": request.session
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Navigation timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+        
+        GoalType::Click | GoalType::Fill | GoalType::Submit | GoalType::Scroll => {
+            // Execute script via ExecuteScript command
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::ExecuteScript {
+                id: session_id.clone(),
+                script: script.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms),
+                rx
+            ).await {
+                Ok(Ok(Ok(result))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "target": request.target,
+                        "session": request.session,
+                        "result": result
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Script execution timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+        
+        GoalType::Extract => {
+            // Use Extract command
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::Extract {
+                id: session_id.clone(),
+                selector: request.target.clone(),
+                attribute: "".to_string(), // Default to text content
+                extract_all: true,
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms),
+                rx
+            ).await {
+                Ok(Ok(Ok(result))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "target": request.target,
+                        "session": request.session,
+                        "extracted": result
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Extraction timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+        
+        GoalType::Wait => {
+            // Use WaitForSelector command
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::WaitForSelector {
+                id: session_id.clone(),
+                selector: request.target.clone(),
+                timeout_ms: request.timeout_ms,
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms + 1000), // Extra buffer
+                rx
+            ).await {
+                Ok(Ok(Ok(found))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "target": request.target,
+                        "session": request.session,
+                        "found": found
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Wait timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+        
+        GoalType::Screenshot => {
+            // Use Screenshot command
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::Screenshot {
+                id: session_id.clone(),
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms),
+                rx
+            ).await {
+                Ok(Ok(Ok(base64_data))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "session": request.session,
+                        "image": base64_data
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Screenshot timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+        
+        // For other goal types, use script execution
+        _ => {
+            let (tx, rx) = oneshot::channel();
+            let cmd = AppCommand::ExecuteScript {
+                id: session_id.clone(),
+                script: script.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                resp_tx: tx,
+            };
+            
+            if state.cmd_tx.send(cmd).is_err() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Failed to send command"
+                        }
+                    })),
+                );
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(request.timeout_ms),
+                rx
+            ).await {
+                Ok(Ok(Ok(result))) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "goal_type": goal_type_str,
+                        "target": request.target,
+                        "session": request.session,
+                        "result": result
+                    })),
+                ),
+                Ok(Ok(Err(e))) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": e
+                        }
+                    })),
+                ),
+                Ok(Err(_)) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "INTERNAL_ERROR",
+                            "message": "Response channel closed"
+                        }
+                    })),
+                ),
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_099",
+                            "name": "TIMEOUT",
+                            "message": "Execution timed out"
+                        }
+                    })),
+                ),
+            }
+        }
+    }
 }
 
 /// GET /v2/goal/flows - List available preset flows

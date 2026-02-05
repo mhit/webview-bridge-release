@@ -19,7 +19,7 @@ struct TestConfig {
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            server_url: "http://127.0.0.1:9222".to_string(),
+            server_url: "http://127.0.0.1:9400".to_string(),
             timeout: Duration::from_secs(30),
         }
     }
@@ -50,6 +50,10 @@ fn acquire_session(config: &TestConfig, name: &str) -> Result<String, Box<dyn st
         .send()?;
     
     let body: serde_json::Value = resp.json()?;
+    
+    // Wait for WebView to initialize
+    std::thread::sleep(Duration::from_secs(3));
+    
     Ok(body["session"].as_str().unwrap_or(name).to_string())
 }
 

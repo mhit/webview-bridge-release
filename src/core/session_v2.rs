@@ -10,7 +10,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-use super::{SessionHandle, SessionOptions};
+use super::SessionOptions;
+
+/// V2 Session Handle - holds the v1 session ID
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHandle {
+    /// The v1 session ID  
+    pub id: String,
+}
 
 // ============================================================================
 // Named Session Types
