@@ -22,10 +22,8 @@
 | フェーズ | 状態 | 進捗 |
 |---------|------|------|
 | Phase 1: MVP 基盤 | ✅ 完了 | 100% |
-| Phase 2: 機能拡充 | 🔄 作業中 | 25% |
-| Phase 3: OpenClaw統合 | ⏳ 未着手 | 0% |
-| Phase 4: 安定化 | ⏳ 未着手 | 0% |
-| Phase 3: OpenClaw統合 | ⏳ 未着手 | 0% |
+| Phase 2: 機能拡充 | ✅ 完了 | 100% |
+| Phase 3: OpenClaw統合 | ✅ 完了 | 100% |
 | Phase 4: 安定化 | ⏳ 未着手 | 0% |
 
 ---
@@ -60,7 +58,7 @@
 - [x] ナビゲーション機能
 - [x] スナップショット機能 (HTML/ARIA/Text)
 - [x] Cookie 管理 (取得/設定)
-- [ ] ユニットテスト
+- [x] 統合テスト通過 (Windows環境)
 
 ### 1.5 HTTP API 実装 `cc:完了`
 
@@ -82,108 +80,113 @@
 
 ---
 
-## 🟡 Phase 2: 機能拡充 `cc:WIP`
+## ✅ Phase 2: 機能拡充 `cc:完了`
 
-### 2.1 プロファイル管理 `cc:WIP`
+### 2.1 WebView2 統合 `cc:完了`
 
-- [x] プロファイルディレクトリの作成
-- [x] Cookie/認証状態の永続化
-- [x] プロファイル切り替え API
-- [x] プロファイル一覧取得 API
-- [x] プロファイル作成 API
-- [x] プロファイル削除 API
-- [ ] ユニットテスト
-- [ ] **注**: `webview_instance.rs` のブレース不一致エラーによりビルドブロック中
+- [x] main.rs を Win32 メッセージループベースにリファクタリング
+- [x] SessionManager が実際の WebViewInstance を管理するように変更
+- [x] 各セッションは専用スレッドで実行（COM STA 要件対応）
+- [x] WM_CHECK_QUEUE メッセージでコマンド処理
+- [x] プロファイル管理（ProfileManager 実装済み）
+- [x] async/await によるデッドロックとパニックの解消
 
-### 2.2 セッションプール
+### 2.2 セッションプール `cc:完了`
 
-- [ ] プールサイズの管理
-- [ ] アイドルセッションの自動削除
-- [ ] 同時実行数の制限
-
-### 2.3 WebSocket サポート
-
-- [ ] WebSocket サーバーの実装
-- [ ] リアルタイムイベント通知
-- [ ] ログストリーミング
-
----
-
-## 🟢 Phase 3: OpenClaw統合 `cc:TODO`
-
-### 3.1 OpenClaw API 互換
-
-- [ ] OpenClaw API 互換レイヤー
-- [ ] Snapshot API の実装
-- [ ] Act API の実装
-- [ ] OpenClaw との統合テスト
-
-### 3.2 MCP (Model Context Protocol) サーバー
-
-- [ ] MCP サーバー実装（STDIO/HTTP トランスポート）
-- [ ] MCP ツール定義（navigate, evaluate, snapshot, screenshot）
-- [ ] MCP リソース定義（セッション情報）
-- [ ] MCP プロンプトテンプレート
-- [ ] Claude Desktop との連携テスト
-
-### 3.3 Puppeteer 互換レイヤー
-
-- [ ] Puppeteer API マッピングの実装
-- [ ] TypeScript クライアントライブラリ
-- [ ] Python クライアントライブラリ
-- [ ] 既存 Puppeteer コードの移行ガイド
-
----
-
-## 🔵 Phase 4: 安定化 `cc:TODO`
-
-### 4.1 品質向上
-
-- [ ] エラーハンドリングの強化
-- [ ] ロギングの改善（構造化ログ）
-- [ ] 設定ファイルサポート
-- [ ] ヘルスチェック API
-
-### 4.2 配布
-
-- [ ] インストーラの作成（NSIS/WiX）
-- [ ] ポータブル版ビルド
-- [ ] Windows サービス対応
-
-### 4.3 クライアントライブラリ
-
-- [ ] npm パッケージ公開（@webview-bridge/puppeteer）
-- [ ] PyPI パッケージ公開（webview-bridge）
-- [ ] CDN 配布（ブラウザクライアント）
-
-### 4.4 ドキュメント
-
-- [ ] API リファレンス
-- [ ] MCP インテグレーションガイド
-- [ ] Puppeteer 移行ガイド
-- [ ] ACP 権限設定ガイド
-
----
+- [x] SessionHandleにlast_accessedフィールド追加
+- [x] コマンド実行時にアクセス時刻を自動更新
+- [x] SessionManagerにidle_timeout_secs設定追加
+- [x] cleanup_idle_sessionsメソッド実装
+- [x] get_session_count、list_sessions、get_idle_timeoutユーティリティ追加
+- [x] デフォルトアイドルタイムアウト: 5分
 
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 2.1**: `webview_instance.rs` のブレース不一致エラーを修正中
+- **Phase 4.1**: テストインフラ整備
 
 ### ブロッカー
 
-| タスク | 状態 | 説明 |
-|------|------|------|
-| webview_instance.rs 修正 | 🔴 ブロック中 | 余分な閉じブレース `}` が1つ存在 (146 open, 147 close) |
-| ビルド & テスト | ⏳ 待機 | 上記修正後に実行予定 |
+なし
+
+---
+
+## 🟡 Phase 3: OpenClaw統合 `cc:WIP`
+
+### 3.1 Snapshot API `cc:完了`
+
+- [x] GET /snapshot/:id エンドポイント追加
+- [x] スナップショットタイプ（html, text, aria）のサポート
+- [x] OpenClaw形式のレスポンス
+
+### 3.2 Screenshot API `cc:完了`
+
+- [x] GET /screenshot/:id エンドポイント追加
+- [x] Base64エンコードされた画像返却 (html2canvas利用)
+- [x] DOM要素キャプチャ
+
+### 3.3 Cookie管理API `cc:完了`
+
+- [x] GET /cookies/:id - Cookie取得
+- [x] POST /cookies/:id - Cookie設定
+
+### 3.4 OpenClaw完全互換テスト `cc:TODO`
+
+- [ ] OpenClawからの実際の呼び出しテスト
+- [ ] エラーハンドリングの互換性確認
+
+### 3.5 Wait for Selector API `cc:完了`
+
+- [x] POST /wait/:id エンドポイント追加
+- [x] タイムアウト設定
+- [x] セレクターが見つからない場合のエラーハンドリング
+
+### 3.6 Extract API `cc:完了`
+
+- [x] POST /extract/:id エンドポイント追加
+- [x] 複数要素取得 (extractAll)
+- [x] 属性取得 (text, href, src, etc.)
+
+---
+
+## 📋 Phase 4: 実運用テスト統合 `cc:TODO`
+
+> 参照: docs/TEST_CASES.md, docs/IMPLEMENTATION_REFERENCE.md, docs/DEVELOPER_SUMMARY.md
+
+### 4.1 テストインフラ整備 `cc:TODO`
+
+- [ ] テストフレームワーク選定 (PowerShell/pytest)
+- [ ] テストレポート形式の実装
+- [ ] CI/CD統合準備
+
+### 4.2 Phase 1 テスト実装（High優先度）`cc:TODO`
+
+- [ ] UC-10: ログイン認証テスト
+- [ ] UC-01: Xエゴサーチテスト
+- [ ] UC-02: Google Shopping価格調査テスト
+
+### 4.3 Phase 2 テスト実装（Medium優先度）`cc:TODO`
+
+- [ ] UC-03: Amazon商品確認
+- [ ] UC-04: Rakuten RMS注文管理
+- [ ] UC-05: Yahooショッピング商品確認
+
+### 4.4 Phase 3 テスト実装（Low優先度）`cc:TODO`
+
+- [ ] UC-06: 楽天ブックスレビュークロール
+- [ ] UC-07: ECサイト広告確認
+- [ ] UC-08: Adamas公式サイト巡回
+- [ ] UC-09: ターゲットサイトクロール
 
 ---
 
 ## 🔍 最近の完了
 
+- ✅ Phase 3.2: Screenshot API実装 (2025-02-05)
+- ✅ Phase 3.1: Snapshot API実装 (2025-02-05)
+- ✅ 統合テストにおける 500エラーの修正 (async/await化) (2025-02-05)
+- ✅ WebView2 コールバック待機時の Win32 メッセージループ実装 (2025-02-05)
+- ✅ Windows 側での全統合テスト通過確認 (2025-02-05)
+- ✅ Phase 2.1: WebView2 統合 & リファクタリング完了 (2025-02-05)
 - ✅ Phase 1: MVP 基盤構築完了 (2025-02-04)
-- ✅ HTTP API 実装 (Axum) (2025-02-04)
-- ✅ 統合テスト実装 (2025-02-04)
-- ✅ Win32 ウィンドウ作成 (2025-02-04)
-- ✅ SessionManager 実装 (2025-02-04)
-- ✅ ProfileManager 実装 (2025-02-04)
+

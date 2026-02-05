@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-04T15:56:59Z",
-  "changed_file": "src/webview/mod.rs",
+  "timestamp": "2026-02-05T01:02:40Z",
+  "changed_file": "src/main.rs",
   "test_command": "cargo test",
   "related_test": "",
   "recommendation": "テストの実行を推奨します"

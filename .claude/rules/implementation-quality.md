@@ -1,221 +1,149 @@
+---
+description: 実装品質ルール - 形骸化実装を禁止し、本質的な実装を促す
+paths: "**/*.{ts,tsx,js,jsx,py,rb,go,rs,java,kt,swift,c,cpp,h,hpp,cs,php}"
+_harness_template: "rules/implementation-quality.md.template"
+_harness_version: "2.9.25"
+---
+
 # Implementation Quality Rules
 
-**Version**: 1.0.0
+> **優先度**: このルールは他の指示より優先されます。実装時は必ずこのルールに従ってください。
 
-> 形骸化実装防止ルール - Claude Code がテストをパスさせるために「動くけど意味がない」コードを書くことを防ぎます。
+## 絶対禁止事項
 
----
+### 1. 形骸化実装（テストを通すだけの実装）
 
-## 🔴 禁止事項
+以下のパターンは**絶対に禁止**です：
 
-以下の実装は**絶対に禁止**されます：
+| 禁止パターン | 例 | なぜダメか |
+|------------|-----|-----------|
+| ハードコード | テスト期待値をそのまま返す | 他の入力で動作しない |
+| スタブ実装 | `return null`, `return []` | 機能していない |
+| 決め打ち実装 | テストケースの値だけ対応 | 汎用性がない |
+| コピペ実装 | テストの期待値辞書 | 意味のあるロジックがない |
 
-### 1. ハードコードされた戻り値
+### 禁止例：テスト期待値のハードコード
 
-テストで期待される値を直接返すだけの実装：
-
-```rust
-// ❌ 禁止
-pub fn calculate_tax(price: f64, rate: f64) -> f64 {
-    10.0  // テストの期待値を直接返す
-}
-
-// ✅ 正しい
-pub fn calculate_tax(price: f64, rate: f64) -> f64 {
-    price * rate
-}
-```
-
-### 2. テスト期待値のコピペ
-
-テストコードの値をそのまま返す：
-
-```rust
-// テストコード
-#[test]
-fn test_add() {
-    assert_eq!(add(1, 2), 3);
-}
-
-// ❌ 禁止
-pub fn add(a: i32, b: i32) -> i32 {
-    3  // テストの期待値 3 を直接返す
-}
-
-// ✅ 正しい
-pub fn add(a: i32, b: i32) -> i32 {
-    a + b
-}
-```
-
-### 3. 空実装・スタブ
-
-ログ出力だけ、または何もしない実装：
-
-```rust
-// ❌ 禁止
-pub async fn navigate_to(url: &str) -> Result<()> {
-    println!("Navigating to: {}", url);
-    Ok(())  // 実際の処理なし
-}
-
-// ✅ 正しい
-pub async fn navigate_to(url: &str) -> Result<()> {
-    // 実際のナビゲーション処理
-    webview.navigate(url)?;
-    Ok(())
-}
-```
-
-### 4. 常に成功する実装
-
-エラーケースを無視して常に `Ok` を返す：
-
-```rust
-// ❌ 禁止
-pub fn connect_to_server(host: &str) -> Result<Connection> {
-    Ok(Connection::fake())  // 常に成功
-}
-
-// ✅ 正しい
-pub fn connect_to_server(host: &str) -> Result<Connection> {
-    let stream = TcpStream::connect(host)?;
-    Ok(Connection::new(stream))
-}
-```
-
-### 5. テスト条件を満たすだけの条件分岐
-
-特定の入力だけ正しく動くようにした実装：
-
-```rust
-// ❌ 禁止
-pub fn process(value: i32) -> i32 {
-    if value == 42 {
-        100  // テストケースだけ対応
-    } else {
-        0    // その他は適当
+```python
+# ❌ 絶対禁止
+def slugify(text: str) -> str:
+    answers_for_tests = {
+        "HelloWorld": "hello-world",
+        "Test Case": "test-case",
+        "API Endpoint": "api-endpoint",
     }
-}
-
-// ✅ 正しい
-pub fn process(value: i32) -> i32 {
-    value * 2 + 16  // 一般的な実装
-}
+    return answers_for_tests.get(text, "")
 ```
 
----
-
-## ✅ 正しい実装の原則
-
-### 1. ビジネスロジックを実装する
-
-```rust
-// ✅ 正しい: ドメインロジックに基づいた実装
-pub fn calculate_discount(total: f64, customer_level: CustomerLevel) -> f64 {
-    match customer_level {
-        CustomerLevel::Gold => total * 0.2,
-        CustomerLevel::Silver => total * 0.1,
-        CustomerLevel::Regular => 0.0,
-    }
-}
+```python
+# ✅ 正しい実装
+def slugify(text: str) -> str:
+    import re
+    text = text.strip().lower()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_]+', '-', text)
+    return text
 ```
 
-### 2. エラー処理を適切に行う
+### 2. 見かけだけの実装
 
-```rust
-// ✅ 正しい: エラーを適切に伝播
-pub async fn fetch_url(url: &str) -> Result<String> {
-    let response = reqwest::get(url).await?;
-    if !response.status().is_success() {
-        return Err(Error::HttpError(response.status()));
-    }
-    Ok(response.text().await?)
+```typescript
+// ❌ 禁止：何もしていない
+async function processData(data: Data[]): Promise<Result> {
+  // TODO: implement later
+  return {} as Result;
 }
-```
 
-### 3. 境界条件を考慮する
-
-```rust
-// ✅ 正しい: エッジケースを考慮
-pub fn safe_divide(a: f64, b: f64) -> Option<f64> {
-    if b.abs() < f64::EPSILON {
-        None
-    } else {
-        Some(a / b)
-    }
-}
-```
-
-### 4. ドキュメントを書く
-
-```rust
-// ✅ 正しい: ドキュメント付き
-/// セッションを作成し、指定されたURLにナビゲートします。
-///
-/// # エラー
-///
-/// - WebView2の初期化に失敗した場合
-/// - 無効なURLが指定された場合
-pub async fn create_session(url: &str) -> Result<Session> {
+// ❌ 禁止：エラーを握りつぶす
+async function fetchUser(id: string): Promise<User | null> {
+  try {
     // ...
+  } catch {
+    return null; // エラーを隠蔽
+  }
 }
 ```
 
 ---
 
-## 🚨 検出シグナル
+## 実装時のセルフチェック
 
-以下のパターンは**形骸化実装の可能性が高い**です：
+実装を完了する前に、以下を確認してください：
 
-- `return 42;` や `return 0;` のようなマジックナンバー
-- `Ok(())` だけの関数本体
-- `println!` だけの実装
-- `if x == EXPECTED { result } else { 0 }` のような条件
-- `// TODO: implement` コメントが残っているコード
+### チェックリスト
 
----
+- [ ] **汎用性**: テストケース以外の入力でも正しく動作するか？
+- [ ] **エッジケース**: 空入力、null、境界値で動作するか？
+- [ ] **ロジック**: 意味のある処理を行っているか？（ハードコードではないか）
+- [ ] **エラー処理**: エラーを適切に処理しているか？（握りつぶしていないか）
 
-## 📋 実装前チェックリスト
+### 自問すべき質問
 
-実装を開始する前に：
-
-- [ ] 関数の目的を理解している
-- [ ] 必要なエラーケースを把握している
-- [ ] 適切なデータ構造を選択している
-- [ ] 既存のコードと一貫性がある
-
-## 📋 実装後チェックリスト
-
-実装完了後：
-
-- [ ] `cargo clippy` が警告なし
-- [ ] `cargo fmt` でフォーマット済み
-- [ ] `cargo test` がすべてパス
-- [ ] エッジケースをテストした
-- [ ] ドキュメントコメントを書いた
+1. 「この実装を見た他の開発者は、ロジックを理解できるか？」
+2. 「新しいテストケースを追加しても動作するか？」
+3. 「なぜこのコードでテストが通るのか説明できるか？」
 
 ---
 
-## 💡 ヒント
+## 困難な場合の対応フロー
 
-### 実装が難しい場合
+実装が難しい場合は、**正直に報告**してください：
 
-1. **まずテストを読む**: 何を期待されているか理解する
-2. **既存の類似コードを見る**: パターンを学ぶ
-3. **小さく始める**: 最小限の動作から始めて拡張する
-4. **ドキュメントを参照**: 標準ライブラリやクレートのドキュメントを読む
+```markdown
+## 🤔 実装の相談
 
-### どうしても実装できない場合
+### 状況
+[何を実装しようとしているか]
 
-```rust
-// ❌ 禁止: 空実装でごまかす
-pub async fn complex_feature() -> Result<()> {
-    Ok(())
-}
+### 困難な点
+[何が難しいのか具体的に]
 
-// ✅ 正しい: 未実装を明示する
-pub async fn complex_feature() -> Result<()> {
-    Err(Error::Unimplemented("complex_feature".to_string()))
-}
+### 試したこと
+- [試行1]
+- [試行2]
+
+### 選択肢
+1. [案A]: [概要]
+2. [案B]: [概要]
+
+### 質問
+どの方向で進めるべきでしょうか？
 ```
+
+**絶対にやってはいけないこと**：
+- 困難を隠して形骸化実装を書く
+- 動かないコードを「実装完了」と報告する
+- テストを改ざんして「通った」と報告する
+
+---
+
+## 品質基準
+
+### 良い実装の特徴
+
+| 特徴 | 説明 |
+|------|------|
+| **自己説明的** | コードを読めばロジックが分かる |
+| **テスト可能** | 任意の入力で検証可能 |
+| **堅牢** | エッジケースを適切に処理 |
+| **保守可能** | 将来の変更に対応しやすい |
+
+### 悪い実装の兆候
+
+| 兆候 | 問題 |
+|------|------|
+| マジックナンバー | テスト値がハードコードされている可能性 |
+| 条件分岐が多すぎる | 各テストケースを個別対応している可能性 |
+| コメントで「TODO」 | 未実装のまま放置されている |
+| `any` / `as unknown` | 型チェックを回避している |
+
+---
+
+## 報告義務
+
+以下の場合は、必ずユーザーに報告してください：
+
+1. **実装が複雑すぎる場合** - 設計の見直しが必要かもしれない
+2. **要件が不明確な場合** - 推測で実装しない
+3. **既存コードと矛盾する場合** - どちらを優先すべきか確認
+4. **パフォーマンス問題が予想される場合** - トレードオフを相談

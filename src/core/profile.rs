@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
 use std::io;
+use std::path::PathBuf;
 
 pub const PROFILES_DIR_NAME: &str = "profiles";
 
@@ -25,11 +25,17 @@ impl ProfileError {
     }
 
     pub fn profile_not_found(name: &str) -> Self {
-        Self::new("PROFILE_NOT_FOUND", format!("Profile '{}' does not exist", name))
+        Self::new(
+            "PROFILE_NOT_FOUND",
+            format!("Profile '{}' does not exist", name),
+        )
     }
 
     pub fn profile_exists(name: &str) -> Self {
-        Self::new("PROFILE_EXISTS", format!("Profile '{}' already exists", name))
+        Self::new(
+            "PROFILE_EXISTS",
+            format!("Profile '{}' already exists", name),
+        )
     }
 
     pub fn invalid_name(name: &str) -> Self {
@@ -65,7 +71,7 @@ impl ProfileInfo {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs().to_string())
-                .unwrap_or_else(|_| "0".to_string())
+                .unwrap_or_else(|_| "0".to_string()),
         );
         Self {
             name,
@@ -89,14 +95,15 @@ impl ProfileManager {
     /// Create a ProfileManager with the default base directory
     /// Default: ~/.webview-bridge/profiles
     pub fn default() -> Result<Self, ProfileError> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| ProfileError::new("NO_HOME_DIR", "Could not determine home directory"))?;
-        
+        let home_dir = dirs::home_dir().ok_or_else(|| {
+            ProfileError::new("NO_HOME_DIR", "Could not determine home directory")
+        })?;
+
         let base_dir = home_dir.join(".webview-bridge").join(PROFILES_DIR_NAME);
-        
+
         // Ensure base directory exists
         fs::create_dir_all(&base_dir)?;
-        
+
         Ok(Self { base_dir })
     }
 
@@ -108,13 +115,13 @@ impl ProfileManager {
     /// List all available profiles
     pub fn list_profiles(&self) -> Result<Vec<ProfileInfo>, ProfileError> {
         let mut profiles = Vec::new();
-        
+
         let entries = fs::read_dir(&self.base_dir)?;
-        
+
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
-            
+
             // Only directories are valid profiles
             if path.is_dir() {
                 if let Some(name) = path.file_name() {
@@ -130,7 +137,7 @@ impl ProfileManager {
                 }
             }
         }
-        
+
         profiles.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(profiles)
     }
@@ -158,18 +165,18 @@ impl ProfileManager {
     pub fn create_profile(&self, name: &str) -> Result<ProfileInfo, ProfileError> {
         // Validate profile name
         Self::validate_name(name)?;
-        
+
         // Check if profile already exists
         if self.profile_exists(name) {
             return Err(ProfileError::profile_exists(name));
         }
-        
+
         let profile_path = self.profile_path(name);
         let user_data_path = profile_path.join("userdata");
-        
+
         // Create profile directories
         fs::create_dir_all(&user_data_path)?;
-        
+
         Ok(ProfileInfo::new(
             name.to_string(),
             profile_path.to_string_lossy().to_string(),
@@ -181,10 +188,10 @@ impl ProfileManager {
         if !self.profile_exists(name) {
             return Err(ProfileError::profile_not_found(name));
         }
-        
+
         let profile_path = self.profile_path(name);
         fs::remove_dir_all(&profile_path)?;
-        
+
         Ok(())
     }
 
@@ -194,11 +201,14 @@ impl ProfileManager {
         if name.is_empty() || name.len() > 64 {
             return Err(ProfileError::invalid_name(name));
         }
-        
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+
+        if !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(ProfileError::invalid_name(name));
         }
-        
+
         Ok(())
     }
 
@@ -208,7 +218,7 @@ impl ProfileManager {
         if !self.profile_exists("default") {
             self.create_profile("default")?;
         }
-        
+
         Ok(ProfileInfo::new(
             "default".to_string(),
             self.profile_path("default").to_string_lossy().to_string(),
@@ -243,10 +253,10 @@ mod tests {
     #[test]
     fn test_create_profile() {
         let (_temp, manager) = create_temp_manager();
-        
+
         let result = manager.create_profile("test-profile");
         assert!(result.is_ok());
-        
+
         let profile = result.unwrap();
         assert_eq!(profile.name, "test-profile");
         assert!(manager.profile_exists("test-profile"));
@@ -255,10 +265,10 @@ mod tests {
     #[test]
     fn test_create_duplicate_profile() {
         let (_temp, manager) = create_temp_manager();
-        
+
         manager.create_profile("duplicate").unwrap();
         let result = manager.create_profile("duplicate");
-        
+
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, "PROFILE_EXISTS");
     }
@@ -266,14 +276,14 @@ mod tests {
     #[test]
     fn test_list_profiles() {
         let (_temp, manager) = create_temp_manager();
-        
+
         manager.create_profile("alpha").unwrap();
         manager.create_profile("beta").unwrap();
         manager.create_profile("gamma").unwrap();
-        
+
         let profiles = manager.list_profiles().unwrap();
         assert_eq!(profiles.len(), 3);
-        
+
         // Should be sorted alphabetically
         assert_eq!(profiles[0].name, "alpha");
         assert_eq!(profiles[1].name, "beta");
@@ -283,10 +293,10 @@ mod tests {
     #[test]
     fn test_delete_profile() {
         let (_temp, manager) = create_temp_manager();
-        
+
         manager.create_profile("to-delete").unwrap();
         assert!(manager.profile_exists("to-delete"));
-        
+
         let result = manager.delete_profile("to-delete");
         assert!(result.is_ok());
         assert!(!manager.profile_exists("to-delete"));
@@ -295,7 +305,7 @@ mod tests {
     #[test]
     fn test_delete_nonexistent_profile() {
         let (_temp, manager) = create_temp_manager();
-        
+
         let result = manager.delete_profile("nonexistent");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, "PROFILE_NOT_FOUND");
@@ -319,10 +329,10 @@ mod tests {
     #[test]
     fn test_user_data_folder() {
         let (_temp, manager) = create_temp_manager();
-        
+
         manager.create_profile("test").unwrap();
         let folder = manager.user_data_folder("test");
-        
+
         assert!(folder.contains("test"));
         assert!(folder.contains("userdata"));
     }
@@ -330,12 +340,12 @@ mod tests {
     #[test]
     fn test_ensure_default_profile() {
         let (_temp, manager) = create_temp_manager();
-        
+
         let result = manager.ensure_default_profile();
         assert!(result.is_ok());
         assert_eq!(result.unwrap().name, "default");
         assert!(manager.profile_exists("default"));
-        
+
         // Calling again should not error
         assert!(manager.ensure_default_profile().is_ok());
     }
