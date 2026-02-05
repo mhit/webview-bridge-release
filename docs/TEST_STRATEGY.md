@@ -510,21 +510,88 @@ jobs:
 
 1. **テストレベル**: 4段階（ユニット→統合→API→E2E）
 2. **優先度**: APIエンドポイント > エラーハンドリング > ワークフロー
-3. **E2Eテスト**: ローカル/専用環境のみ、CIではスキップ
+3. **E2Eテスト**: **毎コミット実行**（CI必須）
 4. **テストデータ**: フィクスチャ + モックサービス
+5. **Gemini API テスト**: **実際のAPIを使用**（環境変数で切替可能）
+6. **テストカバレッジ目標**: **90%**
+7. **パフォーマンステスト**: **必須**（レスポンスタイム、スループット）
 
-### 8.2 次のアクション
+### 8.2 パフォーマンステスト基準
+
+| 指標 | 目標値 | 測定方法 |
+|-----|-------|---------|
+| API レスポンスタイム (P50) | < 50ms | criterion ベンチマーク |
+| API レスポンスタイム (P99) | < 200ms | criterion ベンチマーク |
+| セッション取得 | < 100ms | E2E計測 |
+| スクリーンショット取得 | < 500ms | E2E計測 |
+| 同時セッション処理 | 10並列 | 負荷試験 |
+| メモリ増加率 | < 10MB/1000操作 | 長時間テスト |
+
+### 8.3 次のアクション
 
 - [ ] テストユーティリティモジュール作成 (`tests/common/mod.rs`)
-- [ ] モックHTTPクライアント実装
+- [ ] Gemini API 統合テスト環境構築
 - [ ] テストサーバフレームワーク構築
 - [ ] APIエンドポイント正常系テスト実装開始
+- [ ] criterion ベンチマークセットアップ
+- [ ] CI/CD パイプラインにE2E・パフォーマンステスト追加
 
 ---
 
-## 9. 質問・確認事項
+## 9. 解決済み確認事項
 
-1. **Gemini API テスト**: 実際のAPIを使うか、完全モックか？
-2. **テストカバレッジ目標**: 何%を目指すか？
-3. **E2E テスト頻度**: 毎コミット？毎日？週次？
-4. **パフォーマンステスト**: 必要か？（レスポンスタイム、スループット）
+| 質問 | 決定 |
+|-----|------|
+| Gemini API テスト | ✅ **実際のAPIを使用**（モック併用、環境変数切替） |
+| テストカバレッジ目標 | ✅ **90%** |
+| E2E テスト頻度 | ✅ **毎コミット** |
+| パフォーマンステスト | ✅ **必須** |
+
+---
+
+## 10. CI/CD 更新計画
+
+```yaml
+# .github/workflows/test.yml (更新版)
+name: WBP2 Tests
+on: [push, pull_request]
+
+env:
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+jobs:
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --lib
+      - run: cargo llvm-cov --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+          threshold: 90%  # 90%カバレッジ必須
+
+  integration-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --test integration
+
+  e2e-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -- --ignored  # 毎コミット実行
+
+  performance-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo bench
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: target/criterion/
+```
+
