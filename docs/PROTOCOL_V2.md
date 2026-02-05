@@ -2067,3 +2067,445 @@ POST /v2/ai/extract
   }
 }
 ```
+
+---
+
+## 15. 設計整合性分析
+
+### 15.1 発見された不整合・重複
+
+| 問題 | 箇所 | 解決策 |
+|------|------|--------|
+| セッション参照の命名 | `/v2/session/acquire` で `session_id` を返すが、他APIでは `session` パラメータ | 統一: すべて `session` に |
+| ファイル参照の二重定義 | 6.6メディアファイル参照と15.3ストレージ管理で類似API | 統合: `/v2/media/files/*` に一本化 |
+| 進捗URL形式 | `/v2/download/status/:id` と `/v2/media/job/:id` | 統一: `/v2/jobs/:id` |
+| セッション vs session_ref | ブラウザセッション と ファイルセッション参照で混乱の可能性 | 明確化: `browser_session` / `file_ref` |
+
+### 15.2 用語統一
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    用語定義（統一版）                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [ブラウザ関連]                                                 │
+│  ├── session: ブラウザセッション（名前付き、例: "rakuten"）     │
+│  ├── profile: ブラウザプロファイル（Cookieなど永続化）          │
+│  └── webview: WebView2インスタンス                              │
+│                                                                 │
+│  [ファイル関連]                                                 │
+│  ├── file_ref: ファイル参照ID（例: "downloads_001"）            │
+│  ├── file_path: ファイルへの相対パス                            │
+│  └── storage: ストレージ管理全体                                │
+│                                                                 │
+│  [ジョブ関連]                                                   │
+│  ├── job_id: 非同期ジョブのID（ダウンロード、動画分析等）       │
+│  ├── status: ジョブ状態 (pending|running|completed|failed)      │
+│  └── progress: 進捗情報（percent、ETA等）                       │
+│                                                                 │
+│  [AI関連]                                                       │
+│  ├── ai_mode: AI機能を使用するかどうか                          │
+│  ├── ai_log: AI判断のログ                                       │
+│  └── ai_config: AI設定（APIキー、モデル等）                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 15.3 API命名規則（統一版）
+
+```
+/v2/session/*          - ブラウザセッション管理
+/v2/navigate           - ページナビゲーション
+/v2/action/*           - ブラウザアクション (click, type等)
+/v2/extract            - データ抽出
+/v2/wait               - 条件待機
+/v2/screenshot         - スクリーンショット
+/v2/macro              - マクロ実行
+/v2/download/*         - ブラウザダウンロード
+/v2/media/*            - メディア収集・ファイル管理
+/v2/storage/*          - ストレージ管理
+/v2/jobs/:id           - 非同期ジョブ状態（統一）
+/v2/ai/*               - AI機能
+/v2/config/*           - 設定
+/v2/events             - WebSocketイベント
+```
+
+---
+
+## 16. AI通信設計
+
+### 16.1 通信パターン比較
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    通信パターン比較                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [A. REST (現在)]                                               │
+│  ├── メリット                                                   │
+│  │   ├── シンプル、ステートレス                                 │
+│  │   ├── デバッグ容易                                           │
+│  │   ├── AI (MCP/Anthropic) と自然に統合                        │
+│  │   └── リトライ・エラーハンドリングが容易                     │
+│  ├── デメリット                                                 │
+│  │   ├── リアルタイム通知不可（ポーリング必要）                 │
+│  │   ├── 長時間処理でタイムアウトの懸念                         │
+│  │   └── 各リクエストにセッション情報が必要                     │
+│                                                                 │
+│  [B. WebSocket (補助)]                                          │
+│  ├── メリット                                                   │
+│  │   ├── リアルタイム通知（ダウンロード進捗等）                 │
+│  │   ├── サーバープッシュ可能                                   │
+│  │   └── 長時間接続維持                                         │
+│  ├── デメリット                                                 │
+│  │   ├── AI (LLM) の長時間接続維持は困難                        │
+│  │   ├── 接続断時の再接続ロジックが必要                         │
+│  │   └── ステートフルで複雑                                     │
+│                                                                 │
+│  [C. Webhook (コールバック)]                                    │
+│  ├── メリット                                                   │
+│  │   ├── 長時間処理に最適                                       │
+│  │   ├── AIサーバーは接続維持不要                               │
+│  │   └── 処理完了時に通知                                       │
+│  ├── デメリット                                                 │
+│  │   ├── コールバックURL設定が必要                              │
+│  │   ├── AIエージェントがWebhook受信可能である必要              │
+│  │   └── セキュリティ設計が必要                                 │
+│                                                                 │
+│  [D. ハイブリッド (推奨)]                                       │
+│  ├── 同期処理 → REST                                            │
+│  ├── 進捗監視 → ポーリング (GET /v2/jobs/:id)                   │
+│  ├── リアルタイム通知 → WebSocket (オプション、人間向け)        │
+│  └── 長時間処理完了通知 → Webhook (オプション)                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 16.2 推奨アーキテクチャ
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI通信アーキテクチャ（推奨）                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [短時間処理 <30秒]                                             │
+│  ├── REST同期レスポンス                                         │
+│  └── 例: navigate, click, extract, screenshot                   │
+│                                                                 │
+│  AIエージェント ──→ POST /v2/action/click ──→ レスポンス(同期)  │
+│                                                                 │
+│  ───────────────────────────────────────────────────────────    │
+│                                                                 │
+│  [長時間処理 >30秒]                                             │
+│  ├── REST非同期開始 → job_id返却                                │
+│  ├── ポーリングで進捗確認 OR Webhook通知                        │
+│  └── 例: download, video_analyze, paginated_extract             │
+│                                                                 │
+│  AIエージェント ──→ POST /v2/download/trigger                   │
+│                       │                                         │
+│                       ▼                                         │
+│                    {job_id: "dl_001", status: "started"}        │
+│                       │                                         │
+│                       │ (ポーリング)                            │
+│                       ▼                                         │
+│                    GET /v2/jobs/dl_001                          │
+│                       │                                         │
+│                       ▼                                         │
+│                    {status: "completed", file_ref: "..."}       │
+│                                                                 │
+│  ───────────────────────────────────────────────────────────    │
+│                                                                 │
+│  [Webhook通知 (オプション)]                                     │
+│                                                                 │
+│  AIエージェント ──→ POST /v2/download/trigger                   │
+│                       {webhook: "https://ai-server/callback"}   │
+│                       │                                         │
+│                       ▼                                         │
+│                    {job_id: "dl_001", status: "started"}        │
+│                       │                                         │
+│                       │ (処理完了後、サーバーからPOST)          │
+│                       ▼                                         │
+│  AIサーバー ←── POST https://ai-server/callback                 │
+│                    {job_id: "dl_001", status: "completed"}      │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 16.3 Webhook設計
+
+```http
+# Webhook付きリクエスト
+POST /v2/download/trigger
+{
+    "session": "document_portal",
+    "action": {"type": "click", "selector": "#download"},
+    "async": true,
+    "webhook": {
+        "url": "https://ai-server.example.com/webhook",
+        "method": "POST",
+        "headers": {
+            "Authorization": "Bearer xxx",
+            "X-Request-ID": "req_12345"
+        },
+        "events": ["completed", "failed"],  // 通知するイベント
+        "retry": {
+            "max_attempts": 3,
+            "backoff_ms": 1000
+        }
+    }
+}
+
+# レスポンス（即座）
+{
+    "success": true,
+    "job_id": "dl_001",
+    "status": "started",
+    "webhook_registered": true
+}
+
+# Webhookコールバック（処理完了時）
+POST https://ai-server.example.com/webhook
+{
+    "event": "completed",
+    "job_id": "dl_001",
+    "timestamp": "2026-02-05T16:30:00Z",
+    "result": {
+        "status": "completed",
+        "file_ref": "downloads_001",
+        "files": [
+            {"name": "report.pdf", "size": 2500000}
+        ]
+    },
+    "signature": "sha256=..."  // リクエスト検証用
+}
+```
+
+### 16.4 長時間処理の統一パターン
+
+```http
+# すべての長時間処理で共通のパターン
+
+# 1. 処理開始（非同期）
+POST /v2/{任意の長時間処理}
+{
+    ...,
+    "async": true,              // 非同期モード
+    "webhook": {...}            // オプション
+}
+
+# レスポンス
+{
+    "success": true,
+    "job_id": "xxx",
+    "status": "started",
+    "poll_url": "/v2/jobs/xxx",
+    "estimated_duration_ms": 30000
+}
+
+# 2. 進捗確認（ポーリング）
+GET /v2/jobs/xxx
+{
+    "job_id": "xxx",
+    "type": "download",         // download | video_analyze | batch_extract | ...
+    "status": "running",        // pending | running | completed | failed | cancelled
+    "progress": {
+        "percent": 45,
+        "current_step": "downloading",
+        "eta_seconds": 15
+    },
+    "started_at": "2026-02-05T16:30:00Z",
+    "updated_at": "2026-02-05T16:30:15Z"
+}
+
+# 3. 完了後の結果
+GET /v2/jobs/xxx
+{
+    "job_id": "xxx",
+    "status": "completed",
+    "result": {
+        "file_ref": "...",
+        "data": {...}
+    },
+    "completed_at": "2026-02-05T16:30:30Z",
+    "duration_ms": 30000
+}
+
+# 4. ジョブキャンセル
+DELETE /v2/jobs/xxx
+{
+    "success": true,
+    "status": "cancelled"
+}
+```
+
+### 16.5 AI向け最適化
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI向け通信最適化                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [1. ポーリング間隔の推奨]                                      │
+│  ├── 短時間処理: 不要（同期レスポンス待ち）                     │
+│  ├── 中間: 2-5秒間隔                                            │
+│  └── 長時間: 10-30秒間隔                                        │
+│                                                                 │
+│  [2. タイムアウト設定]                                          │
+│  ├── 同期処理: 最大60秒                                         │
+│  ├── 非同期処理: 開始通知は即座、完了は別途確認                 │
+│  └── 推奨: estimated_duration_ms を参考に判断                   │
+│                                                                 │
+│  [3. バッチ処理]                                                │
+│  ├── 複数操作を1リクエストにまとめる                            │
+│  └── 例: POST /v2/batch [{action1}, {action2}, ...]            │
+│                                                                 │
+│  [4. コンテキスト効率]                                          │
+│  ├── 結果は構造化JSONで返却                                     │
+│  ├── 不要な情報はフィルタリング可能                             │
+│  └── エラーメッセージはAIが解釈しやすい形式                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 16.6 バッチリクエスト
+
+複数の操作を1リクエストにまとめる:
+
+```http
+POST /v2/batch
+{
+    "session": "default",
+    "operations": [
+        {"id": "op1", "action": "navigate", "url": "https://example.com"},
+        {"id": "op2", "action": "wait", "selector": ".content", "depends_on": "op1"},
+        {"id": "op3", "action": "extract", "selector": ".item", "depends_on": "op2"},
+        {"id": "op4", "action": "screenshot", "depends_on": "op2"}
+    ],
+    "stop_on_error": true
+}
+
+# レスポンス
+{
+    "success": true,
+    "results": {
+        "op1": {"success": true, "url": "https://example.com"},
+        "op2": {"success": true, "found": true, "elapsed_ms": 234},
+        "op3": {"success": true, "items": [...]},
+        "op4": {"success": true, "image": "base64..."}
+    },
+    "total_elapsed_ms": 2500
+}
+```
+
+---
+
+## 17. WebSocket イベント設計
+
+### 17.1 接続・購読
+
+```javascript
+// WebSocket接続
+const ws = new WebSocket('ws://localhost:9400/v2/events');
+
+ws.onopen = () => {
+    // 特定のイベントを購読
+    ws.send(JSON.stringify({
+        type: 'subscribe',
+        events: ['download_progress', 'job_completed', 'session_event'],
+        session_filter: ['rakuten', 'default']  // 特定セッションのみ
+    }));
+};
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    switch (data.type) {
+        case 'download_progress':
+            console.log(`${data.filename}: ${data.percent}%`);
+            break;
+        case 'job_completed':
+            console.log(`ジョブ完了: ${data.job_id}`);
+            break;
+        case 'session_event':
+            console.log(`セッション: ${data.session} - ${data.event}`);
+            break;
+    }
+};
+```
+
+### 17.2 イベント種別
+
+| イベント | 説明 | ペイロード例 |
+|---------|------|-------------|
+| `download_progress` | DL進捗 | `{filename, percent, speed_bps}` |
+| `download_completed` | DL完了 | `{file_ref, size}` |
+| `job_started` | ジョブ開始 | `{job_id, type}` |
+| `job_progress` | ジョブ進捗 | `{job_id, percent, current_step}` |
+| `job_completed` | ジョブ完了 | `{job_id, result}` |
+| `job_failed` | ジョブ失敗 | `{job_id, error}` |
+| `session_created` | セッション作成 | `{session, profile}` |
+| `session_closed` | セッション終了 | `{session, reason}` |
+| `navigation` | ページ遷移 | `{session, url}` |
+| `ai_action` | AI操作ログ | `{session, action, result}` |
+
+### 17.3 AIエージェントでのWebSocket使用
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AIエージェントとWebSocket                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [課題]                                                         │
+│  ├── LLMは通常、HTTPリクエスト/レスポンスモデル                 │
+│  ├── 長時間のWebSocket接続維持は困難                            │
+│  └── MCPなどのプロトコルはREST前提                              │
+│                                                                 │
+│  [推奨アプローチ]                                               │
+│  ├── AIエージェント自体はRESTを使用                             │
+│  │   └── ポーリングまたはWebhookで非同期結果を取得             │
+│  ├── WebSocketは人間オペレーターまたは監視用                    │
+│  │   └── ダッシュボード、進捗表示、デバッグ                     │
+│  └── AIラッパーアプリケーションがWebSocketを使用可能            │
+│      └── AI ← REST → ラッパー ← WebSocket → WBP2               │
+│                                                                 │
+│  [MCP Tool定義での非同期対応]                                   │
+│  ├── 同期Toolは通常のTool呼び出し                               │
+│  ├── 非同期Toolはjob_idを返し、別のToolで結果取得               │
+│  └── 例:                                                        │
+│      Tool: start_download → returns job_id                      │
+│      Tool: check_job_status → returns status/result             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 18. 設計整合性チェックリスト
+
+### 18.1 解決済み
+
+- [x] セッション命名統一 (`session` パラメータ)
+- [x] ファイル参照API統一 (`/v2/media/files/*`)
+- [x] ジョブ管理API統一 (`/v2/jobs/:id`)
+- [x] 用語定義の明確化
+- [x] 通信パターンの選択基準明確化
+
+### 18.2 要検討
+
+- [ ] Phase番号の再整理（機能グループ化）
+- [ ] MCP Tool定義の具体化
+- [ ] エラーコード体系の統一
+- [ ] レート制限設計
+- [ ] 認証・認可設計
+
+### 18.3 設計原則の再確認
+
+| 原則 | 設計での対応 | 状態 |
+|------|-------------|------|
+| 宣言的ゴール | `/v2/goal`, マクロ, AI抽出 | ✅ 整合 |
+| イベント駆動 | MutationObserver, WebSocket | ✅ 整合 |
+| セッション永続化 | sessions.json, 名前付きセッション | ✅ 整合 |
+| スマート待機 | `/v2/wait`, SPA対応 | ✅ 整合 |
+| エラー自己回復 | AI-in-the-Loop, 自動リトライ | ✅ 整合 |
+| 通信効率 | マクロ, バッチ, 非同期ジョブ | ✅ 整合 |
+| ファイル管理 | TTL, 自動削除, 永続化 | ✅ 整合 |
+

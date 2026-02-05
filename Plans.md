@@ -35,7 +35,8 @@
 | Phase 12: メディア収集 & 動画分析 | 📋 計画中 | 0% |
 | Phase 13: レガシー廃止 | 📋 計画中 | 0% |
 | Phase 14: AI統合 (Gemini) | 📋 計画中 | 0% |
-| **Phase 15: ダウンロード & ストレージ** | 📋 計画中 | 0% |
+| Phase 15: ダウンロード & ストレージ | 📋 計画中 | 0% |
+| **Phase 16: 通信設計 (Webhook/Batch)** | 📋 計画中 | 0% |
 
 ---
 
@@ -602,6 +603,46 @@
 - [ ] 環境変数サポート (WEBVIEW_BRIDGE_DATA_PATH等)
 - [ ] 使用量アラート (80%/95%)
 - [ ] 最大ファイルサイズ制限
+
+---
+
+## 🔗 Phase 16: 通信設計 (Webhook/Batch) `cc:TODO`
+
+> 設計: docs/PROTOCOL_V2.md セクション15-17
+
+### 16.1 非同期ジョブ管理 `cc:TODO`
+
+- [ ] `/v2/jobs/:id` 統一エンドポイント
+- [ ] ジョブ状態 (pending/running/completed/failed/cancelled)
+- [ ] 進捗情報 (percent, eta_seconds)
+- [ ] ジョブキャンセル (DELETE /v2/jobs/:id)
+
+### 16.2 Webhook通知 `cc:TODO`
+
+- [ ] Webhook設定オプション (url, headers, events)
+- [ ] 処理完了時のHTTP POST通知
+- [ ] リトライ機構 (max_attempts, backoff_ms)
+- [ ] 署名検証 (sha256)
+
+### 16.3 バッチリクエスト `cc:TODO`
+
+- [ ] `POST /v2/batch` エンドポイント
+- [ ] 複数操作の依存関係 (depends_on)
+- [ ] エラー時停止オプション (stop_on_error)
+- [ ] 並列/順次実行選択
+
+### 16.4 WebSocketイベント `cc:TODO`
+
+- [ ] `ws://localhost:9400/v2/events` エンドポイント
+- [ ] イベント購読 (subscribe)
+- [ ] セッションフィルター
+- [ ] イベント種別定義 (download_*, job_*, session_*)
+
+### 16.5 設計整合性 `cc:TODO`
+
+- [ ] 用語統一 (session, file_ref, job_id)
+- [ ] API命名規則統一
+- [ ] エラーコード体系
 
 ---
 
