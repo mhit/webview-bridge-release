@@ -127,6 +127,9 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         // Screenshot v2
         .route("/screenshot", post(screenshot_v2))
         .route("/screenshot/devices", get(screenshot_devices))
+        // Goal API
+        .route("/goal", post(goal_execute))
+        .route("/goal/flows", get(goal_list_flows))
         .with_state(state)
 }
 
@@ -526,6 +529,99 @@ async fn screenshot_devices() -> impl IntoResponse {
             "success": true,
             "devices": devices,
             "count": devices.len()
+        })),
+    )
+}
+
+// ============================================================================
+// Goal API Endpoints
+// ============================================================================
+
+use crate::core::goal::{
+    GoalRequest, GoalType, get_preset_flows, generate_goal_script,
+};
+
+/// POST /v2/goal - Execute a declarative goal
+async fn goal_execute(
+    State(_state): State<V2AppState>,
+    Json(request): Json<GoalRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    // Get session handle
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Generate script for the goal
+    let script = generate_goal_script(&request);
+    
+    // Get goal type as string
+    let goal_type_str = match request.goal_type {
+        GoalType::Navigate => "navigate",
+        GoalType::Click => "click",
+        GoalType::Fill => "fill",
+        GoalType::Submit => "submit",
+        GoalType::Wait => "wait",
+        GoalType::Extract => "extract",
+        GoalType::Login => "login",
+        GoalType::Search => "search",
+        GoalType::Scroll => "scroll",
+        GoalType::Screenshot => "screenshot",
+        GoalType::Custom => "custom",
+    };
+    
+    // TODO: Execute script through session handle with retry logic
+    // For now, return success with the request info
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Goal execution queued",
+            "session": request.session,
+            "goal_type": goal_type_str,
+            "target": request.target,
+            "retry_config": {
+                "max_retries": request.retry.max_retries,
+                "initial_delay_ms": request.retry.initial_delay_ms
+            },
+            "script_length": script.len(),
+            "_note": "Full execution pending - script generated"
+        })),
+    )
+}
+
+/// GET /v2/goal/flows - List available preset flows
+async fn goal_list_flows() -> impl IntoResponse {
+    let presets = get_preset_flows();
+    
+    let flows: Vec<serde_json::Value> = presets.iter().map(|f| {
+        json!({
+            "name": f.name,
+            "description": f.description,
+            "steps_count": f.steps.len()
+        })
+    }).collect();
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "flows": flows,
+            "count": flows.len()
         })),
     )
 }

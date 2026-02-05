@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
+pub mod goal;
 pub mod profile;
 pub mod screenshot_v2;
 pub mod session_v2;
