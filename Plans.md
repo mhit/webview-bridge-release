@@ -34,6 +34,7 @@
 | Phase 11: マクロスクリプト | 📋 計画中 | 0% |
 | Phase 12: メディア収集 & 動画分析 | 📋 計画中 | 0% |
 | Phase 13: レガシー廃止 | 📋 計画中 | 0% |
+| **Phase 14: AI統合 (Gemini)** | 📋 計画中 | 0% |
 
 ---
 
@@ -514,6 +515,49 @@
 - [ ] CDP HTTP コード削除
 - [ ] 旧MCP Tools削除
 - [ ] ルーター統合
+
+---
+
+## 🧠 Phase 14: AI統合 (Gemini) `cc:TODO`
+
+> 設計: docs/PROTOCOL_V2.md セクション11-14
+
+### 14.1 AI設定基盤 `cc:TODO`
+
+- [ ] AIプロバイダー設定API (`POST /v2/config/ai`)
+- [ ] 環境変数サポート (WEBVIEW_BRIDGE_AI_*)
+- [ ] 日次予算制限
+- [ ] Gemini API統合 (google-generativeai crate)
+
+### 14.2 自動ログイン (AI-Assisted) `cc:TODO`
+
+- [ ] `POST /v2/ai/login` エンドポイント
+- [ ] ログイン状態検出 (スクショ→Gemini分析)
+- [ ] フォーム自動入力
+- [ ] CAPTCHA検出→通知
+- [ ] 2FA検出→コード入力待機
+
+### 14.3 AI画像評価モード `cc:TODO`
+
+- [ ] `POST /v2/ai/images/analyze` エンドポイント
+- [ ] 商品画像評価 (visual_quality, composition等)
+- [ ] 改善プロンプト生成
+- [ ] カスタム評価基準サポート
+- [ ] 競合比較レポート
+
+### 14.4 動的ページ解析 (AI-Assisted) `cc:TODO`
+
+- [ ] `POST /v2/ai/extract` エンドポイント
+- [ ] AIによる待機条件判断
+- [ ] スクロール自動実行
+- [ ] 抽出結果の構造化
+
+### 14.5 プライバシー・セキュリティ `cc:TODO`
+
+- [ ] スクリーンショット送信前のマスク処理
+- [ ] パスワードフィールド検出→黒塗り
+- [ ] クレジットカード番号マスク
+- [ ] AIログの適切な管理
 
 ---
 

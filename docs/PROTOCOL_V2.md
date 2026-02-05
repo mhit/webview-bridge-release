@@ -1162,6 +1162,399 @@ WBP2への一本化に伴い、以下のプロトコルを**非推奨**とする
   コード複雑、保守困難              シンプル、AIに最適化
 ```
 
+---
+
+## 11. AI-in-the-Loop 設計
+
+### 11.1 設計思想
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI-in-the-Loop アーキテクチャ                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [従来のパターン]                                               │
+│                                                                 │
+│  クライアントAI                                           サーバー
+│      │                                                      │
+│      │ 1. ページを開いて                                    │
+│      │ ─────────────────────────────────────────────────→   │
+│      │ 2. 未ログイン検出                                    │
+│      │ ←─────────────────────────────────────────────────   │
+│      │ 3. ログインボタンをクリック                          │
+│      │ ─────────────────────────────────────────────────→   │
+│      │ 4. CAPTCHAが表示された...どうする？                  │
+│      │ ←─────────────────────────────────────────────────   │
+│      │ 5. reCAPTCHAをクリック (推測)                        │
+│      │ ─────────────────────────────────────────────────→   │
+│      │    ... 10往復以上、コンテキスト消費大                │
+│                                                                 │
+│  [AI-in-the-Loop パターン]                                      │
+│                                                                 │
+│  クライアントAI                 サーバーAI           WebView2   │
+│      │                             │                   │        │
+│      │ 1. ログインして            │                   │        │
+│      │ ─────────────────────────→  │                   │        │
+│      │                             │ スクショ取得      │        │
+│      │                             │ ─────────────────→│        │
+│      │                             │ Gemini分析        │        │
+│      │                             │ ログインボタン検出│        │
+│      │                             │ クリック実行      │        │
+│      │                             │ ─────────────────→│        │
+│      │                             │ 再スクショ        │        │
+│      │                             │ CAPTCHA検出       │        │
+│      │                             │ 解決または通知    │        │
+│      │                             │                   │        │
+│      │    {success: true}          │                   │        │
+│      │ ←─────────────────────────  │                   │        │
+│      │                                                          │
+│      │ → 1往復で完了、コンテキスト消費最小                      │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 11.2 サーバーサイドAI設定
+
+```http
+# AI設定（サーバー起動時または動的設定）
+POST /v2/config/ai
+{
+    "provider": "gemini",
+    "api_key": "AIza...",              // 環境変数 GEMINI_API_KEY でも可
+    "model": "gemini-2.0-flash",       // 高速・低コスト
+    "fallback_model": "gemini-1.5-pro", // 複雑なケース用
+    "settings": {
+        "max_tokens": 4096,
+        "temperature": 0.3,            // 低め = 安定した出力
+        "vision_enabled": true         // 画像分析有効
+    },
+    "usage_limits": {
+        "requests_per_minute": 60,
+        "daily_budget_usd": 10.0       // 日次予算制限
+    }
+}
+```
+
+環境変数での設定:
+```bash
+WEBVIEW_BRIDGE_AI_PROVIDER=gemini
+WEBVIEW_BRIDGE_AI_API_KEY=AIza...
+WEBVIEW_BRIDGE_AI_MODEL=gemini-2.0-flash
+```
+
+---
+
+## 12. 自動ログイン (AI-Assisted Login)
+
+### 12.1 基本フロー
+
+```http
+POST /v2/ai/login
+{
+    "session": "rakuten",
+    "url": "https://www.rakuten.co.jp/",
+    "credentials": {
+        "username": "user@example.com",
+        "password": "***"              // セキュアストレージから取得推奨
+    },
+    "options": {
+        "max_steps": 10,               // 最大ステップ数
+        "timeout": 60000,              // タイムアウト
+        "captcha_handling": "notify",  // notify | solve_if_simple | fail
+        "two_factor": "notify"         // 2FA検出時の動作
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "steps_taken": 4,
+    "final_url": "https://www.rakuten.co.jp/mypage/",
+    "auth_status": {
+        "logged_in": true,
+        "username_detected": "user@example.com"
+    },
+    "ai_log": [
+        {"step": 1, "action": "detected_login_button", "selector": "#login-btn"},
+        {"step": 2, "action": "clicked", "element": "ログインボタン"},
+        {"step": 3, "action": "filled_form", "fields": ["username", "password"]},
+        {"step": 4, "action": "submitted", "result": "success"}
+    ]
+}
+```
+
+### 12.2 困難なケースの処理
+
+```http
+# CAPTCHA検出時
+{
+    "success": false,
+    "status": "captcha_required",
+    "captcha_type": "recaptcha_v2",
+    "screenshot_ref": "captcha_screen_001",
+    "message": "CAPTCHAが検出されました。手動解決が必要です。",
+    "resume_instructions": {
+        "after_manual_solve": "POST /v2/ai/login/resume?session=rakuten"
+    }
+}
+
+# 2FA検出時
+{
+    "success": false,
+    "status": "2fa_required",
+    "2fa_type": "sms",
+    "message": "SMSコードを入力してください",
+    "input_prompt": {
+        "type": "code",
+        "length": 6,
+        "submit_to": "POST /v2/ai/login/2fa"
+    }
+}
+```
+
+### 12.3 認証状態の自動検出
+
+AIが画面を見て判断:
+
+```javascript
+// サーバー内部でGeminiに送るプロンプト例
+const prompt = `
+この画面のスクリーンショットを分析してください:
+1. ユーザーはログインしていますか？
+2. ログインしている場合、ユーザー名やメールアドレスが表示されていますか？
+3. ログインしていない場合、ログインボタンはどこにありますか？
+
+JSON形式で回答:
+{
+  "logged_in": boolean,
+  "user_info": string | null,
+  "login_button": {
+    "found": boolean,
+    "description": string,
+    "approximate_location": "top-right" | "header" | "center" | ...
+  }
+}
+`;
+```
+
+---
+
+## 13. AI画像評価モード
+
+### 13.1 ユースケース
+
+楽天市場の競合分析例:
+1. 商品ページから画像20枚を収集
+2. 各画像をAIが評価
+3. 評価レポート + 改善用プロンプトを返却
+
+```http
+POST /v2/ai/images/analyze
+{
+    "session": "rakuten",
+    "source": {
+        "type": "page",
+        "selector": ".item-image img",
+        "limit": 20
+    },
+    "analysis": {
+        "mode": "product_listing",     // product_listing | general | custom
+        "aspects": [
+            "visual_quality",          // 画質評価
+            "composition",             // 構図
+            "text_readability",        // テキストの読みやすさ
+            "brand_consistency",       // ブランド一貫性
+            "competitive_advantage"    // 競合優位性
+        ],
+        "generate_prompts": true,      // 改善用プロンプト生成
+        "compare_to_best": true        // ベスト画像との比較
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "images_analyzed": 20,
+    "summary": {
+        "average_score": 7.2,
+        "best_image": "image_003.jpg",
+        "weakest_areas": ["text_readability", "composition"],
+        "recommendations": [
+            "テキストのコントラストを改善してください",
+            "商品を中央に配置することで視認性が向上します"
+        ]
+    },
+    "images": [
+        {
+            "url": "https://...",
+            "file_ref": "analysis_001/image_001.jpg",
+            "scores": {
+                "visual_quality": 8,
+                "composition": 6,
+                "text_readability": 5,
+                "brand_consistency": 7,
+                "competitive_advantage": 6
+            },
+            "analysis": "商品は見やすいが、テキストが小さく読みにくい。背景色との...",
+            "improvement_prompt": "A product photography of [商品名], centered composition, clean white background, high contrast text overlay showing price and features, professional lighting..."
+        },
+        ...
+    ],
+    "comparison_report": {
+        "vs_competitors": "この商品画像セットは競合と比較して...",
+        "market_position": "中程度の品質。上位20%に入るには..."
+    },
+    "files_ref": "/v2/media/files/analysis_001"
+}
+```
+
+### 13.2 カスタム評価基準
+
+```http
+POST /v2/ai/images/analyze
+{
+    "session": "default",
+    "source": {...},
+    "analysis": {
+        "mode": "custom",
+        "custom_prompt": "これらの商品画像を以下の観点で評価してください:\n1. 楽天市場のガイドラインに準拠しているか\n2. モバイルで見た時の視認性\n3. 購買意欲を刺激する要素があるか\n各画像に1-10点のスコアと、改善すべき点を具体的に指摘してください。"
+    }
+}
+```
+
+### 13.3 動的ページ解析 (AI-Assisted)
+
+SPA/SSRで要素の表示タイミングが複雑な場合:
+
+```http
+POST /v2/ai/extract
+{
+    "session": "default",
+    "url": "https://example.com/products",
+    "goal": "商品リストを取得",
+    "strategy": "ai_assisted",         // ai_assisted | selector | hybrid
+    "hints": {
+        "expected_items": "商品カード(画像、タイトル、価格を含む)",
+        "approximate_count": "20-50件程度"
+    },
+    "options": {
+        "wait_strategy": "ai_determined",  // AIが待機条件を判断
+        "scroll_if_needed": true,
+        "max_ai_attempts": 3
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "extraction_method": "ai_vision",
+    "ai_reasoning": "無限スクロールを検出。3回スクロールして45件の商品を発見。",
+    "items": [
+        {
+            "title": "商品A",
+            "price": "¥1,980",
+            "image": "https://...",
+            "url": "https://..."
+        },
+        ...
+    ],
+    "meta": {
+        "scroll_count": 3,
+        "total_items": 45,
+        "page_type": "infinite_scroll"
+    }
+}
+```
+
+---
+
+## 14. AI統合の設計原則
+
+### 14.1 AI使用の判断基準
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI使用の判断フロー                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  リクエスト受信                                                 │
+│       │                                                         │
+│       ▼                                                         │
+│  ┌────────────────────┐                                        │
+│  │ セレクターが明示？  │──Yes──→ セレクターベースで実行         │
+│  └────────────────────┘                                        │
+│       │ No                                                      │
+│       ▼                                                         │
+│  ┌────────────────────┐                                        │
+│  │ 既知のパターン？    │──Yes──→ プリセットマクロで実行         │
+│  └────────────────────┘                                        │
+│       │ No                                                      │
+│       ▼                                                         │
+│  ┌────────────────────┐                                        │
+│  │ AI設定済み？       │──No───→ エラー: AI設定が必要           │
+│  └────────────────────┘                                        │
+│       │ Yes                                                     │
+│       ▼                                                         │
+│  ┌────────────────────┐                                        │
+│  │ AIモードで実行      │                                        │
+│  │ (スクショ→分析→   │                                        │
+│  │  アクション→確認)  │                                        │
+│  └────────────────────┘                                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 14.2 コスト最適化
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI呼び出しコスト最適化                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [レイヤー1: セレクターベース] コスト: $0                       │
+│      明示的なセレクターがあれば、AIを使わない                   │
+│                                                                 │
+│  [レイヤー2: パターンマッチング] コスト: $0                     │
+│      既知のサイト/パターンはルールベースで処理                  │
+│                                                                 │
+│  [レイヤー3: Gemini Flash] コスト: 低 (~$0.001/リクエスト)      │
+│      画像分析、要素検出、簡単な判断                             │
+│                                                                 │
+│  [レイヤー4: Gemini Pro] コスト: 中 (~$0.01/リクエスト)         │
+│      複雑な推論、長文生成 (フォールバック時のみ)                │
+│                                                                 │
+│  日次予算制限を設定して、想定外のコスト発生を防止               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 14.3 プライバシー・セキュリティ
+
+| 懸念事項 | 対策 |
+|---------|------|
+| 認証情報のAI送信 | スクリーンショットからパスワードフィールドをマスク |
+| 個人情報の送信 | センシティブデータ検出→自動ぼかし |
+| APIキーの管理 | 環境変数/セキュアストレージ使用 |
+| ログ保存 | AIリクエスト/レスポンスの適切なログ管理 |
+
+```javascript
+// スクリーンショット送信前のマスク処理
+(function() {
+    // パスワードフィールドを黒塗り
+    document.querySelectorAll('input[type="password"]').forEach(el => {
+        el.style.background = '#000';
+        el.value = '••••••••';
+    });
+    
+    // クレジットカード番号等のマスク
+    document.querySelectorAll('[autocomplete*="cc-"]').forEach(el => {
+        el.style.background = '#000';
+    });
+})();
+```
+
+
+
 
 
 ## 5. 既存プロトコルの今後
