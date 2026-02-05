@@ -552,6 +552,7 @@ mod tests {
     #[test]
     fn test_image_output_format() {
         assert_eq!(ImageOutputFormat::default(), ImageOutputFormat::Urls);
+        assert_ne!(ImageOutputFormat::Urls, ImageOutputFormat::Base64);
     }
     
     #[test]
@@ -561,6 +562,9 @@ mod tests {
             "bestvideo+bestaudio/best"
         );
         assert!(VideoQuality::Hd.to_ytdlp_format().contains("1080"));
+        assert!(VideoQuality::Sd.to_ytdlp_format().contains("720"));
+        assert!(VideoQuality::Low.to_ytdlp_format().contains("worst"));
+        assert!(VideoQuality::Specific(480).to_ytdlp_format().contains("480"));
     }
     
     #[test]
@@ -568,6 +572,68 @@ mod tests {
         let cmd = generate_scene_detect_cmd("input.mp4", 0.3);
         assert!(cmd.contains(&"-i".to_string()));
         assert!(cmd.iter().any(|s| s.contains("scene")));
+        assert!(cmd.iter().any(|s| s.contains("0.3")));
+    }
+    
+    #[test]
+    fn test_generate_keyframe_extract_cmd() {
+        let cmd = generate_keyframe_extract_cmd("input.mp4", "frame_%04d.jpg");
+        assert!(cmd.contains(&"-i".to_string()));
+        assert!(cmd.iter().any(|s| s.contains("pict_type")));
+        assert!(cmd.contains(&"frame_%04d.jpg".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_interval_extract_cmd() {
+        let cmd = generate_interval_extract_cmd("input.mp4", 5.0, "frame_%04d.jpg");
+        assert!(cmd.contains(&"-i".to_string()));
+        assert!(cmd.iter().any(|s| s.contains("fps=1/5")));
+    }
+    
+    #[test]
+    fn test_generate_audio_extract_cmd_mp3() {
+        let cmd = generate_audio_extract_cmd("input.mp4", "output.mp3", "mp3");
+        assert!(cmd.contains(&"-i".to_string()));
+        assert!(cmd.contains(&"-vn".to_string()));
+        assert!(cmd.contains(&"libmp3lame".to_string()));
+        assert!(cmd.contains(&"192k".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_audio_extract_cmd_wav() {
+        let cmd = generate_audio_extract_cmd("input.mp4", "output.wav", "wav");
+        assert!(cmd.contains(&"pcm_s16le".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_audio_extract_cmd_other() {
+        let cmd = generate_audio_extract_cmd("input.mp4", "output.aac", "aac");
+        assert!(cmd.contains(&"copy".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_ytdlp_subtitle_cmd() {
+        let cmd = generate_ytdlp_subtitle_cmd("https://youtube.com/watch?v=abc", "en", true);
+        assert!(cmd.contains(&"--write-sub".to_string()));
+        assert!(cmd.contains(&"--write-auto-sub".to_string()));
+        assert!(cmd.contains(&"--sub-lang".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_ytdlp_subtitle_cmd_no_auto() {
+        let cmd = generate_ytdlp_subtitle_cmd("https://youtube.com/watch?v=abc", "ja", false);
+        assert!(!cmd.contains(&"--write-auto-sub".to_string()));
+    }
+    
+    #[test]
+    fn test_generate_ytdlp_download_cmd() {
+        let cmd = generate_ytdlp_download_cmd(
+            "https://youtube.com/watch?v=abc",
+            &VideoQuality::Hd,
+            "output.mp4"
+        );
+        assert!(cmd.iter().any(|s| s.contains("1080")));
+        assert!(cmd.contains(&"--embed-metadata".to_string()));
     }
     
     #[test]
@@ -579,6 +645,20 @@ mod tests {
         
         cache.cache_url("https://example.com/img.jpg", &ref_id);
         assert_eq!(cache.get_cached("https://example.com/img.jpg"), Some(ref_id.as_str()));
+    }
+    
+    #[test]
+    fn test_media_cache_not_found() {
+        let cache = MediaCache::new();
+        assert!(cache.get_reference("nonexistent").is_none());
+        assert!(cache.get_cached("https://not-cached.com/img.jpg").is_none());
+    }
+    
+    #[test]
+    fn test_media_cache_cleanup() {
+        let mut cache = MediaCache::new();
+        let expired = cache.cleanup_expired();
+        assert!(expired.is_empty()); // Currently not implemented
     }
     
     #[test]
@@ -597,5 +677,93 @@ mod tests {
         let script = generate_image_extract_script(&request);
         assert!(script.contains("#gallery"));
         assert!(script.contains("querySelectorAll"));
+        assert!(script.contains("100")); // min dimensions
+    }
+    
+    #[test]
+    fn test_generate_image_extract_script_defaults() {
+        let request = ImageCollectRequest {
+            session: "test".to_string(),
+            container_selector: None,
+            min_width: None,
+            min_height: None,
+            url_pattern: None,
+            output: ImageOutputFormat::Urls,
+            max_images: 100,
+            concurrency: 5,
+        };
+        
+        let script = generate_image_extract_script(&request);
+        assert!(script.contains("body")); // default container
+    }
+    
+    #[test]
+    fn test_subtitle_format_default() {
+        assert_eq!(SubtitleFormat::default(), SubtitleFormat::Text);
+    }
+    
+    #[test]
+    fn test_download_status_equality() {
+        assert_eq!(DownloadStatus::Queued, DownloadStatus::Queued);
+        assert_ne!(DownloadStatus::Queued, DownloadStatus::Completed);
+    }
+    
+    #[test]
+    fn test_analysis_type_equality() {
+        assert_eq!(AnalysisType::SceneChange, AnalysisType::SceneChange);
+        assert_eq!(AnalysisType::Keyframes, AnalysisType::Keyframes);
+    }
+    
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_max_images(), 100);
+        assert_eq!(default_concurrency(), 5);
+        assert!(default_true());
+        assert_eq!(default_frame_format(), "jpg");
+        assert_eq!(default_audio_format(), "mp3");
+    }
+    
+    #[test]
+    fn test_image_collect_request_deserialize() {
+        let json = r##"{"session": "main"}"##;
+        let req: ImageCollectRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.session, "main");
+        assert_eq!(req.max_images, 100); // default
+        assert_eq!(req.concurrency, 5); // default
+    }
+    
+    #[test]
+    fn test_subtitle_request_deserialize() {
+        let json = r##"{"url": "https://youtube.com/watch?v=abc"}"##;
+        let req: SubtitleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.auto_generated); // default true
+        assert_eq!(req.format, SubtitleFormat::Text);
+    }
+    
+    #[test]
+    fn test_video_download_request_deserialize() {
+        let json = r##"{"url": "https://youtube.com/watch?v=abc"}"##;
+        let req: VideoDownloadRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.quality, VideoQuality::Best);
+        assert!(!req.audio_only);
+        assert!(req.embed_metadata); // default true
+    }
+    
+    #[test]
+    fn test_analysis_output_default() {
+        let output = AnalysisOutput::default();
+        assert!(output.directory.is_none());
+        // Default derive uses String::default() (empty string)
+        // serde defaults only apply during deserialization
+        assert_eq!(output.frame_format, "");
+        assert_eq!(output.audio_format, "");
+    }
+    
+    #[test]
+    fn test_video_quality_equality() {
+        assert_eq!(VideoQuality::Best, VideoQuality::Best);
+        assert_ne!(VideoQuality::Best, VideoQuality::Low);
+        assert_eq!(VideoQuality::Specific(720), VideoQuality::Specific(720));
     }
 }
+
