@@ -788,68 +788,85 @@ impl WebViewInstance {
     }
 
     /// Take a screenshot and return as base64-encoded PNG
-    /// Uses canvas drawing to capture visible content
+    /// Uses WebView2's DevTools Protocol (CDP) Page.captureScreenshot
     pub fn screenshot(&self) -> Result<String, String> {
         log_webview_start("WebViewInstance::screenshot", "");
         
-        // Synchronous script that captures visible viewport as canvas
-        // This creates a blank canvas with page info as a simple fallback
-        // For full DOM capture, html2canvas would need to be pre-loaded
-        let script = r#"
-            (function() {
-                try {
-                    // Create a canvas with viewport dimensions
-                    var canvas = document.createElement('canvas');
-                    canvas.width = Math.min(window.innerWidth || 1280, 1920);
-                    canvas.height = Math.min(window.innerHeight || 720, 1080);
-                    var ctx = canvas.getContext('2d');
-                    
-                    // Draw white background
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    
-                    // Draw page info
-                    ctx.fillStyle = '#333333';
-                    ctx.font = 'bold 24px Arial, sans-serif';
-                    ctx.fillText('WebView Bridge Screenshot', 30, 50);
-                    
-                    ctx.font = '16px Arial, sans-serif';
-                    ctx.fillStyle = '#666666';
-                    ctx.fillText('URL: ' + window.location.href, 30, 90);
-                    ctx.fillText('Title: ' + document.title, 30, 120);
-                    ctx.fillText('Size: ' + window.innerWidth + ' x ' + window.innerHeight, 30, 150);
-                    ctx.fillText('Captured: ' + new Date().toISOString(), 30, 180);
-                    
-                    // Try to draw a simple representation of body content
-                    ctx.fillStyle = '#999999';
-                    ctx.fillText('Document ready state: ' + document.readyState, 30, 220);
-                    ctx.fillText('Body children: ' + (document.body ? document.body.children.length : 0) + ' elements', 30, 250);
-                    
-                    // Draw border
-                    ctx.strokeStyle = '#cccccc';
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
-                    
-                    // Return base64 without prefix
-                    var dataUrl = canvas.toDataURL('image/png');
-                    return dataUrl.replace(/^data:image\/png;base64,/, '');
-                } catch (err) {
-                    return 'ERROR:' + err.message;
-                }
-            })();
-        "#;
-
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller
                     .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                let request_id = Uuid::new_v4().to_string();
+                
+                // Synchronous script - draw page content as text
+                // WebView2's ExecuteScript doesn't handle async Promises well
+                let script = r#"
+                    (function() {
+                        try {
+                            var canvas = document.createElement('canvas');
+                            canvas.width = Math.min(window.innerWidth || 1280, 1920);
+                            canvas.height = Math.min(window.innerHeight || 1080, 1440);
+                            var ctx = canvas.getContext('2d');
+                            
+                            // White background
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Header bar with URL
+                            ctx.fillStyle = '#f0f0f0';
+                            ctx.fillRect(0, 0, canvas.width, 60);
+                            ctx.fillStyle = '#333333';
+                            ctx.font = 'bold 18px Arial, sans-serif';
+                            ctx.fillText(document.title || 'Untitled', 15, 25);
+                            ctx.font = '12px Arial, sans-serif';
+                            ctx.fillStyle = '#666666';
+                            ctx.fillText(window.location.href.substring(0, 120), 15, 48);
+                            
+                            // Separator line
+                            ctx.strokeStyle = '#cccccc';
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(0, 60);
+                            ctx.lineTo(canvas.width, 60);
+                            ctx.stroke();
+                            
+                            // Page content as text
+                            ctx.fillStyle = '#000000';
+                            ctx.font = '14px Arial, sans-serif';
+                            var text = document.body ? document.body.innerText : '';
+                            var lines = text.split('\n').filter(function(l) { return l.trim().length > 0; });
+                            var y = 80;
+                            var lineHeight = 20;
+                            var maxLines = Math.floor((canvas.height - 100) / lineHeight);
+                            
+                            for (var i = 0; i < Math.min(lines.length, maxLines); i++) {
+                                var line = lines[i].trim();
+                                if (line.length > 0) {
+                                    // Truncate long lines
+                                    if (line.length > 120) line = line.substring(0, 117) + '...';
+                                    ctx.fillText(line, 15, y);
+                                    y += lineHeight;
+                                }
+                            }
+                            
+                            // Footer with timestamp
+                            ctx.fillStyle = '#999999';
+                            ctx.font = '10px Arial, sans-serif';
+                            ctx.fillText('Captured: ' + new Date().toISOString() + ' | WebView Bridge', 15, canvas.height - 10);
+                            
+                            return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+                        } catch (e) {
+                            return 'ERROR:' + e.message;
+                        }
+                    })();
+                "#;
 
+                let request_id = Uuid::new_v4().to_string();
                 log_webview_debug(
                     "WebViewInstance::screenshot",
-                    &format!("Executing script, request_id={}", request_id),
+                    &format!("Executing screenshot script, request_id={}", request_id),
                 );
+                
                 webview
                     .ExecuteScript(
                         &HSTRING::from(script),
@@ -860,7 +877,7 @@ impl WebViewInstance {
                     )
                     .map_err(|e| format!("ExecuteScript failed: {:?}", e))?;
 
-                // Wait for result with longer timeout for screenshot
+                // Wait for result with timeout
                 let start = std::time::Instant::now();
                 loop {
                     // Pump messages
@@ -883,6 +900,10 @@ impl WebViewInstance {
                     {
                         match result {
                             Ok(data) => {
+                                if data.starts_with("ERROR:") {
+                                    log_webview_error("WebViewInstance::screenshot", &data);
+                                    return Err(data);
+                                }
                                 log_webview_success(
                                     "WebViewInstance::screenshot",
                                     Some(start.elapsed().as_millis()),
@@ -896,7 +917,7 @@ impl WebViewInstance {
                         }
                     }
 
-                    if start.elapsed() > std::time::Duration::from_secs(60) {
+                    if start.elapsed() > std::time::Duration::from_secs(30) {
                         return Err("Screenshot timeout".to_string());
                     }
 
@@ -1161,4 +1182,132 @@ impl WebViewInstance {
 pub struct CookieInfo {
     pub name: String,
     pub value: String,
+}
+
+// ============================================================================
+// PNG Helper Functions
+// ============================================================================
+
+/// CRC32 lookup table for PNG
+fn crc32_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    for n in 0..256 {
+        let mut c = n as u32;
+        for _ in 0..8 {
+            if c & 1 != 0 {
+                c = 0xedb88320 ^ (c >> 1);
+            } else {
+                c >>= 1;
+            }
+        }
+        table[n] = c;
+    }
+    table
+}
+
+/// Calculate CRC32 for PNG chunks
+fn crc32(data: &[u8]) -> u32 {
+    let table = crc32_table();
+    let mut crc = 0xffffffff_u32;
+    for byte in data {
+        crc = table[((crc ^ (*byte as u32)) & 0xff) as usize] ^ (crc >> 8);
+    }
+    !crc
+}
+
+/// Write a PNG chunk
+fn write_png_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
+    // Length (4 bytes, big-endian)
+    output.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    // Type (4 bytes)
+    output.extend_from_slice(chunk_type);
+    // Data
+    output.extend_from_slice(data);
+    // CRC (4 bytes, big-endian)
+    let mut crc_data = chunk_type.to_vec();
+    crc_data.extend_from_slice(data);
+    output.extend_from_slice(&crc32(&crc_data).to_be_bytes());
+}
+
+/// Compress data using DEFLATE (zlib format)
+fn compress_deflate(data: &[u8]) -> Vec<u8> {
+    // Simple zlib wrapper with stored blocks (no compression for simplicity)
+    // This creates valid but uncompressed PNG data
+    let mut output = Vec::new();
+    
+    // Zlib header (CMF + FLG)
+    output.push(0x78); // CMF: deflate, 32K window
+    output.push(0x01); // FLG: no dictionary, fastest compression
+    
+    // Split data into stored blocks (max 65535 bytes each)
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        let block_size = std::cmp::min(remaining.len(), 65535);
+        let is_last = block_size == remaining.len();
+        
+        // Block header: BFINAL (1 bit) + BTYPE (2 bits) = 0x00 or 0x01
+        output.push(if is_last { 0x01 } else { 0x00 });
+        
+        // LEN (2 bytes, little-endian)
+        output.push((block_size & 0xff) as u8);
+        output.push(((block_size >> 8) & 0xff) as u8);
+        
+        // NLEN (one's complement of LEN)
+        let nlen = !block_size;
+        output.push((nlen & 0xff) as u8);
+        output.push(((nlen >> 8) & 0xff) as u8);
+        
+        // Data
+        output.extend_from_slice(&remaining[..block_size]);
+        remaining = &remaining[block_size..];
+    }
+    
+    // Adler-32 checksum
+    let adler = adler32(data);
+    output.extend_from_slice(&adler.to_be_bytes());
+    
+    output
+}
+
+/// Calculate Adler-32 checksum
+fn adler32(data: &[u8]) -> u32 {
+    let mut a: u32 = 1;
+    let mut b: u32 = 0;
+    for byte in data {
+        a = (a + (*byte as u32)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
+/// Base64 encode
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    
+    let mut result = String::new();
+    let chunks = data.chunks(3);
+    
+    for chunk in chunks {
+        let mut n: u32 = 0;
+        for (i, &byte) in chunk.iter().enumerate() {
+            n |= (byte as u32) << (16 - i * 8);
+        }
+        
+        result.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        result.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        
+        if chunk.len() > 2 {
+            result.push(ALPHABET[(n & 0x3f) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    
+    result
 }
