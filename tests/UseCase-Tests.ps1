@@ -129,6 +129,24 @@ function Test-Screenshot($TestId, $Name) {
     Write-TestResult $TestId $Name $hasImage "" $sw.ElapsedMilliseconds
 }
 
+# Test: Set Cookies
+function Test-SetCookies($Cookies, $TestId, $Name) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Api-Post "/cookies/$SessionId" @{ cookies = $Cookies }
+    $success = ($null -ne $result)
+    Write-TestResult $TestId $Name $success "" $sw.ElapsedMilliseconds
+    return $success
+}
+
+# Test: Execute Script
+function Test-Execute($Script, $TestId, $Name) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Api-Post "/execute/$SessionId" @{ script = $Script }
+    $success = ($null -ne $result)
+    Write-TestResult $TestId $Name $success "" $sw.ElapsedMilliseconds
+    return $result
+}
+
 # Close Session
 function Close-Session {
     if ($SessionId) {
@@ -241,9 +259,35 @@ try {
             Test-Navigate "https://www.amazon.co.jp/s?k=test" "UC03-01" "Navigate to Amazon"
             Test-WaitForSelector "[data-component-type]" "UC03-02" "Wait for Results"
         }
+        "UC-10" {
+            Write-TestHeader "UC-10: Login Simulation Test"
+            # Step 1: Navigate to login page
+            Test-Navigate "https://httpbin.org/cookies/set/session_id/test123" "UC10-01" "Set Test Cookie"
+            Start-Sleep -Seconds 2
+            
+            # Step 2: Verify cookies are set
+            Test-GetCookies
+            
+            # Step 3: Navigate to cookies page to verify
+            Test-Navigate "https://httpbin.org/cookies" "UC10-02" "Check Cookies Page"
+            Test-WaitForSelector "pre" "UC10-03" "Wait for JSON"
+            Test-Extract "pre" "UC10-04" "Extract Cookie Data"
+            
+            # Step 4: Execute script to get localStorage
+            Test-Execute "return navigator.userAgent" "UC10-05" "Get User Agent"
+        }
+        "login" {
+            Write-TestHeader "Login Flow Test (Cookie Persistence)"
+            # Test profile-based cookie persistence
+            Test-Navigate "https://httpbin.org/cookies/set/auth_token/fake_token_123" "LOGIN-01" "Set Auth Cookie"
+            Start-Sleep -Seconds 2
+            Test-GetCookies
+            Test-Navigate "https://httpbin.org/cookies" "LOGIN-02" "Verify Cookies"
+            Test-WaitForSelector "body" "LOGIN-03" "Page Loaded"
+        }
         default {
             Write-Host "Unknown test: $TestCase" -ForegroundColor Red
-            Write-Host "Available: basic, UC-01 to UC-09, all" -ForegroundColor Yellow
+            Write-Host "Available: basic, UC-01 to UC-10, login, all" -ForegroundColor Yellow
         }
     }
 }
