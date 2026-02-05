@@ -159,6 +159,12 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/storage/status", get(storage_status))
         .route("/storage/cleanup", post(storage_cleanup))
         .route("/config/storage", post(config_storage))
+        // Job Management API
+        .route("/jobs/:id", get(job_get))
+        .route("/jobs/:id", delete(job_cancel))
+        .route("/jobs", get(job_list))
+        // Batch API
+        .route("/batch", post(batch_execute))
         .with_state(state)
 }
 
@@ -1576,6 +1582,211 @@ async fn media_extend_ttl(
                 "name": "INTERNAL_ERROR",
                 "message": "Failed to extend TTL"
             }
+        })),
+    )
+}
+
+// ============================================================================
+// Job Management & Batch API Endpoints
+// ============================================================================
+
+use crate::core::comm::{
+    JobManager, JobStatus, JobType, BatchRequest, BatchResponse, BatchOperationResult,
+};
+
+/// Global job manager
+static JOB_MANAGER: std::sync::OnceLock<std::sync::RwLock<JobManager>> = std::sync::OnceLock::new();
+
+fn get_job_manager() -> &'static std::sync::RwLock<JobManager> {
+    JOB_MANAGER.get_or_init(|| std::sync::RwLock::new(JobManager::new()))
+}
+
+/// GET /v2/jobs/:id - Get job status
+async fn job_get(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let job_manager = get_job_manager();
+    
+    if let Ok(mgr) = job_manager.read() {
+        if let Some(job) = mgr.get_job(&id) {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "job": {
+                        "id": job.id,
+                        "type": format!("{:?}", job.job_type),
+                        "status": format!("{:?}", job.status),
+                        "created_at": job.created_at,
+                        "started_at": job.started_at,
+                        "completed_at": job.completed_at,
+                        "percent": job.percent,
+                        "eta_seconds": job.eta_seconds,
+                        "result": job.result,
+                        "error": job.error
+                    }
+                })),
+            );
+        }
+    }
+    
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_120",
+                "name": "JOB_NOT_FOUND",
+                "message": format!("Job '{}' not found", id)
+            }
+        })),
+    )
+}
+
+/// DELETE /v2/jobs/:id - Cancel a job
+async fn job_cancel(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let job_manager = get_job_manager();
+    
+    if let Ok(mut mgr) = job_manager.write() {
+        if mgr.cancel_job(&id) {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "message": "Job cancelled",
+                    "job_id": id
+                })),
+            );
+        }
+        
+        // Check if job exists but cannot be cancelled
+        if mgr.get_job(&id).is_some() {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_121",
+                        "name": "JOB_ALREADY_COMPLETED",
+                        "message": "Job is already completed or failed"
+                    }
+                })),
+            );
+        }
+    }
+    
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_120",
+                "name": "JOB_NOT_FOUND",
+                "message": format!("Job '{}' not found", id)
+            }
+        })),
+    )
+}
+
+/// Query parameters for job list
+#[derive(Debug, Deserialize)]
+struct JobListQuery {
+    #[serde(default)]
+    status: Option<String>,
+}
+
+/// GET /v2/jobs - List jobs
+async fn job_list(
+    axum::extract::Query(query): axum::extract::Query<JobListQuery>,
+) -> impl IntoResponse {
+    let job_manager = get_job_manager();
+    
+    if let Ok(mgr) = job_manager.read() {
+        let status_filter = query.status.as_ref().and_then(|s| match s.as_str() {
+            "pending" => Some(JobStatus::Pending),
+            "running" => Some(JobStatus::Running),
+            "completed" => Some(JobStatus::Completed),
+            "failed" => Some(JobStatus::Failed),
+            "cancelled" => Some(JobStatus::Cancelled),
+            _ => None,
+        });
+        
+        let jobs: Vec<_> = mgr.list_jobs(status_filter)
+            .iter()
+            .map(|job| json!({
+                "id": job.id,
+                "type": format!("{:?}", job.job_type),
+                "status": format!("{:?}", job.status),
+                "created_at": job.created_at,
+                "percent": job.percent
+            }))
+            .collect();
+        
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "jobs": jobs,
+                "count": jobs.len()
+            })),
+        );
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to list jobs"
+            }
+        })),
+    )
+}
+
+/// POST /v2/batch - Execute batch operations
+async fn batch_execute(
+    Json(request): Json<BatchRequest>,
+) -> impl IntoResponse {
+    let job_manager = get_job_manager();
+    
+    // Create a batch job
+    let job_id = job_manager.write()
+        .map(|mut mgr| mgr.create_job(JobType::Batch, request.webhook.clone()))
+        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    
+    // TODO: Implement actual batch execution with dependency resolution
+    let results: Vec<BatchOperationResult> = request.operations.iter()
+        .map(|op| BatchOperationResult {
+            id: op.id.clone(),
+            success: true,
+            status_code: 200,
+            response: json!({
+                "message": "Operation queued",
+                "method": op.method,
+                "path": op.path
+            }),
+            error: None,
+        })
+        .collect();
+    
+    let completed = results.iter().filter(|r| r.success).count();
+    let failed = results.len() - completed;
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "job_id": job_id,
+            "results": results,
+            "completed": completed,
+            "failed": failed,
+            "stop_on_error": request.stop_on_error,
+            "parallel": request.parallel,
+            "_note": "Batch execution framework ready - actual execution pending"
         })),
     )
 }
