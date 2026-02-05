@@ -718,6 +718,158 @@ yt-dlpは多くのサイトに対応:
 | bilibili | 動画 |
 | その他 | 1000+サイト対応 |
 
+### 6.5 動画分析パイプライン (FFmpeg連携)
+
+AIが動画を分析する際、以下のデータが必要:
+- サムネイル画像（代表フレーム）
+- シーン変更タイミング
+- 音声トラック
+- 字幕データ
+
+これらを**1回のAPIコール**で取得可能に:
+
+```http
+POST /v2/media/video/analyze
+{
+    "url": "https://www.youtube.com/watch?v=xxxxx",
+    "analysis": {
+        "keyframes": {
+            "enabled": true,
+            "method": "scene_change",    // scene_change | interval | iframes
+            "threshold": 0.3,            // シーン変更の閾値
+            "max_frames": 50,
+            "format": "jpeg",
+            "quality": 80
+        },
+        "audio": {
+            "enabled": true,
+            "format": "mp3",             // mp3 | wav | aac
+            "bitrate": "128k"
+        },
+        "subtitles": {
+            "enabled": true,
+            "languages": ["ja", "en"],
+            "format": "json"             // text | srt | vtt | json
+        },
+        "metadata": {
+            "enabled": true              // 動画情報（長さ、解像度など）
+        }
+    },
+    "output": {
+        "session_ref": "video_analysis_123",  // 後でファイル参照用
+        "base_path": "/analysis"
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "session_ref": "video_analysis_123",
+    "video_info": {
+        "id": "xxxxx",
+        "title": "動画タイトル",
+        "duration": 600,
+        "resolution": "1920x1080",
+        "fps": 30
+    },
+    "keyframes": {
+        "count": 24,
+        "timestamps": [0, 15.3, 28.7, 45.2, ...],
+        "files": [
+            "keyframe_0000.jpg",
+            "keyframe_0001.jpg",
+            ...
+        ]
+    },
+    "audio": {
+        "file": "audio.mp3",
+        "duration": 600,
+        "size": 7200000
+    },
+    "subtitles": {
+        "language": "ja",
+        "segments": [
+            {"start": 0, "end": 5, "text": "こんにちは"},
+            ...
+        ]
+    },
+    "files_ref": "/v2/media/files/video_analysis_123"
+}
+```
+
+#### FFmpegシーン検出コマンド（内部実装）
+
+```bash
+# シーン変更検出
+ffmpeg -i input.mp4 -vf "select='gt(scene,0.3)',showinfo" -vsync 0 keyframe_%04d.jpg
+
+# iFrame抽出
+ffmpeg -i input.mp4 -vf "select='eq(pict_type,I)'" -vsync 0 iframe_%04d.jpg
+
+# 一定間隔でフレーム抽出
+ffmpeg -i input.mp4 -vf "fps=1/10" -vsync 0 frame_%04d.jpg
+
+# 音声抽出
+ffmpeg -i input.mp4 -vn -acodec libmp3lame -ab 128k audio.mp3
+```
+
+### 6.6 メディアファイル参照システム
+
+**問題**: 大きなメディアファイルをAPIレスポンスに直接含めると:
+- レスポンスサイズが巨大化
+- メモリ消費
+- タイムアウト
+
+**解決**: セッション参照を使ったファイルアクセス
+
+```http
+# 分析結果のファイル一覧
+GET /v2/media/files/video_analysis_123
+{
+    "session_ref": "video_analysis_123",
+    "created_at": "2026-02-05T16:00:00Z",
+    "expires_at": "2026-02-06T16:00:00Z",
+    "files": [
+        {"name": "keyframe_0000.jpg", "size": 45000, "type": "image/jpeg"},
+        {"name": "keyframe_0001.jpg", "size": 52000, "type": "image/jpeg"},
+        {"name": "audio.mp3", "size": 7200000, "type": "audio/mpeg"},
+        {"name": "subtitles.json", "size": 15000, "type": "application/json"}
+    ],
+    "total_size": 7500000
+}
+
+# 個別ファイルダウンロード
+GET /v2/media/files/video_analysis_123/keyframe_0000.jpg
+→ バイナリレスポンス
+
+# ZIPでまとめてダウンロード
+GET /v2/media/files/video_analysis_123?format=zip
+→ video_analysis_123.zip
+
+# バッチスクリプトからの利用例
+curl -O "http://localhost:9400/v2/media/files/video_analysis_123/audio.mp3"
+```
+
+#### PowerShell/バッチからの利用
+
+```powershell
+# 動画分析リクエスト
+$result = Invoke-RestMethod -Uri "http://localhost:9400/v2/media/video/analyze" `
+    -Method Post -Body $jsonBody -ContentType "application/json"
+
+$ref = $result.session_ref
+
+# キーフレームをダウンロード
+foreach ($file in $result.keyframes.files) {
+    Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$ref/$file" `
+        -OutFile "frames/$file"
+}
+
+# 音声ダウンロード
+Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$ref/audio.mp3" `
+    -OutFile "audio.mp3"
+```
+
 ---
 
 ## 7. SPA (Single Page Application) 対応
@@ -765,18 +917,158 @@ POST /v2/wait
 
 ---
 
-## 8. 設計原則の補足
+## 8. スマートスクリーンショット拡張
 
-### 8.1 通信回数最小化
+### 8.1 固定要素自動除去
+
+フルページスクリーンショット時の問題:
+- `position: fixed` のヘッダー/フッターが各スクロール位置で重複描画
+- `position: sticky` のナビゲーションが繰り返し表示
+
+**解決**: CSSを一時的に変更して撮影
+
+```http
+POST /v2/screenshot
+{
+    "session": "default",
+    "type": "fullpage",
+    "smart_options": {
+        "remove_fixed_elements": true,    // position:fixed を一時無効化
+        "remove_sticky_elements": true,   // position:sticky を一時無効化
+        "hide_selectors": [".cookie-banner", ".popup"],  // 追加で非表示
+        "restore_after": true             // 撮影後にCSSを復元
+    }
+}
+```
+
+#### 内部実装（JavaScriptインジェクション）
+
+```javascript
+// 固定要素検出と一時無効化
+(function() {
+    const fixedElements = [];
+    const stickyElements = [];
+    
+    // 全要素をスキャン
+    document.querySelectorAll('*').forEach(el => {
+        const style = window.getComputedStyle(el);
+        
+        if (style.position === 'fixed') {
+            fixedElements.push({
+                element: el,
+                original: {
+                    position: el.style.position,
+                    top: el.style.top,
+                    bottom: el.style.bottom,
+                    zIndex: el.style.zIndex
+                }
+            });
+            // 一時的にabsoluteに変更
+            el.style.position = 'absolute';
+            el.style.top = '0';
+        }
+        
+        if (style.position === 'sticky') {
+            stickyElements.push({
+                element: el,
+                original: el.style.position
+            });
+            el.style.position = 'relative';
+        }
+    });
+    
+    return {
+        fixed_count: fixedElements.length,
+        sticky_count: stickyElements.length,
+        restore: function() {
+            // 元のスタイルに復元
+            fixedElements.forEach(item => {
+                Object.assign(item.element.style, item.original);
+            });
+            stickyElements.forEach(item => {
+                item.element.style.position = item.original;
+            });
+        }
+    };
+})();
+```
+
+### 8.2 フルページキャプチャ改善版
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              フルページスクリーンショット（改善版）              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. 固定要素の検出と一時無効化                                  │
+│     └─ position: fixed/sticky → relative/absolute               │
+│                                                                 │
+│  2. ページ総高さ取得                                            │
+│     └─ document.scrollingElement.scrollHeight                   │
+│                                                                 │
+│  3. スクロール + キャプチャループ                               │
+│     ┌─────────────┐                                             │
+│     │ Viewport 1  │ ← キャプチャ                               │
+│     ├─────────────┤                                             │
+│     │ Viewport 2  │ ← スクロール → キャプチャ                  │
+│     ├─────────────┤                                             │
+│     │ Viewport 3  │ ← スクロール → キャプチャ                  │
+│     └─────────────┘                                             │
+│                                                                 │
+│  4. 画像スティッチング（Rust側で処理）                          │
+│     └─ imageライブラリで縦結合                                  │
+│                                                                 │
+│  5. 固定要素の復元                                              │
+│     └─ 元のCSSスタイルに戻す                                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 8.3 スクリーンショット結果のファイル参照
+
+大きなスクリーンショットもファイル参照で取得:
+
+```http
+POST /v2/screenshot
+{
+    "session": "default",
+    "type": "fullpage",
+    "output": "file_ref",              // base64 | file_ref
+    "session_ref": "screenshot_001"
+}
+
+# レスポンス
+{
+    "success": true,
+    "session_ref": "screenshot_001",
+    "dimensions": {
+        "width": 1920,
+        "height": 15000
+    },
+    "file_size": 2500000,
+    "file_url": "/v2/media/files/screenshot_001/fullpage.png"
+}
+
+# ファイルダウンロード
+GET /v2/media/files/screenshot_001/fullpage.png
+```
+
+---
+
+## 9. 設計原則の補足
+
+### 9.1 通信回数最小化
 
 | 操作 | 従来 | WBP2 |
 |------|------|------|
-| ページネーション5ページ | 15回以上 | 1回 |
-| 商品リスト抽出+フィルター | 10回以上 | 1回 |
-| YouTube字幕取得 | N/A | 1回 |
-| 画像一括収集20枚 | 21回 | 1回 |
+| ページネーション5ページ | 15回以上 | **1回** |
+| 商品リスト抽出+フィルター | 10回以上 | **1回** |
+| YouTube字幕取得 | N/A | **1回** |
+| 画像一括収集20枚 | 21回 | **1回** |
+| **動画分析（キーフレーム+音声+字幕）** | N/A | **1回** |
+| **フルページSS（固定要素除去）** | 手動対応 | **1回** |
 
-### 8.2 AIコンテキスト効率
+### 9.2 AIコンテキスト効率
 
 ```
 従来:
@@ -788,6 +1080,86 @@ WBP2:
   User: "楽天で商品検索して"
   AI: execute_macro("rakuten_product_search", {keyword: "..."})
   → 1ターンで完結、結果のみ返却
+
+動画分析:
+  User: "このYouTube動画を分析して"
+  AI: video_analyze(url, {keyframes: true, audio: true, subtitles: true})
+  → 1ターン: キーフレーム画像 + 音声 + 字幕データすべて取得
+  → AIは files_ref を使って必要なデータにアクセス
+```
+
+### 9.3 ファイル参照パターン
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ファイル参照パターン                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [API Call]                                                     │
+│      │                                                          │
+│      ▼                                                          │
+│  ┌─────────────────────────────────────────────────────┐       │
+│  │ Response (軽量)                                      │       │
+│  │ {                                                    │       │
+│  │   "success": true,                                   │       │
+│  │   "session_ref": "analysis_123",                     │       │
+│  │   "summary": { ... },        ← 概要情報のみ          │       │
+│  │   "files_ref": "/v2/media/files/analysis_123"        │       │
+│  │ }                                                    │       │
+│  └─────────────────────────────────────────────────────┘       │
+│      │                                                          │
+│      ▼                                                          │
+│  [必要に応じてファイル取得]                                     │
+│  GET /v2/media/files/analysis_123/keyframe_0001.jpg             │
+│  GET /v2/media/files/analysis_123/audio.mp3                     │
+│  GET /v2/media/files/analysis_123?format=zip                    │
+│                                                                 │
+│  利点:                                                          │
+│  ├── APIレスポンスが軽量                                        │
+│  ├── 必要なファイルだけ取得可能                                 │
+│  ├── バッチスクリプトから簡単にアクセス                         │
+│  └── 大きなファイルもストリーミングで取得                       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 10. レガシープロトコル廃止方針
+
+### 10.1 廃止対象
+
+WBP2への一本化に伴い、以下のプロトコルを**非推奨**とする:
+
+| プロトコル | 状態 | 移行先 |
+|-----------|------|--------|
+| REST API v1 | **非推奨** | `/v2/*` に移行 |
+| WebDriver (W3C) | **非推奨** | WBP2 Native API |
+| CDP HTTP | **非推奨** | WBP2 + WebSocket |
+| MCP (旧形式) | **非推奨** | MCP v2 (WBP2ベース) |
+
+### 10.2 移行スケジュール
+
+| フェーズ | 期間 | 内容 |
+|---------|------|------|
+| Phase A | 即時 | v1 APIに `X-Deprecated` ヘッダー追加 |
+| Phase B | 1ヶ月後 | v1 API使用時にログ警告 |
+| Phase C | 3ヶ月後 | v1 APIを削除（オプションで維持） |
+
+### 10.3 WBP2統一のメリット
+
+```
+従来:                              WBP2統一後:
+┌─────────────────────┐           ┌─────────────────────┐
+│     REST v1         │           │                     │
+├─────────────────────┤           │                     │
+│     WebDriver       │           │      WBP2 API       │
+├─────────────────────┤   ───→    │                     │
+│     CDP             │           │   (単一設計)        │
+├─────────────────────┤           │                     │
+│     MCP (旧)        │           │                     │
+└─────────────────────┘           └─────────────────────┘
+  コード複雑、保守困難              シンプル、AIに最適化
 ```
 
 
