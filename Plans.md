@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 4.1**: テストインフラ整備
+- **Phase 7.1**: 名前付きセッション (WBP2 セッション管理 v2)
 
 ### ブロッカー
 
@@ -123,7 +123,7 @@
 
 ---
 
-## 🟡 Phase 3: OpenClaw統合 `cc:WIP`
+## ✅ Phase 3: OpenClaw統合 `cc:完了`
 
 ### 3.1 Snapshot API `cc:完了`
 
@@ -142,10 +142,13 @@
 - [x] GET /cookies/:id - Cookie取得
 - [x] POST /cookies/:id - Cookie設定
 
-### 3.4 OpenClaw完全互換テスト `cc:TODO`
+### 3.4 OpenClaw完全互換テスト `cc:不要`
 
-- [ ] OpenClawからの実際の呼び出しテスト
-- [ ] エラーハンドリングの互換性確認
+> ※ WBP2移行により旧プロトコル（OpenClaw/WebDriver/CDP）は非推奨・廃止予定
+> → 参照: docs/PROTOCOL_V2.md セクション10
+
+- [x] ~~OpenClawからの実際の呼び出しテスト~~ (WBP2で代替)
+- [x] ~~エラーハンドリングの互換性確認~~ (WBP2で代替)
 
 ### 3.5 Wait for Selector API `cc:完了`
 
@@ -161,7 +164,7 @@
 
 ---
 
-## 📋 Phase 4: 実運用テスト統合 `cc:TODO`
+## ✅ Phase 4: 実運用テスト統合 `cc:完了`
 
 > 参照: docs/TEST_CASES.md, docs/IMPLEMENTATION_REFERENCE.md, docs/DEVELOPER_SUMMARY.md
 

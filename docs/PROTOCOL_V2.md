@@ -1,6 +1,6 @@
 # WebView Bridge Protocol v2 (WBP2) 設計書
 
-> 最終更新: 2026-02-05
+> 最終更新: 2026-02-05 (査読修正版)
 >
 > ステータス: 設計中
 
@@ -867,7 +867,7 @@ POST /v2/media/video/analyze
             ...
         ]
     },
-    "files_ref": "/v2/media/files/video_analysis_123"
+    "files_url": "/v2/media/files/video_analysis_123"
 }
 ```
 
@@ -949,7 +949,7 @@ Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$ref/audio.mp3" `
 
 ### 6.7 ブラウザダウンロード機能
 
-### 問題点
+#### 問題点
 
 従来のスクレイピングライブラリの制限:
 - ダウンロードURLが直接わからないとダウンロードできない
@@ -1487,13 +1487,13 @@ POST /v2/screenshot
     "session": "default",
     "type": "fullpage",
     "output": "file_ref",              // base64 | file_ref
-    "session_ref": "screenshot_001"
+    "file_ref": "screenshot_001"
 }
 
 # レスポンス
 {
     "success": true,
-    "session_ref": "screenshot_001",
+    "file_ref": "screenshot_001",
     "dimensions": {
         "width": 1920,
         "height": 15000
@@ -2473,13 +2473,162 @@ ws.onmessage = (event) => {
 - [x] 用語定義の明確化
 - [x] 通信パターンの選択基準明確化
 
-### 18.2 要検討
+### 18.2 要検討 → 解決済み
 
 - [x] Phase番号の再整理（機能グループ化）✅
-- [ ] MCP Tool定義の具体化
-- [ ] エラーコード体系の統一
-- [ ] レート制限設計
-- [ ] 認証・認可設計
+- [x] MCP Tool定義の具体化 ✅ → 18.4参照
+- [x] エラーコード体系の統一 ✅ → 18.5参照
+- [ ] レート制限設計 (Phase 7以降で検討)
+- [ ] 認証・認可設計 (Phase 7以降で検討)
+
+### 18.4 MCP Tool定義 (WBP2対応版)
+
+```json
+{
+  "tools": [
+    {
+      "name": "session_acquire",
+      "description": "名前付きセッションを取得または作成",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "セッション名 (例: rakuten, google)"},
+          "profile": {"type": "string", "description": "プロファイル名 (オプション)"},
+          "reuse": {"type": "boolean", "default": true},
+          "headless": {"type": "boolean", "default": false}
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "navigate",
+      "description": "URLに移動",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "url": {"type": "string"},
+          "wait_until": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"]}
+        },
+        "required": ["session", "url"]
+      }
+    },
+    {
+      "name": "wait",
+      "description": "条件が満たされるまで待機",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "selector": {"type": "string"},
+          "condition": {"type": "string", "enum": ["present", "visible", "stable", "text_contains"]},
+          "timeout": {"type": "integer", "default": 10000},
+          "extract": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["session", "selector"]
+      }
+    },
+    {
+      "name": "extract",
+      "description": "ページからデータを抽出",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "selector": {"type": "string"},
+          "fields": {"type": "array", "items": {"type": "string"}},
+          "multiple": {"type": "boolean", "default": false}
+        },
+        "required": ["session", "selector"]
+      }
+    },
+    {
+      "name": "screenshot",
+      "description": "スクリーンショットを撮影",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "type": {"type": "string", "enum": ["viewport", "fullpage", "element"]},
+          "selector": {"type": "string"},
+          "format": {"type": "string", "enum": ["png", "jpeg", "webp"]}
+        },
+        "required": ["session"]
+      }
+    },
+    {
+      "name": "macro",
+      "description": "プリセットまたはカスタムマクロを実行",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "macro": {"type": "string", "description": "マクロ名 (extract_list, paginated_extract等)"},
+          "config": {"type": "object"}
+        },
+        "required": ["session", "macro", "config"]
+      }
+    },
+    {
+      "name": "job_status",
+      "description": "非同期ジョブの状態を確認",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "job_id": {"type": "string"}
+        },
+        "required": ["job_id"]
+      }
+    }
+  ]
+}
+```
+
+### 18.5 エラーコード体系
+
+| コード | 名前 | 説明 | HTTP |
+|--------|------|------|------|
+| `WBP2_001` | `SESSION_NOT_FOUND` | 指定セッションが存在しない | 404 |
+| `WBP2_002` | `SESSION_BUSY` | セッションが他の操作で使用中 | 409 |
+| `WBP2_003` | `SESSION_CLOSED` | セッションが既に閉じている | 410 |
+| `WBP2_010` | `SELECTOR_NOT_FOUND` | セレクターに一致する要素がない | 404 |
+| `WBP2_011` | `SELECTOR_TIMEOUT` | 待機タイムアウト | 408 |
+| `WBP2_012` | `ELEMENT_NOT_VISIBLE` | 要素が表示されていない | 400 |
+| `WBP2_020` | `NAVIGATION_FAILED` | ナビゲーション失敗 | 502 |
+| `WBP2_021` | `NAVIGATION_TIMEOUT` | ナビゲーションタイムアウト | 408 |
+| `WBP2_030` | `SCRIPT_ERROR` | JavaScript実行エラー | 400 |
+| `WBP2_031` | `MACRO_NOT_FOUND` | 指定マクロが存在しない | 404 |
+| `WBP2_040` | `JOB_NOT_FOUND` | 指定ジョブが存在しない | 404 |
+| `WBP2_041` | `JOB_FAILED` | ジョブ実行失敗 | 500 |
+| `WBP2_042` | `JOB_CANCELLED` | ジョブがキャンセルされた | 410 |
+| `WBP2_050` | `FILE_NOT_FOUND` | ファイルが存在しない | 404 |
+| `WBP2_051` | `FILE_EXPIRED` | ファイルTTL切れ | 410 |
+| `WBP2_060` | `AI_NOT_CONFIGURED` | AI設定が未構成 | 400 |
+| `WBP2_061` | `AI_QUOTA_EXCEEDED` | AI予算超過 | 429 |
+| `WBP2_070` | `DOWNLOAD_FAILED` | ダウンロード失敗 | 500 |
+| `WBP2_080` | `STORAGE_FULL` | ストレージ容量超過 | 507 |
+| `WBP2_090` | `INVALID_REQUEST` | リクエスト形式不正 | 400 |
+| `WBP2_091` | `MISSING_PARAMETER` | 必須パラメータ不足 | 400 |
+| `WBP2_099` | `INTERNAL_ERROR` | 内部エラー | 500 |
+
+#### エラーレスポンス形式
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "WBP2_011",
+    "name": "SELECTOR_TIMEOUT",
+    "message": "セレクター '.product-list' が10秒以内に見つかりませんでした",
+    "details": {
+      "selector": ".product-list",
+      "timeout_ms": 10000,
+      "elapsed_ms": 10023
+    },
+    "suggestion": "セレクターを確認するか、タイムアウトを延長してください"
+  }
+}
+```
 
 ### 18.3 設計原則の再確認
 
