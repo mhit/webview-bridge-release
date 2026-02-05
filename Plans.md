@@ -37,6 +37,7 @@
 | **Phase 14: AI統合 (Gemini)** | ✅ 完了 | 100% |
 | **Phase 15: ダウンロード & ストレージ** | ✅ 完了 | 100% |
 | **Phase 16: 通信設計 (Webhook/Batch)** | ✅ 完了 | 100% |
+| **Phase 17: テスト戦略** | ✅ 完了 | 100% |
 
 ---
 
@@ -723,3 +724,54 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## ✅ Phase 17: テスト戦略 `cc:完了`
+
+> 完了日: 2026-02-05
+
+### 17.1 テスト基盤構築 `cc:完了`
+
+- [x] テストユーティリティモジュール (`tests/common/mod.rs`)
+- [x] テストサーバフレームワーク (`tests/common/test_server.rs`)
+- [x] ページサーバ (`tests/common/page_server.rs`)
+- [x] テストフィクスチャ (`tests/fixtures/`)
+
+### 17.2 ユニットテスト拡充 `cc:完了`
+
+- [x] AI モジュールテスト (`src/core/ai.rs` - 20+テスト)
+- [x] 通信モジュールテスト (`src/core/comm.rs` - 20+テスト)
+- [x] **全86ユニットテスト通過**
+
+### 17.3 統合テスト `cc:完了`
+
+- [x] Gemini API 統合テスト (`tests/gemini_tests.rs` - 16テスト)
+- [x] API エンドポイントテスト (`tests/integration/api_tests.rs`)
+- [x] セッション管理テスト (`tests/integration/session_tests.rs`)
+
+### 17.4 E2E テスト `cc:完了`
+
+- [x] E2E テストフレームワーク (`tests/e2e_tests.rs` - 24テスト)
+- [x] ページサーバテスト (7テスト)
+- [x] API サーバテスト (5テスト)
+- [x] ワークフローテスト (4テスト - ignored, 要ブラウザ)
+
+### 17.5 パフォーマンステスト `cc:完了`
+
+- [x] Criterion ベンチマーク (`benches/api_benchmark.rs`)
+- [x] パフォーマンス計測ヘルパー
+
+### 17.6 CI/CD パイプライン `cc:完了`
+
+- [x] GitHub Actions ワークフロー (`.github/workflows/test.yml`)
+- [x] カバレッジ計測 (cargo-llvm-cov)
+- [x] 自動テスト実行
+
+### 17.7 テストサマリー
+
+| カテゴリ | テスト数 | 状態 |
+|---------|---------|------|
+| ライブラリユニットテスト | 86 | ✅ 通過 |
+| Gemini API テスト | 16 | ✅ 通過 |
+| E2E テスト | 24 (+4 ignored) | ✅ 通過 |
+| **合計** | **126** | ✅ |
