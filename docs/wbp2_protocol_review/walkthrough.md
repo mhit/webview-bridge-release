@@ -190,3 +190,29 @@ WebView Bridge Protocol v2 (WBP2) の設計文書 `PROTOCOL_V2.md` は、複数�
 | `ce56f0b` | API命名規則確認 (Task 6) |
 | `3795a73` | Phase番号整理 (Task 4) |
 | `75f5e2d` | 未修正項目すべて完了 |
+| `9a29896` | 査読修正 - 用語統一、エラーコード体系、MCP Tool定義 |
+| `6a0de34` | Plans.md にPROTOCOL_V2.md詳細仕様参照を追加 |
+
+---
+
+## 追加査読 (2026-02-05 19:50)
+
+### 修正内容
+
+1. **用語統一漏れの修正**
+   - `files_ref` → `files_url`
+   - `session_ref` → `file_ref`
+
+2. **見出しレベル修正**
+   - 6.7の問題点を`####`に変更
+
+3. **MCP Tool定義追加** (セクション18.4)
+   - WBP2対応のTool定義7種
+
+4. **エラーコード体系追加** (セクション18.5)
+   - `WBP2_xxx` 形式の統一エラーコード22種
+
+5. **Plans.md更新**
+   - Phase 3.4: OpenClaw互換テスト → `cc:不要` (WBP2移行で不要)
+   - Phase 7-16: PROTOCOL_V2.md詳細仕様参照を追加
+   - 工数見積もりを各Phaseに追加
