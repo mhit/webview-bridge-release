@@ -142,6 +142,8 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/media/youtube/download", post(media_youtube_download))
         .route("/media/analyze", post(media_analyze))
         .route("/media/files/:ref", get(media_files_list))
+        .route("/media/persist", post(media_persist))
+        .route("/media/extend", post(media_extend_ttl))
         // AI API
         .route("/ai/config", post(ai_config_update))
         .route("/ai/config", get(ai_config_get))
@@ -149,6 +151,14 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/ai/images/analyze", post(ai_images_analyze))
         .route("/ai/extract", post(ai_extract))
         .route("/ai/usage", get(ai_usage_stats))
+        // Download API
+        .route("/download/trigger", post(download_trigger))
+        .route("/download/status/:id", get(download_status))
+        .route("/download/batch", post(download_batch))
+        // Storage API
+        .route("/storage/status", get(storage_status))
+        .route("/storage/cleanup", post(storage_cleanup))
+        .route("/config/storage", post(config_storage))
         .with_state(state)
 }
 
@@ -1232,6 +1242,342 @@ async fn ai_usage_stats() -> impl IntoResponse {
             })),
         )
     }
+}
+
+// ============================================================================
+// Download & Storage API Endpoints
+// ============================================================================
+
+use crate::core::download::{
+    DownloadTriggerRequest, BatchDownloadRequest, CleanupRequest,
+    StorageConfig, DownloadManager, StorageManager, DownloadStatus,
+    PersistRequest, ExtendTtlRequest,
+};
+
+/// Global download manager
+static DOWNLOAD_MANAGER: std::sync::OnceLock<std::sync::RwLock<DownloadManager>> = std::sync::OnceLock::new();
+static STORAGE_MANAGER: std::sync::OnceLock<std::sync::RwLock<StorageManager>> = std::sync::OnceLock::new();
+
+fn get_download_manager() -> &'static std::sync::RwLock<DownloadManager> {
+    DOWNLOAD_MANAGER.get_or_init(|| std::sync::RwLock::new(DownloadManager::new()))
+}
+
+fn get_storage_manager() -> &'static std::sync::RwLock<StorageManager> {
+    STORAGE_MANAGER.get_or_init(|| std::sync::RwLock::new(StorageManager::default()))
+}
+
+/// POST /v2/download/trigger - Trigger a download
+async fn download_trigger(
+    Json(request): Json<DownloadTriggerRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    let download_manager = get_download_manager();
+    let download_id = download_manager.write()
+        .map(|mut mgr| mgr.start_download(&request.url, request.filename.clone()))
+        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    
+    // TODO: Trigger actual WebView2 download
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "download_id": download_id,
+            "status": "pending",
+            "url": request.url,
+            "filename": request.filename,
+            "_note": "WebView2 download integration pending"
+        })),
+    )
+}
+
+/// GET /v2/download/status/:id - Get download status
+async fn download_status(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let download_manager = get_download_manager();
+    
+    if let Ok(mgr) = download_manager.read() {
+        if let Some(progress) = mgr.get_progress(&id) {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "download_id": id,
+                    "status": format!("{:?}", progress.status),
+                    "url": progress.url,
+                    "filename": progress.filename,
+                    "bytes_received": progress.bytes_received,
+                    "total_bytes": progress.total_bytes,
+                    "percent": progress.percent
+                })),
+            );
+        }
+    }
+    
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_110",
+                "name": "DOWNLOAD_NOT_FOUND",
+                "message": format!("Download '{}' not found", id)
+            }
+        })),
+    )
+}
+
+/// POST /v2/download/batch - Start batch download
+async fn download_batch(
+    Json(request): Json<BatchDownloadRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    let download_manager = get_download_manager();
+    let (batch_id, download_ids) = download_manager.write()
+        .map(|mut mgr| mgr.create_batch(&request.urls))
+        .unwrap_or_else(|_| (uuid::Uuid::new_v4().to_string(), Vec::new()));
+    
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "batch_id": batch_id,
+            "download_ids": download_ids,
+            "total": request.urls.len(),
+            "parallel": request.parallel,
+            "_note": "Batch download tracking created"
+        })),
+    )
+}
+
+/// GET /v2/storage/status - Get storage status
+async fn storage_status() -> impl IntoResponse {
+    let storage_manager = get_storage_manager();
+    
+    if let Ok(mgr) = storage_manager.read() {
+        let status = mgr.get_status();
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "data_path": status.data_path,
+                "used_bytes": status.used_bytes,
+                "max_bytes": status.max_bytes,
+                "usage_percent": status.usage_percent,
+                "alert_level": format!("{:?}", status.alert_level)
+            })),
+        );
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to read storage status"
+            }
+        })),
+    )
+}
+
+/// POST /v2/storage/cleanup - Cleanup expired files
+async fn storage_cleanup(
+    Json(request): Json<CleanupRequest>,
+) -> impl IntoResponse {
+    let storage_manager = get_storage_manager();
+    
+    if let Ok(mut mgr) = storage_manager.write() {
+        let result = mgr.cleanup_expired(request.dry_run);
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "files_deleted": result.files_deleted,
+                "bytes_freed": result.bytes_freed,
+                "dry_run": result.dry_run,
+                "details": result.details
+            })),
+        );
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to run storage cleanup"
+            }
+        })),
+    )
+}
+
+/// POST /v2/config/storage - Update storage configuration
+async fn config_storage(
+    Json(config): Json<StorageConfig>,
+) -> impl IntoResponse {
+    let storage_manager = get_storage_manager();
+    
+    if let Ok(mut mgr) = storage_manager.write() {
+        mgr.config = config.clone();
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "message": "Storage configuration updated",
+                "data_path": config.data_path,
+                "max_storage_bytes": config.max_storage_bytes,
+                "default_ttl_seconds": config.default_ttl_seconds
+            })),
+        );
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to update storage configuration"
+            }
+        })),
+    )
+}
+
+/// POST /v2/media/persist - Persist a file reference
+async fn media_persist(
+    Json(request): Json<PersistRequest>,
+) -> impl IntoResponse {
+    let storage_manager = get_storage_manager();
+    
+    if let Ok(mut mgr) = storage_manager.write() {
+        match mgr.persist(&request.file_ref) {
+            Ok(()) => {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "file_ref": request.file_ref,
+                        "persistent": true,
+                        "message": "File reference marked as persistent"
+                    })),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_111",
+                            "name": "FILE_REF_NOT_FOUND",
+                            "message": e
+                        }
+                    })),
+                );
+            }
+        }
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to persist file reference"
+            }
+        })),
+    )
+}
+
+/// POST /v2/media/extend - Extend TTL of a file reference
+async fn media_extend_ttl(
+    Json(request): Json<ExtendTtlRequest>,
+) -> impl IntoResponse {
+    let storage_manager = get_storage_manager();
+    
+    if let Ok(mut mgr) = storage_manager.write() {
+        match mgr.extend_ttl(&request.file_ref, request.additional_seconds) {
+            Ok(new_expires) => {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "file_ref": request.file_ref,
+                        "new_expires_at": new_expires,
+                        "extended_by_seconds": request.additional_seconds
+                    })),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "WBP2_111",
+                            "name": "FILE_REF_NOT_FOUND",
+                            "message": e
+                        }
+                    })),
+                );
+            }
+        }
+    }
+    
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "error": {
+                "code": "WBP2_099",
+                "name": "INTERNAL_ERROR",
+                "message": "Failed to extend TTL"
+            }
+        })),
+    )
 }
 
 #[cfg(test)]

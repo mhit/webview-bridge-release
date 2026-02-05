@@ -7,6 +7,7 @@ use uuid::Uuid;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 pub mod ai;
+pub mod download;
 pub mod goal;
 pub mod macro_engine;
 pub mod media;
