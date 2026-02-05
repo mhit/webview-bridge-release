@@ -982,83 +982,86 @@ impl WebViewInstance {
     pub fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool, String> {
         log_webview_start("WebViewInstance::wait_for_selector", &format!("selector={}, timeout={}ms", selector, timeout_ms));
         
-        let script = format!(r#"
-            (async function() {{
-                const selector = '{}';
-                const timeout = {};
-                const startTime = Date.now();
-                
-                while (Date.now() - startTime < timeout) {{
-                    if (document.querySelector(selector)) {{
-                        return true;
-                    }}
-                    await new Promise(r => setTimeout(r, 100));
-                }}
-                
-                return document.querySelector(selector) !== null;
-            }})();
-        "#, selector.replace("'", "\\'"), timeout_ms);
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let escaped_selector = selector.replace("'", "\\'");
+        
+        while start.elapsed() < timeout {
+            // Simple synchronous check script
+            let script = format!(
+                "(function() {{ return document.querySelector('{}') !== null; }})()",
+                escaped_selector
+            );
+            
+            if let Some(controller) = &self.controller {
+                unsafe {
+                    let webview = controller
+                        .CoreWebView2()
+                        .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
+                    let request_id = Uuid::new_v4().to_string();
 
-        if let Some(controller) = &self.controller {
-            unsafe {
-                let webview = controller
-                    .CoreWebView2()
-                    .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                let request_id = Uuid::new_v4().to_string();
+                    webview
+                        .ExecuteScript(
+                            &HSTRING::from(&script),
+                            &ICoreWebView2ExecuteScriptCompletedHandler::from(ExecuteScriptHandler {
+                                request_id: request_id.clone(),
+                                hwnd: self.get_hwnd(),
+                            }),
+                        )
+                        .map_err(|e| format!("ExecuteScript failed: {:?}", e))?;
 
-                webview
-                    .ExecuteScript(
-                        &HSTRING::from(&script),
-                        &ICoreWebView2ExecuteScriptCompletedHandler::from(ExecuteScriptHandler {
-                            request_id: request_id.clone(),
-                            hwnd: self.get_hwnd(),
-                        }),
-                    )
-                    .map_err(|e| format!("ExecuteScript failed: {:?}", e))?;
+                    // Wait for result with short timeout
+                    let poll_start = std::time::Instant::now();
+                    let poll_timeout = std::time::Duration::from_secs(2);
+                    
+                    loop {
+                        // Pump messages
+                        let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                        while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
+                            &mut msg,
+                            HWND::default(),
+                            0,
+                            0,
+                            windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+                        )
+                        .as_bool()
+                        {
+                            windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                            windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                        }
 
-                // Wait with extended timeout
-                let start = std::time::Instant::now();
-                let max_wait = std::time::Duration::from_millis(timeout_ms + 5000);
-                loop {
-                    // Pump messages
-                    let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-                    while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
-                        &mut msg,
-                        HWND::default(),
-                        0,
-                        0,
-                        windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
-                    )
-                    .as_bool()
-                    {
-                        windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
-                        windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
-                    }
-
-                    if let Some(result) = PENDING_SCRIPT_RESULTS.with(|map| map.borrow_mut().remove(&request_id)) {
-                        match result {
-                            Ok(val) => {
-                                log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
-                                return Ok(val == "true");
-                            }
-                            Err(e) => {
-                                log_webview_error("WebViewInstance::wait_for_selector", &e);
-                                return Err(e);
+                        if let Some(result) = PENDING_SCRIPT_RESULTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                            match result {
+                                Ok(val) => {
+                                    if val == "true" {
+                                        log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+                                        return Ok(true);
+                                    }
+                                    // Element not found yet, continue polling
+                                    break;
+                                }
+                                Err(_) => break, // Try again
                             }
                         }
-                    }
 
-                    if start.elapsed() > max_wait {
-                        return Err("WaitForSelector timeout".to_string());
-                    }
+                        if poll_start.elapsed() > poll_timeout {
+                            break;
+                        }
 
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
                 }
+            } else {
+                log_webview_error("WebViewInstance::wait_for_selector", "WebView not ready");
+                return Err("WebView not ready".to_string());
             }
-        } else {
-            log_webview_error("WebViewInstance::wait_for_selector", "WebView not ready");
-            Err("WebView not ready".to_string())
+            
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        
+        // Final check
+        log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+        Ok(false)
     }
 
     /// Extract data from DOM elements
