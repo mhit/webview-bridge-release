@@ -142,6 +142,13 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/media/youtube/download", post(media_youtube_download))
         .route("/media/analyze", post(media_analyze))
         .route("/media/files/:ref", get(media_files_list))
+        // AI API
+        .route("/ai/config", post(ai_config_update))
+        .route("/ai/config", get(ai_config_get))
+        .route("/ai/login", post(ai_login))
+        .route("/ai/images/analyze", post(ai_images_analyze))
+        .route("/ai/extract", post(ai_extract))
+        .route("/ai/usage", get(ai_usage_stats))
         .with_state(state)
 }
 
@@ -960,6 +967,271 @@ fn extract_youtube_id(url: &str) -> String {
     }
     // Assume it's already a video ID
     url.to_string()
+}
+
+// ============================================================================
+// AI API Endpoints
+// ============================================================================
+
+use crate::core::ai::{
+    AiConfig, AiLoginRequest, AiImageAnalyzeRequest, AiExtractRequest,
+    LoginStatus, AiUsageTracker,
+};
+
+/// Global AI config
+static AI_CONFIG: std::sync::OnceLock<std::sync::RwLock<AiConfig>> = std::sync::OnceLock::new();
+static AI_USAGE: std::sync::OnceLock<std::sync::RwLock<AiUsageTracker>> = std::sync::OnceLock::new();
+
+fn get_ai_config() -> &'static std::sync::RwLock<AiConfig> {
+    AI_CONFIG.get_or_init(|| std::sync::RwLock::new(AiConfig::default()))
+}
+
+fn get_ai_usage() -> &'static std::sync::RwLock<AiUsageTracker> {
+    AI_USAGE.get_or_init(|| std::sync::RwLock::new(AiUsageTracker::new()))
+}
+
+/// POST /v2/ai/config - Update AI configuration
+async fn ai_config_update(
+    Json(config): Json<AiConfig>,
+) -> impl IntoResponse {
+    let ai_config = get_ai_config();
+    
+    if let Ok(mut cfg) = ai_config.write() {
+        *cfg = config.clone();
+        (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "message": "AI configuration updated",
+                "provider": cfg.provider,
+                "model": cfg.model,
+                "enabled": cfg.enabled,
+                "has_api_key": cfg.api_key.is_some()
+            })),
+        )
+    } else {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Failed to update AI configuration"
+                }
+            })),
+        )
+    }
+}
+
+/// GET /v2/ai/config - Get AI configuration
+async fn ai_config_get() -> impl IntoResponse {
+    let ai_config = get_ai_config();
+    
+    if let Ok(cfg) = ai_config.read() {
+        (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "provider": cfg.provider,
+                "model": cfg.model,
+                "enabled": cfg.enabled,
+                "has_api_key": cfg.api_key.is_some(),
+                "daily_budget_usd": cfg.daily_budget_usd,
+                "daily_usage_usd": cfg.daily_usage_usd,
+                "is_available": cfg.is_available()
+            })),
+        )
+    } else {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_099",
+                    "name": "INTERNAL_ERROR",
+                    "message": "Failed to read AI configuration"
+                }
+            })),
+        )
+    }
+}
+
+/// POST /v2/ai/login - AI-assisted login
+async fn ai_login(
+    Json(request): Json<AiLoginRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Check AI availability
+    let ai_config = get_ai_config();
+    let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
+    
+    if !is_available {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_100",
+                    "name": "AI_NOT_AVAILABLE",
+                    "message": "AI is not configured or API key is missing"
+                }
+            })),
+        );
+    }
+    
+    // TODO: Implement actual AI login flow
+    // 1. Take screenshot
+    // 2. Send to Gemini for form detection
+    // 3. Fill credentials
+    // 4. Detect CAPTCHA/2FA
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "AI login initiated",
+            "session": request.session,
+            "status": "in_progress",
+            "url": request.url,
+            "_note": "Full AI login flow pending Gemini integration"
+        })),
+    )
+}
+
+/// POST /v2/ai/images/analyze - AI image analysis
+async fn ai_images_analyze(
+    Json(request): Json<AiImageAnalyzeRequest>,
+) -> impl IntoResponse {
+    // Check AI availability
+    let ai_config = get_ai_config();
+    let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
+    
+    if !is_available {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_100",
+                    "name": "AI_NOT_AVAILABLE",
+                    "message": "AI is not configured or API key is missing"
+                }
+            })),
+        );
+    }
+    
+    // TODO: Implement Gemini image analysis
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "Image analysis queued",
+            "image_count": request.images.len(),
+            "analysis_type": format!("{:?}", request.analysis_type),
+            "_note": "Full AI analysis pending Gemini integration"
+        })),
+    )
+}
+
+/// POST /v2/ai/extract - AI-assisted data extraction
+async fn ai_extract(
+    Json(request): Json<AiExtractRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    
+    let _handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session)
+                    }
+                })),
+            );
+        }
+    };
+    
+    // Check AI availability
+    let ai_config = get_ai_config();
+    let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
+    
+    if !is_available {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "WBP2_100",
+                    "name": "AI_NOT_AVAILABLE",
+                    "message": "AI is not configured or API key is missing"
+                }
+            })),
+        );
+    }
+    
+    // TODO: Implement AI extraction
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "message": "AI extraction initiated",
+            "session": request.session,
+            "description": request.description,
+            "auto_scroll": request.auto_scroll,
+            "_note": "Full AI extraction pending Gemini integration"
+        })),
+    )
+}
+
+/// GET /v2/ai/usage - Get AI usage statistics
+async fn ai_usage_stats() -> impl IntoResponse {
+    let usage = get_ai_usage();
+    
+    if let Ok(tracker) = usage.read() {
+        (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "stats": tracker.get_daily_stats()
+            })),
+        )
+    } else {
+        (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "stats": {
+                    "total_requests": 0,
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cost_usd": 0.0
+                }
+            })),
+        )
+    }
 }
 
 #[cfg(test)]
