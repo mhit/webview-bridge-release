@@ -172,11 +172,55 @@ try {
             Test-GetStatus
             Test-GetCookies
         }
+        "UC-01" {
+            Write-TestHeader "UC-01: X Egosearch"
+            Test-Navigate "https://x.com/search?q=test" "UC01-01" "Navigate to X Search"
+            Test-WaitForSelector "article, main" "UC01-02" "Wait for Content"
+            Test-Extract "article" "UC01-03" "Extract Articles"
+        }
+        "UC-02" {
+            Write-TestHeader "UC-02: Google Shopping"
+            Test-Navigate "https://www.google.com/search?tbm=shop&q=test" "UC02-01" "Navigate to Shopping"
+            Test-WaitForSelector "[data-docid], .sh-dgr__content" "UC02-02" "Wait for Products"
+            Test-Extract ".sh-dgr__content, [data-docid]" "UC02-03" "Extract Products"
+        }
+        "UC-03" {
+            Write-TestHeader "UC-03: Amazon Search"
+            Test-Navigate "https://www.amazon.co.jp/s?k=test" "UC03-01" "Navigate to Amazon"
+            Test-WaitForSelector "[data-component-type='s-search-result']" "UC03-02" "Wait for Results"
+            Test-Extract "[data-component-type='s-search-result'] h2" "UC03-03" "Extract Titles"
+        }
+        "UC-04" {
+            Write-TestHeader "UC-04: Rakuten Search"
+            Test-Navigate "https://search.rakuten.co.jp/search/mall/test/" "UC04-01" "Navigate to Rakuten"
+            Test-WaitForSelector ".searchresultitem, .dui-card" "UC04-02" "Wait for Results"
+        }
+        "UC-05" {
+            Write-TestHeader "UC-05: Yahoo Shopping"
+            Test-Navigate "https://shopping.yahoo.co.jp/search?p=test" "UC05-01" "Navigate to Yahoo"
+            Test-WaitForSelector ".ProductsListModule, .SearchResult" "UC05-02" "Wait for Results"
+        }
+        "UC-06" {
+            Write-TestHeader "UC-06: Rakuten Books"
+            Test-Navigate "https://books.rakuten.co.jp/search?sitem=test" "UC06-01" "Navigate to Books"
+            Test-WaitForSelector ".rbcomp__item-list, .item" "UC06-02" "Wait for Results"
+        }
+        "UC-07" {
+            Write-TestHeader "UC-07: EC Site Check"
+            Test-Navigate "https://www.google.com/search?q=test" "UC07-01" "Navigate to Google"
+            Test-WaitForSelector "#search, .g" "UC07-02" "Wait for Results"
+        }
         "UC-08" {
             Write-TestHeader "UC-08: Adamas Official Site"
             Test-Navigate "https://shop.adamas-octa.com/" "UC08-01" "Navigate to Shop"
             Test-WaitForSelector "body" "UC08-02" "Wait for Body"
             Test-Screenshot "UC08-03" "Take Screenshot"
+        }
+        "UC-09" {
+            Write-TestHeader "UC-09: Target Site Crawl"
+            Test-Navigate "https://example.com" "UC09-01" "Navigate to Example"
+            Test-WaitForSelector "h1" "UC09-02" "Wait for Title"
+            Test-Extract "h1" "UC09-03" "Extract Title"
         }
         "all" {
             Write-TestHeader "Basic API Tests"
@@ -187,14 +231,19 @@ try {
             Write-TestHeader "UC-08: Adamas Official Site"
             Test-Navigate "https://shop.adamas-octa.com/" "UC08-01" "Navigate to Shop"
             Test-WaitForSelector "body" "UC08-02" "Wait for Body"
-            Test-Screenshot "UC08-03" "Take Screenshot"
+            
+            Write-TestHeader "UC-09: Example Site"
+            Test-Navigate "https://example.com" "UC09-01" "Navigate to Example"
+            Test-WaitForSelector "h1" "UC09-02" "Wait for Title"
+            Test-Extract "h1" "UC09-03" "Extract Title"
             
             Write-TestHeader "UC-03: Amazon Search"
             Test-Navigate "https://www.amazon.co.jp/s?k=test" "UC03-01" "Navigate to Amazon"
             Test-WaitForSelector "[data-component-type]" "UC03-02" "Wait for Results"
         }
         default {
-            Write-Host "Unknown test: $TestCase (available: basic, UC-08, all)" -ForegroundColor Yellow
+            Write-Host "Unknown test: $TestCase" -ForegroundColor Red
+            Write-Host "Available: basic, UC-01 to UC-09, all" -ForegroundColor Yellow
         }
     }
 }

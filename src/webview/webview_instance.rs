@@ -1,14 +1,11 @@
 use crate::webview::window::WebViewWindow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Once;
 use uuid::Uuid;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::core::{Error, Result as WinResult, HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_USER};
-
-static INIT_COM: Once = Once::new();
 
 // Custom Messages
 pub const WM_WEBVIEW_CREATED: u32 = WM_USER + 100;
