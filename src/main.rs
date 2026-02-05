@@ -83,17 +83,24 @@ async fn main() {
         }),
     };
 
-    // Create API router (v1 + v2)
+    // Create EventHub for WebSocket
+    let event_hub = Arc::new(crate::core::websocket::EventHub::new());
+    let ws_router = crate::core::websocket::create_ws_router(event_hub.clone());
+
+    // Create API router (v1 + v2 + WebSocket)
     let v1_router = api::create_router(unbounded_tx, 0);
     let v2_router = create_v2_router(v2_state);
     
-    let app = v1_router.nest("/v2", v2_router);
+    let app = v1_router
+        .nest("/v2", v2_router)
+        .nest("/v2", ws_router);
 
     // Run server
     let addr = SocketAddr::from(([127, 0, 0, 1], 9400));
     tracing::info!("listening on {} with {} command processors", addr, COMMAND_PROCESSOR_COUNT);
     tracing::info!("v1 API: http://{}/", addr);
     tracing::info!("v2 API: http://{}/v2/", addr);
+    tracing::info!("WebSocket: ws://{}/v2/ws", addr);
 
     match axum::serve(
         tokio::net::TcpListener::bind(&addr).await.unwrap(),

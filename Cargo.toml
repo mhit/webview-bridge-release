@@ -13,9 +13,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # HTTP Server
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
+futures = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
