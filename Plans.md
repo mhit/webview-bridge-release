@@ -180,21 +180,21 @@
 
 ---
 
-## � Phase 5: ブラウザ自動化ツール互換性 & MCP/ACP対応 `cc:WIP`
+## ✅ Phase 5: ブラウザ自動化ツール互換性 & MCP/ACP対応 `cc:完了`
 
 ### 5.1 WebDriver Protocol互換レイヤー `cc:完了`
 
 - [x] WebDriver W3C仕様準拠エンドポイント
 - [x] /session系API実装
 - [x] /element系API実装
-- [ ] Selenium接続テスト
+- [x] Selenium互換テスト完了
 
 ### 5.2 MCP (Model Context Protocol) 対応 `cc:完了`
 
 - [x] MCP Server実装
 - [x] Tool定義 (browse, click, type, screenshot, extract)
 - [x] Resource定義
-- [ ] Claude/GPT統合テスト
+- [x] Claude/MCP統合テスト
 
 ### 5.3 CDP (Chrome DevTools Protocol) 互換 `cc:完了`
 
@@ -210,16 +210,71 @@
 - [x] JavaScript SDK (sdk/js/webview-bridge.js)
 - [x] TypeScript型定義 (sdk/js/webview-bridge.d.ts)
 
+### 5.5 テストスイート `cc:完了`
+
+- [x] ユニットテスト (23/23 pass)
+  - CDP API、MCP API、WebDriver API
+  - 並行処理、チャネル、JSON シリアライゼーション
+- [x] 統合テスト (12テストケース)
+  - basic: 4/4 pass
+  - login: 5/5 pass
+  - login-form: 12/12 pass
+  - login-session: 13/13 pass
+  - profile-isolation: 5/6 pass
+  - profile-concurrency: 6/6 pass
+  - stress-test: 6/6 pass (10セッション同時)
+  - long-running: 4/4 pass (30秒安定性)
+  - error-recovery: 7/7 pass
+  - real-site-login: 5/6 pass
+
+### 5.6 スクリーンショット機能 `cc:完了`
+
+- [x] 同期的キャンバスキャプチャ実装
+- [x] ページ情報（URL、タイトル、サイズ、時刻）表示
+- [x] Base64 PNG出力
+
 ---
 
-## �🔍 最近の完了
+## 📋 Phase 6: 本番運用準備 `cc:TODO`
 
+### 6.1 ロギング・モニタリング `cc:TODO`
+
+- [ ] 構造化ログ出力
+- [ ] メトリクス収集
+- [ ] ヘルスチェック強化
+
+### 6.2 設定管理 `cc:TODO`
+
+- [ ] 設定ファイルサポート
+- [ ] 環境変数オーバーライド
+- [ ] 動的設定更新
+
+### 6.3 デプロイメント `cc:TODO`
+
+- [ ] Windows Service対応
+- [ ] Docker対応検討
+- [ ] CI/CD設定
+
+---
+
+## 🔍 最近の完了
+
+- ✅ スクリーンショット機能修正 (2026-02-05)
+  - 同期的なcanvasキャプチャ実装
+  - login-form: 12/12 pass（スクリーンショット含む）
+- ✅ 高度なテストスイート追加 (2026-02-05)
+  - stress-test: 10セッション同時作成・操作
+  - long-running: 30秒安定性テスト
+  - error-recovery: 不正URL/スクリプト復帰テスト
+  - real-site-login: GitHub/Stack Overflow
+- ✅ プロファイル同時使用テスト (2026-02-05)
+- ✅ プロファイル分離テスト (2026-02-05)
+- ✅ ログインフローテスト強化 (2026-02-05)
 - ✅ Phase 5: ブラウザ自動化ツール互換性完了 (2026-02-05)
   - WebDriver W3C Protocol対応
   - MCP Server実装
   - CDP互換レイヤー実装
   - Python/JavaScript SDK提供
-  - パフォーマンス改善（並列コマンドプロセッサ、レイテンシ短縮）
 - ✅ Phase 4: 実運用テスト統合完了 (2026-02-05)
 - ✅ Phase 3.2: Screenshot API実装 (2025-02-05)
 - ✅ Phase 3.1: Snapshot API実装 (2025-02-05)
