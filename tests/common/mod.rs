@@ -3,6 +3,7 @@
 //! Shared helpers, fixtures, and test infrastructure.
 
 pub mod test_server;
+pub mod page_server;
 
 use axum::Router;
 use std::sync::atomic::{AtomicU16, Ordering};

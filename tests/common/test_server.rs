@@ -2,9 +2,18 @@
 //!
 //! Provides utilities for testing API endpoints with axum-test.
 
-use axum::Router;
+use axum::{
+    Router,
+    routing::{get, post, delete},
+    Json,
+    http::StatusCode,
+    response::IntoResponse,
+};
 use axum_test::TestServer;
 use serde_json::{json, Value};
+
+// Re-export for external tests
+pub use axum::http::StatusCode as HttpStatusCode;
 
 /// Create a test server with the v2 API router
 pub async fn create_test_server() -> TestServer {
@@ -18,13 +27,6 @@ pub async fn create_test_server() -> TestServer {
 /// Create a minimal test router for API testing
 /// This mirrors the actual API structure for testing purposes
 fn create_test_router() -> Router {
-    use axum::{
-        routing::{get, post, delete},
-        Json,
-        http::StatusCode,
-        response::IntoResponse,
-    };
-    
     Router::new()
         // Session endpoints
         .route("/v2/session/list", get(mock_session_list))
@@ -281,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_destroy() {
         let server = create_test_server().await;
-        let response = server.delete("/v2/session/main").await;
+        let response = server.delete("/v2/session/main/destroy").await;
         
         response.assert_status_ok();
         let body: Value = response.json();
