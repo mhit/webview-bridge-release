@@ -146,7 +146,7 @@ POST /v2/session/acquire
 
 # レスポンス
 {
-    "session_id": "x",                   # 名前がそのままID
+    "session": "x",                      # セッション名（統一キー）
     "is_new": false,                     # 既存を再利用
     "profile": "x_authenticated",
     "auth_status": {
@@ -686,17 +686,20 @@ POST /v2/media/youtube/download
 {
     "success": true,
     "job_id": "dl_12345",
-    "status": "downloading",
-    "progress_url": "/v2/media/job/dl_12345"
+    "status": "started",
+    "poll_url": "/v2/jobs/dl_12345"   # 統一ジョブAPI
 }
 
 # 進捗確認
-GET /v2/media/job/dl_12345
+GET /v2/jobs/dl_12345
 {
     "job_id": "dl_12345",
-    "status": "completed",           // pending | downloading | completed | error
-    "progress": 100,
-    "file": {
+    "type": "video_download",
+    "status": "completed",           // pending | running | completed | failed
+    "progress": {
+        "percent": 100
+    },
+    "result": {
         "path": "/downloads/videos/動画タイトル.mp4",
         "size": 150000000,
         "duration": 600
@@ -756,7 +759,7 @@ POST /v2/media/video/analyze
         }
     },
     "output": {
-        "session_ref": "video_analysis_123",  // 後でファイル参照用
+        "file_ref": "video_analysis_123",  // 後でファイル参照用
         "base_path": "/analysis"
     }
 }
@@ -764,7 +767,7 @@ POST /v2/media/video/analyze
 # レスポンス
 {
     "success": true,
-    "session_ref": "video_analysis_123",
+    "file_ref": "video_analysis_123",
     "video_info": {
         "id": "xxxxx",
         "title": "動画タイトル",
@@ -820,13 +823,13 @@ ffmpeg -i input.mp4 -vn -acodec libmp3lame -ab 128k audio.mp3
 - メモリ消費
 - タイムアウト
 
-**解決**: セッション参照を使ったファイルアクセス
+**解決**: ファイル参照IDを使ったファイルアクセス
 
 ```http
 # 分析結果のファイル一覧
 GET /v2/media/files/video_analysis_123
 {
-    "session_ref": "video_analysis_123",
+    "file_ref": "video_analysis_123",
     "created_at": "2026-02-05T16:00:00Z",
     "expires_at": "2026-02-06T16:00:00Z",
     "files": [
@@ -837,6 +840,7 @@ GET /v2/media/files/video_analysis_123
     ],
     "total_size": 7500000
 }
+
 
 # 個別ファイルダウンロード
 GET /v2/media/files/video_analysis_123/keyframe_0000.jpg
@@ -898,7 +902,7 @@ POST /v2/download/trigger
         "wait_for_download": true,     // ダウンロード完了まで待機
         "timeout": 300000,             // 5分タイムアウト
         "rename": "report_2026.pdf",   // ファイル名変更（オプション）
-        "session_ref": "downloads_001" // ファイル参照用
+        "file_ref": "downloads_001"    // ファイル参照用
     }
 }
 
@@ -926,23 +930,24 @@ POST /v2/download/trigger
     "action": {"type": "click", "selector": "#download-button"},
     "options": {
         "wait_for_download": false,    // 即座に返却
-        "session_ref": "downloads_001"
+        "file_ref": "downloads_001"    // ファイル参照用
     }
 }
 
 # レスポンス（即座）
 {
     "success": true,
-    "download_id": "dl_abc123",
+    "job_id": "dl_abc123",
     "status": "started",
-    "progress_url": "/v2/download/status/dl_abc123"
+    "poll_url": "/v2/jobs/dl_abc123"   # 統一ジョブAPI
 }
 
 # 進捗確認
-GET /v2/download/status/dl_abc123
+GET /v2/jobs/dl_abc123
 {
-    "download_id": "dl_abc123",
-    "status": "downloading",           // pending | downloading | completed | failed
+    "job_id": "dl_abc123",
+    "type": "download",
+    "status": "running",               // pending | running | completed | failed
     "filename": "large_file.zip",
     "progress": {
         "downloaded": 52428800,        // 50MB
@@ -956,11 +961,13 @@ GET /v2/download/status/dl_abc123
 
 # 完了後
 {
-    "download_id": "dl_abc123",
+    "job_id": "dl_abc123",
     "status": "completed",
-    "filename": "large_file.zip",
-    "file_ref": "/v2/media/files/downloads_001/large_file.zip",
-    "size": 104857600,
+    "result": {
+        "filename": "large_file.zip",
+        "file_ref": "/v2/media/files/downloads_001/large_file.zip",
+        "size": 104857600
+    },
     "completed_at": "2026-02-05T16:10:10Z"
 }
 ```
@@ -1058,7 +1065,7 @@ $WEBVIEW_BRIDGE_DATA/
 │     │                                                           │
 │     ▼                                                           │
 │  ┌────────────────────┐                                        │
-│  │ session_ref に紐づけ │                                       │
+│  │ file_ref に紐づけ     │                                       │
 │  │ TTL: 24時間 (デフォルト)│                                    │
 │  └────────────────────┘                                        │
 │     │                                                           │
@@ -1099,7 +1106,7 @@ GET /v2/storage/status
         "media": 536870912,            // 512MB
         "cache": 12582912              // 12MB
     },
-    "session_refs": [
+    "file_refs": [
         {
             "ref": "downloads_001",
             "size": 52428800,
@@ -1122,7 +1129,7 @@ GET /v2/storage/status
 # ファイルを永続化（TTL無効化）
 POST /v2/media/persist
 {
-    "session_ref": "downloads_001",
+    "file_ref": "downloads_001",
     "files": ["report.pdf"],           // 特定ファイルのみ、または省略で全部
     "reason": "重要レポート"           // メモ（オプション）
 }
@@ -1137,7 +1144,7 @@ POST /v2/media/persist
 # TTL延長
 POST /v2/media/extend
 {
-    "session_ref": "downloads_001",
+    "file_ref": "downloads_001",
     "extend_hours": 48                 // 48時間延長
 }
 
@@ -1206,7 +1213,7 @@ POST /v2/download/batch
     ],
     "options": {
         "sequential": true,            // 順次ダウンロード
-        "session_ref": "annual_reports",
+        "file_ref": "annual_reports",  // ファイル参照用
         "ttl_hours": 168,              // 1週間保持
         "notify_on_complete": true
     }
@@ -1222,9 +1229,9 @@ POST /v2/download/batch
         {"status": "completed", "file": "report_2026.pdf", "size": 3100000}
     ],
     "total_size": 8400000,
-    "session_ref": "annual_reports",
+    "file_ref": "annual_reports",
     "expires_at": "2026-02-12T16:00:00Z",
-    "files_ref": "/v2/media/files/annual_reports"
+    "files_url": "/v2/media/files/annual_reports"
 }
 ```
 
@@ -1236,7 +1243,7 @@ $result = Invoke-RestMethod -Uri "http://localhost:9400/v2/download/batch" `
     -Method Post -Body $jsonBody -ContentType "application/json"
 
 # 完了後、ZIPでまとめて取得
-Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$($result.session_ref)?format=zip" `
+Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$($result.file_ref)?format=zip" `
     -OutFile "annual_reports.zip"
 
 # 一定期間後、サーバー側で自動削除（手動不要）
