@@ -419,10 +419,28 @@ mod tests {
     }
     
     #[test]
+    fn test_capture_mode_equality() {
+        assert_eq!(CaptureMode::FullPage, CaptureMode::FullPage);
+        assert_ne!(CaptureMode::Viewport, CaptureMode::Element);
+    }
+    
+    #[test]
+    fn test_image_format_default() {
+        assert_eq!(ImageFormat::default(), ImageFormat::Png);
+    }
+    
+    #[test]
     fn test_image_format_mime_type() {
         assert_eq!(ImageFormat::Png.mime_type(), "image/png");
         assert_eq!(ImageFormat::Jpeg.mime_type(), "image/jpeg");
         assert_eq!(ImageFormat::Webp.mime_type(), "image/webp");
+    }
+    
+    #[test]
+    fn test_image_format_extension() {
+        assert_eq!(ImageFormat::Png.extension(), "png");
+        assert_eq!(ImageFormat::Jpeg.extension(), "jpg");
+        assert_eq!(ImageFormat::Webp.extension(), "webp");
     }
     
     #[test]
@@ -441,20 +459,110 @@ mod tests {
     }
     
     #[test]
+    fn test_find_device_preset_not_found() {
+        let preset = find_device_preset("nonexistent_device");
+        assert!(preset.is_none());
+    }
+    
+    #[test]
+    fn test_all_device_presets() {
+        let presets = get_device_presets();
+        assert!(presets.len() >= 8);
+        
+        // Verify all presets are findable
+        for preset in &presets {
+            assert!(find_device_preset(&preset.name).is_some());
+        }
+    }
+    
+    #[test]
+    fn test_desktop_presets() {
+        let desktop = find_device_preset("desktop_1080p").unwrap();
+        assert!(!desktop.viewport.is_mobile);
+        assert!(!desktop.viewport.has_touch);
+        assert_eq!(desktop.viewport.width, 1920);
+        assert_eq!(desktop.viewport.height, 1080);
+    }
+    
+    #[test]
+    fn test_tablet_presets() {
+        let ipad = find_device_preset("ipad_pro_12").unwrap();
+        assert!(ipad.viewport.is_mobile);
+        assert!(ipad.viewport.has_touch);
+        assert!(ipad.viewport.width > 1000); // Larger than phones
+    }
+    
+    #[test]
     fn test_generate_element_screenshot_script() {
         let script = generate_element_screenshot_script("#main", 10);
         assert!(script.contains("#main"));
         assert!(script.contains("getBoundingClientRect"));
+        assert!(script.contains("padding"));
+    }
+    
+    #[test]
+    fn test_generate_element_screenshot_script_escapes_quotes() {
+        let script = generate_element_screenshot_script(r#".class[data-id="test"]"#, 0);
+        assert!(script.contains("data-id"));
+    }
+    
+    #[test]
+    fn test_generate_full_page_dimensions_script() {
+        let script = generate_full_page_dimensions_script();
+        assert!(script.contains("scrollHeight"));
+        assert!(script.contains("offsetHeight"));
+        assert!(script.contains("clientHeight"));
+    }
+    
+    #[test]
+    fn test_generate_wait_for_images_script() {
+        let script = generate_wait_for_images_script(5000);
+        assert!(script.contains("5000"));
+        assert!(script.contains("document.images"));
+        assert!(script.contains("complete"));
+    }
+    
+    #[test]
+    fn test_generate_scroll_to_script() {
+        let script = generate_scroll_to_script(100, 500);
+        assert!(script.contains("100"));
+        assert!(script.contains("500"));
+        assert!(script.contains("scrollTo"));
+    }
+    
+    #[test]
+    fn test_generate_hide_elements_script() {
+        let selectors = vec![".ad".to_string(), "#banner".to_string()];
+        let script = generate_hide_elements_script(&selectors);
+        assert!(script.contains(".ad"));
+        assert!(script.contains("#banner"));
+        assert!(script.contains("visibility"));
+    }
+    
+    #[test]
+    fn test_generate_restore_elements_script() {
+        let selectors = vec![".ad".to_string()];
+        let script = generate_restore_elements_script(&selectors);
+        assert!(script.contains(".ad"));
+        assert!(script.contains("removeProperty"));
+    }
+    
+    #[test]
+    fn test_generate_viewport_meta_script() {
+        let script = generate_viewport_meta_script(375, 667, 2.0);
+        assert!(script.contains("375"));
+        assert!(script.contains("667"));
+        assert!(script.contains("viewport"));
     }
     
     #[test]
     fn test_screenshot_request_deserialize() {
-        let json = r#"{
+        let json = r##"{
             "session": "test",
             "mode": "full_page",
             "format": "jpeg",
             "quality": 85
-        }"#;
+        }"##;
         
         let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.session, "test");
@@ -462,4 +570,59 @@ mod tests {
         assert_eq!(req.format, ImageFormat::Jpeg);
         assert_eq!(req.quality, 85);
     }
+    
+    #[test]
+    fn test_screenshot_request_deserialize_defaults() {
+        let json = r##"{"session": "main"}"##;
+        
+        let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.mode, CaptureMode::Viewport);
+        assert_eq!(req.format, ImageFormat::Png);
+        assert_eq!(req.quality, 90);
+        assert!(req.wait_for_images);
+        assert_eq!(req.timeout_ms, 30000);
+    }
+    
+    #[test]
+    fn test_screenshot_request_with_device() {
+        let json = r##"{"session": "main", "device": "iphone_14"}"##;
+        
+        let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.device, Some("iphone_14".to_string()));
+    }
+    
+    #[test]
+    fn test_screenshot_request_with_viewport() {
+        let json = r##"{
+            "session": "main",
+            "viewport": {"width": 1920, "height": 1080}
+        }"##;
+        
+        let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
+        let viewport = req.viewport.unwrap();
+        assert_eq!(viewport.width, 1920);
+        assert_eq!(viewport.height, 1080);
+        assert_eq!(viewport.device_scale_factor, 1.0); // default
+    }
+    
+    #[test]
+    fn test_viewport_deserialize() {
+        let json = r##"{"width": 375, "height": 667, "device_scale_factor": 2.0, "is_mobile": true, "has_touch": true}"##;
+        
+        let viewport: Viewport = serde_json::from_str(json).unwrap();
+        assert_eq!(viewport.width, 375);
+        assert_eq!(viewport.height, 667);
+        assert_eq!(viewport.device_scale_factor, 2.0);
+        assert!(viewport.is_mobile);
+        assert!(viewport.has_touch);
+    }
+    
+    #[test]
+    fn test_default_functions() {
+        assert_eq!(default_quality(), 90);
+        assert!(default_true());
+        assert_eq!(default_timeout(), 30000);
+        assert_eq!(default_scale(), 1.0);
+    }
 }
+
