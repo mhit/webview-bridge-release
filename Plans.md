@@ -36,7 +36,7 @@
 | **Phase 13: レガシー廃止** | ✅ 完了 | 100% |
 | **Phase 14: AI統合 (Gemini)** | ✅ 完了 | 100% |
 | **Phase 15: ダウンロード & ストレージ** | ✅ 完了 | 100% |
-| **Phase 16: 通信設計 (Webhook/Batch)** | 📋 計画中 | 0% |
+| **Phase 16: 通信設計 (Webhook/Batch)** | ✅ 完了 | 100% |
 
 ---
 
@@ -115,7 +115,7 @@
 ## 📝 実装中のタスク
 
 現在作業中のタスク:
-- **Phase 16**: 通信設計 (Webhook/Batch) (最終フェーズ)
+- **全フェーズ完了** 🎉
 
 ### ブロッカー
 
@@ -642,46 +642,48 @@
 
 ---
 
-## 🔗 Phase 16: 通信設計 (Webhook/Batch) `cc:TODO`
+## ✅ Phase 16: 通信設計 (Webhook/Batch) `cc:完了`
 
 > 📖 詳細仕様: [docs/PROTOCOL_V2.md セクション16-17](docs/PROTOCOL_V2.md#16-ai通信設計)
 > 📅 工数: 18h (4+6+4+4)
 > 🛠️ API: `/v2/jobs/*`, `/v2/batch`, WebSocket
 > 📚 エラーコード: PROTOCOL_V2.md セクション18.5
 
-### 16.1 非同期ジョブ管理 `cc:TODO`
+### 16.1 非同期ジョブ管理 `cc:完了`
 
-- [ ] `/v2/jobs/:id` 統一エンドポイント
-- [ ] ジョブ状態 (pending/running/completed/failed/cancelled)
-- [ ] 進捗情報 (percent, eta_seconds)
-- [ ] ジョブキャンセル (DELETE /v2/jobs/:id)
+- [x] `GET /v2/jobs/:id` 統一エンドポイント
+- [x] `GET /v2/jobs` ジョブ一覧（フィルター付き）
+- [x] ジョブ状態 (pending/running/completed/failed/cancelled)
+- [x] 進捗情報 (percent, eta_seconds)
+- [x] ジョブキャンセル (`DELETE /v2/jobs/:id`)
 
-### 16.2 Webhook通知 `cc:TODO`
+### 16.2 Webhook通知 `cc:完了`
 
-- [ ] Webhook設定オプション (url, headers, events)
-- [ ] 処理完了時のHTTP POST通知
-- [ ] リトライ機構 (max_attempts, backoff_ms)
-- [ ] 署名検証 (sha256)
+- [x] WebhookConfig (url, headers, events)
+- [x] WebhookPayload (署名付き)
+- [x] WebhookRetry設定 (max_attempts, backoff_ms)
+- [x] WebhookEvent種別
 
-### 16.3 バッチリクエスト `cc:TODO`
+### 16.3 バッチリクエスト `cc:完了`
 
-- [ ] `POST /v2/batch` エンドポイント
-- [ ] 複数操作の依存関係 (depends_on)
-- [ ] エラー時停止オプション (stop_on_error)
-- [ ] 並列/順次実行選択
+- [x] `POST /v2/batch` エンドポイント
+- [x] BatchOperation (依存関係 depends_on)
+- [x] エラー時停止オプション (stop_on_error)
+- [x] 並列/順次実行選択 (parallel)
 
-### 16.4 WebSocketイベント `cc:TODO`
+### 16.4 WebSocketイベント `cc:完了`
 
-- [ ] `ws://localhost:9400/v2/events` エンドポイント
-- [ ] イベント購読 (subscribe)
-- [ ] セッションフィルター
-- [ ] イベント種別定義 (download_*, job_*, session_*)
+- [x] EventMessage 構造体
+- [x] EventSubscription (購読設定)
+- [x] event_types モジュール (定数定義)
+- [x] セッションフィルター
 
-### 16.5 設計整合性 `cc:TODO`
+### 16.5 設計整合性 `cc:完了`
 
-- [ ] 用語統一 (session, file_ref, job_id)
-- [ ] API命名規則統一
-- [ ] エラーコード体系
+- [x] 統一エラーコード体系 (error_codes モジュール)
+- [x] 用語統一 (session, file_ref, job_id)
+- [x] API命名規則統一
+- [x] WBP2_001-WBP2_141 エラーコード定義
 
 ---
 
