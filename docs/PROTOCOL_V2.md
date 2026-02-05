@@ -872,7 +872,379 @@ Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$ref/audio.mp3" `
 
 ---
 
-## 7. SPA (Single Page Application) 対応
+## 6.7 ブラウザダウンロード機能
+
+### 問題点
+
+従来のスクレイピングライブラリの制限:
+- ダウンロードURLが直接わからないとダウンロードできない
+- JavaScript経由でのダウンロード（`blob:`, `data:`, 動的生成）が困難
+- 認証付きダウンロードでCookieの引き継ぎが困難
+
+### 解決: WebView2ネイティブダウンロード
+
+WebView2は実際のブラウザとして動作するため、**ボタンクリックでダウンロード開始**が可能。
+
+```http
+# ダウンロードトリガー（クリックでダウンロード開始）
+POST /v2/download/trigger
+{
+    "session": "document_portal",
+    "action": {
+        "type": "click",
+        "selector": "#download-button"
+    },
+    "options": {
+        "wait_for_download": true,     // ダウンロード完了まで待機
+        "timeout": 300000,             // 5分タイムアウト
+        "rename": "report_2026.pdf",   // ファイル名変更（オプション）
+        "session_ref": "downloads_001" // ファイル参照用
+    }
+}
+
+# レスポンス（ダウンロード完了後）
+{
+    "success": true,
+    "download": {
+        "original_filename": "report.pdf",
+        "saved_as": "report_2026.pdf",
+        "size": 2500000,
+        "mime_type": "application/pdf",
+        "duration_ms": 5234
+    },
+    "file_ref": "/v2/media/files/downloads_001/report_2026.pdf"
+}
+```
+
+### ダウンロードイベント監視
+
+```http
+# ダウンロード状態を監視（非同期）
+POST /v2/download/trigger
+{
+    "session": "document_portal",
+    "action": {"type": "click", "selector": "#download-button"},
+    "options": {
+        "wait_for_download": false,    // 即座に返却
+        "session_ref": "downloads_001"
+    }
+}
+
+# レスポンス（即座）
+{
+    "success": true,
+    "download_id": "dl_abc123",
+    "status": "started",
+    "progress_url": "/v2/download/status/dl_abc123"
+}
+
+# 進捗確認
+GET /v2/download/status/dl_abc123
+{
+    "download_id": "dl_abc123",
+    "status": "downloading",           // pending | downloading | completed | failed
+    "filename": "large_file.zip",
+    "progress": {
+        "downloaded": 52428800,        // 50MB
+        "total": 104857600,            // 100MB
+        "percent": 50,
+        "speed_bps": 10485760          // 10MB/s
+    },
+    "started_at": "2026-02-05T16:10:00Z",
+    "eta_seconds": 5
+}
+
+# 完了後
+{
+    "download_id": "dl_abc123",
+    "status": "completed",
+    "filename": "large_file.zip",
+    "file_ref": "/v2/media/files/downloads_001/large_file.zip",
+    "size": 104857600,
+    "completed_at": "2026-02-05T16:10:10Z"
+}
+```
+
+### WebSocket でのリアルタイム通知
+
+```javascript
+// WebSocket接続
+const ws = new WebSocket('ws://localhost:9400/v2/events');
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    if (data.type === 'download_progress') {
+        console.log(`${data.filename}: ${data.percent}%`);
+    }
+    
+    if (data.type === 'download_completed') {
+        console.log(`完了: ${data.file_ref}`);
+    }
+};
+```
+
+### WebView2 ダウンロードハンドリング（内部実装）
+
+```rust
+// WebView2のダウンロードイベント処理
+webview.add_DownloadStarting(|sender, args| {
+    let download = args.DownloadOperation()?;
+    
+    // ダウンロード先を設定
+    args.SetResultFilePath(&HSTRING::from(target_path))?;
+    
+    // 進捗監視
+    download.add_BytesReceivedChanged(|download, _| {
+        let received = download.BytesReceived()?;
+        let total = download.TotalBytesToReceive()?;
+        // 進捗を通知...
+        Ok(())
+    })?;
+    
+    // 完了監視
+    download.add_StateChanged(|download, _| {
+        match download.State()? {
+            COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED => {
+                // 完了通知...
+            }
+            COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED => {
+                // エラー処理...
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+    
+    Ok(())
+})?;
+```
+
+---
+
+## 6.8 ファイルストレージ管理
+
+### ストレージ構造
+
+```
+$WEBVIEW_BRIDGE_DATA/
+├── profiles/                    # ブラウザプロファイル（永続）
+│   ├── default/
+│   ├── rakuten/
+│   └── google/
+├── sessions/                    # セッション状態
+│   └── sessions.json
+├── media/                       # メディアファイル（管理対象）
+│   ├── downloads_001/           # session_refごと
+│   │   ├── report.pdf
+│   │   └── data.xlsx
+│   ├── video_analysis_123/
+│   │   ├── keyframe_0001.jpg
+│   │   └── audio.mp3
+│   └── screenshots/
+│       └── fullpage_001.png
+└── cache/                       # キャッシュ（自動削除）
+    └── temp/
+```
+
+### ファイルライフサイクル
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ファイルライフサイクル                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  [作成]                                                         │
+│     │                                                           │
+│     ▼                                                           │
+│  ┌────────────────────┐                                        │
+│  │ session_ref に紐づけ │                                       │
+│  │ TTL: 24時間 (デフォルト)│                                    │
+│  └────────────────────┘                                        │
+│     │                                                           │
+│     ├──────────────────────────────────────┐                   │
+│     │                                      │                   │
+│     ▼                                      ▼                   │
+│  [アクセスあり]                        [アクセスなし]           │
+│  TTL延長                               │                       │
+│     │                                      ▼                   │
+│     │                              ┌──────────────┐            │
+│     │                              │ TTL期限切れ   │            │
+│     │                              └──────────────┘            │
+│     │                                      │                   │
+│     ▼                                      ▼                   │
+│  [永続化リクエスト]                   [自動削除]               │
+│  POST /v2/media/persist                                        │
+│     │                                                           │
+│     ▼                                                           │
+│  ┌────────────────────┐                                        │
+│  │ permanent フラグ設定 │                                       │
+│  │ 手動削除のみ         │                                       │
+│  └────────────────────┘                                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ストレージ管理API
+
+```http
+# ストレージ状況確認
+GET /v2/storage/status
+{
+    "total_size": 5368709120,          // 5GB
+    "used_size": 1073741824,           // 1GB
+    "free_size": 4294967296,           // 4GB
+    "breakdown": {
+        "profiles": 524288000,         // 500MB
+        "media": 536870912,            // 512MB
+        "cache": 12582912              // 12MB
+    },
+    "session_refs": [
+        {
+            "ref": "downloads_001",
+            "size": 52428800,
+            "files_count": 3,
+            "created_at": "2026-02-05T16:00:00Z",
+            "expires_at": "2026-02-06T16:00:00Z",
+            "permanent": false
+        },
+        {
+            "ref": "video_analysis_123",
+            "size": 104857600,
+            "files_count": 25,
+            "created_at": "2026-02-05T15:00:00Z",
+            "expires_at": null,        // 永続化済み
+            "permanent": true
+        }
+    ]
+}
+
+# ファイルを永続化（TTL無効化）
+POST /v2/media/persist
+{
+    "session_ref": "downloads_001",
+    "files": ["report.pdf"],           // 特定ファイルのみ、または省略で全部
+    "reason": "重要レポート"           // メモ（オプション）
+}
+
+# レスポンス
+{
+    "success": true,
+    "persisted": ["report.pdf"],
+    "new_expires_at": null             // 永続化 = 期限なし
+}
+
+# TTL延長
+POST /v2/media/extend
+{
+    "session_ref": "downloads_001",
+    "extend_hours": 48                 // 48時間延長
+}
+
+# 手動削除
+DELETE /v2/media/files/downloads_001
+{
+    "success": true,
+    "deleted_files": 3,
+    "freed_bytes": 52428800
+}
+
+# 期限切れファイルの即時削除（メンテナンス用）
+POST /v2/storage/cleanup
+{
+    "success": true,
+    "deleted_refs": ["temp_001", "temp_002"],
+    "freed_bytes": 1073741824
+}
+```
+
+### ストレージ設定
+
+```http
+# ストレージ設定
+POST /v2/config/storage
+{
+    "base_path": "$USERPROFILE/.webview-bridge",
+    "limits": {
+        "max_total_size": 10737418240,  // 10GB
+        "max_file_size": 1073741824,    // 1GB
+        "max_session_refs": 100
+    },
+    "defaults": {
+        "ttl_hours": 24,                // デフォルトTTL
+        "auto_cleanup_interval": 3600   // 1時間ごとにクリーンアップ
+    },
+    "alerts": {
+        "warn_at_percent": 80,          // 80%使用で警告
+        "critical_at_percent": 95       // 95%で新規作成拒否
+    }
+}
+```
+
+環境変数:
+```bash
+WEBVIEW_BRIDGE_DATA_PATH=$USERPROFILE/.webview-bridge
+WEBVIEW_BRIDGE_MAX_STORAGE_GB=10
+WEBVIEW_BRIDGE_DEFAULT_TTL_HOURS=24
+```
+
+---
+
+## 6.9 ダウンロード＋ファイル管理の統合例
+
+### ユースケース: 複数PDFダウンロード
+
+```http
+# 複数ファイルをダウンロード
+POST /v2/download/batch
+{
+    "session": "document_portal",
+    "downloads": [
+        {"action": {"type": "click", "selector": "#report-2024"}},
+        {"action": {"type": "click", "selector": "#report-2025"}},
+        {"action": {"type": "click", "selector": "#report-2026"}}
+    ],
+    "options": {
+        "sequential": true,            // 順次ダウンロード
+        "session_ref": "annual_reports",
+        "ttl_hours": 168,              // 1週間保持
+        "notify_on_complete": true
+    }
+}
+
+# レスポンス
+{
+    "success": true,
+    "batch_id": "batch_001",
+    "downloads": [
+        {"status": "completed", "file": "report_2024.pdf", "size": 2500000},
+        {"status": "completed", "file": "report_2025.pdf", "size": 2800000},
+        {"status": "completed", "file": "report_2026.pdf", "size": 3100000}
+    ],
+    "total_size": 8400000,
+    "session_ref": "annual_reports",
+    "expires_at": "2026-02-12T16:00:00Z",
+    "files_ref": "/v2/media/files/annual_reports"
+}
+```
+
+### PowerShellからの利用
+
+```powershell
+# バッチダウンロード実行
+$result = Invoke-RestMethod -Uri "http://localhost:9400/v2/download/batch" `
+    -Method Post -Body $jsonBody -ContentType "application/json"
+
+# 完了後、ZIPでまとめて取得
+Invoke-WebRequest -Uri "http://localhost:9400/v2/media/files/$($result.session_ref)?format=zip" `
+    -OutFile "annual_reports.zip"
+
+# 一定期間後、サーバー側で自動削除（手動不要）
+```
+
+---
+
+
 
 ### 7.1 クライアントサイドレンダリング検出
 
