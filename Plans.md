@@ -309,20 +309,20 @@
 > 📅 工数: 13h (4+4+2+3)
 > 🛠️ API: `/v2/session/*`
 
-### 7.1 名前付きセッション `cc:TODO`
+### 7.1 名前付きセッション `cc:WIP`
 
-- [ ] `POST /v2/session/acquire` 実装
-- [ ] `POST /v2/session/release` 実装
-- [ ] `DELETE /v2/session/destroy` 実装
-- [ ] `GET /v2/session/list` 実装
-- [ ] 既存セッション再利用ロジック
+- [x] `POST /v2/session/acquire` 実装
+- [x] `POST /v2/session/release` 実装
+- [x] `DELETE /v2/session/destroy` 実装
+- [x] `GET /v2/session/list` 実装
+- [ ] 既存セッション再利用ロジック (v1 SessionManager統合)
 
-### 7.2 セッション永続化 `cc:TODO`
+### 7.2 セッション永続化 `cc:完了`
 
-- [ ] sessions.json ファイル定義
-- [ ] サーバー起動時のセッション復元
-- [ ] セッション状態の自動保存
-- [ ] プロファイルとセッションの関連付け
+- [x] sessions.json ファイル定義 (SessionsFile 構造体)
+- [x] サーバー起動時のセッション復元 (load_sessions)
+- [x] セッション状態の自動保存 (save_sessions, acquire/release/destroy 時)
+- [x] プロファイルとセッションの関連付け (NamedSessionMeta.profile)
 
 ### 7.3 認証状態チェック `cc:TODO`
 
