@@ -122,8 +122,8 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         }
     });
     
-    Router::new()
-        .route("/health", get(health_check))
+    // V1 API routes with deprecation layer
+    let v1_routes = Router::new()
         .route("/create", post(create_session))
         .route("/navigate/:id", post(navigate))
         .route("/status/:id", get(get_status))
@@ -141,8 +141,52 @@ pub fn create_router(cmd_tx: mpsc::UnboundedSender<AppCommand>, main_thread_id: 
         .route("/profile/create", post(create_profile))
         .route("/profile/:name", delete(delete_profile))
         .with_state(state)
+        .layer(axum::middleware::from_fn(deprecation_middleware));
+    
+    Router::new()
+        .route("/health", get(health_check))
+        .merge(v1_routes)
         // MCP (Model Context Protocol) endpoints
         .merge(crate::mcp::mcp_router(bounded_tx))
+}
+
+/// Middleware to add deprecation headers to v1 API responses
+async fn deprecation_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl IntoResponse {
+    let path = request.uri().path().to_string();
+    
+    // Log deprecation warning
+    tracing::warn!(
+        target: "wbp2::deprecation",
+        path = %path,
+        "V1 API endpoint called - please migrate to /v2/ endpoints. See docs/MIGRATION_V1_TO_V2.md"
+    );
+    
+    let response = next.run(request).await;
+    
+    // Add deprecation headers
+    let mut response = response;
+    let headers = response.headers_mut();
+    headers.insert(
+        "X-Deprecated",
+        "true".parse().unwrap(),
+    );
+    headers.insert(
+        "X-Deprecation-Notice",
+        "This API is deprecated. Please migrate to /v2/ endpoints. See docs/MIGRATION_V1_TO_V2.md".parse().unwrap(),
+    );
+    headers.insert(
+        "Deprecation",
+        "true".parse().unwrap(),
+    );
+    headers.insert(
+        "Sunset",
+        "TBD".parse().unwrap(),
+    );
+    
+    response
 }
 
 async fn health_check() -> &'static str {
