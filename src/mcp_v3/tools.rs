@@ -670,6 +670,15 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                 }
             }
             
+            // Show first predicted action
+            if let Some(actions) = el["interactivity"]["predicted_actions"].as_array() {
+                if let Some(first) = actions.first() {
+                    if let Some(action) = first["action"].as_str() {
+                        line.push_str(&format!(" → {}", action));
+                    }
+                }
+            }
+            
             text.push_str(&line);
             text.push('\n');
         }

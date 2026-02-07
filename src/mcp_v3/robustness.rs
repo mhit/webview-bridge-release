@@ -530,8 +530,11 @@ pub fn generate_extract_interactive_elements_script() -> String {
     };
 
     const generateSelector = (el) => {
-        if (el.id) return `#${el.id}`;
-        if (el.name) return `${el.tagName.toLowerCase()}[name="${el.name}"]`;
+        // Escape special characters in ID/name for CSS selectors
+        const escapeCSS = (str) => str.replace(/([\[\]"'\\#.:>+~()=])/g, '\\$1');
+        
+        if (el.id) return `#${escapeCSS(el.id)}`;
+        if (el.name) return `${el.tagName.toLowerCase()}[name="${escapeCSS(el.name)}"]`;
         
         // Use class if unique
         if (el.className && typeof el.className === 'string') {
@@ -837,6 +840,9 @@ pub fn generate_extract_interactive_elements_script() -> String {
             
             // Must be reasonably sized
             if (rect.width < 20 || rect.height < 15) return false;
+            
+            // Skip hidden inputs
+            if (el.type === 'hidden') return false;
             
             return true;
         })
