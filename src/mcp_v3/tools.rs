@@ -1266,9 +1266,10 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
     }
     
     match req.action {
-        AgentAction::Start { goal, context, max_steps } => {
+        AgentAction::Start { goal, context, max_steps, system_prompt } => {
             let max_steps = max_steps.unwrap_or(5);
             let context_text = context.unwrap_or_default();
+            let custom_prompt = system_prompt.unwrap_or_default();
             
             // Agent loop
             let mut steps = Vec::new();
@@ -1323,7 +1324,7 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                 };
                 
                 let ai_prompt = format!(r#"あなたはブラウザ自動操作エージェントです。
-
+{}
 【目標】
 {}
 
@@ -1344,10 +1345,12 @@ URL: {}
 - 目標達成: {{"done": true, "result": "達成した結果の説明"}}
 - クリック: {{"action": "click", "selector": "CSSセレクタ", "reason": "理由"}}
 - 入力: {{"action": "type", "selector": "CSSセレクタ", "value": "入力値", "reason": "理由"}}
+- 入力後Enter: {{"action": "type", "selector": "CSSセレクタ", "value": "入力値", "submit": true, "reason": "理由"}}
 - ナビゲート: {{"action": "navigate", "url": "URL", "reason": "理由"}}
 - 失敗: {{"failed": true, "reason": "失敗理由"}}
 
 JSON以外は出力しないでください。"#,
+                    if custom_prompt.is_empty() { String::new() } else { format!("\n【追加指示】\n{}\n", custom_prompt) },
                     goal,
                     context_text,
                     page_data["url"].as_str().unwrap_or("unknown"),
@@ -1445,6 +1448,8 @@ JSON以外は出力しないでください。"#,
                     "type" => {
                         let selector = ai_json["selector"].as_str().unwrap_or("");
                         let value = ai_json["value"].as_str().unwrap_or("");
+                        let should_submit = ai_json["submit"].as_bool().unwrap_or(false);
+                        
                         let type_script = format!(r#"
                             (function() {{
                                 const el = document.querySelector('{}');
@@ -1452,11 +1457,19 @@ JSON以外は出力しないでください。"#,
                                     el.focus();
                                     el.value = '{}';
                                     el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                                    return JSON.stringify({{success: true}});
+                                    {}
+                                    return JSON.stringify({{success: true, submitted: {}}});
                                 }}
                                 return JSON.stringify({{success: false, error: 'Element not found'}});
                             }})();
-                        "#, selector.replace('\'', "\\'"), value.replace('\'', "\\'"));
+                        "#, 
+                            selector.replace('\'', "\\'"), 
+                            value.replace('\'', "\\'"),
+                            if should_submit { 
+                                "el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true})); if (el.form) el.form.submit();" 
+                            } else { "" },
+                            should_submit
+                        );
                         
                         let result = execute_script(&req.session, type_script, state, 5000).await;
                         steps.push(serde_json::json!({
@@ -1464,9 +1477,15 @@ JSON以外は出力しないでください。"#,
                             "action": "type",
                             "selector": selector,
                             "value": value,
+                            "submit": should_submit,
                             "reason": ai_json["reason"],
                             "result": result.unwrap_or_else(|e| e)
                         }));
+                        
+                        // Wait for response if submitted
+                        if should_submit {
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                        }
                     }
                     "navigate" => {
                         let url = ai_json["url"].as_str().unwrap_or("");
@@ -1720,7 +1739,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "agent",
-            "description": "[Future] Agentic mode for goal-based browser automation with internal AI",
+            "description": "Goal-based browser automation with internal AI. Provide a goal and the agent will autonomously navigate, click, type to achieve it. Use system_prompt to customize AI behavior for specific tasks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1729,9 +1748,10 @@ pub fn get_mcp_tools() -> serde_json::Value {
                         "type": "object",
                         "properties": {
                             "type": { "type": "string", "enum": ["start", "resume", "status", "cancel"] },
-                            "goal": { "type": "string" },
-                            "context": { "type": "string" },
-                            "max_steps": { "type": "integer" }
+                            "goal": { "type": "string", "description": "The goal to achieve, e.g. 'Search for Rust on DuckDuckGo'" },
+                            "context": { "type": "string", "description": "Additional context about the current situation" },
+                            "max_steps": { "type": "integer", "description": "Maximum number of steps (default: 5)" },
+                            "system_prompt": { "type": "string", "description": "Custom instructions for the internal AI agent. Use this to specialize behavior for specific tasks." }
                         }
                     }
                 },

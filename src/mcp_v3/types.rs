@@ -362,6 +362,8 @@ pub enum AgentAction {
         context: Option<String>,
         #[serde(default)]
         max_steps: Option<u32>,
+        #[serde(default)]
+        system_prompt: Option<String>,
     },
     Resume,
     Status,
