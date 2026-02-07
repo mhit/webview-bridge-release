@@ -194,13 +194,24 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 
 ### 3. `capture` - 状態取得（Direct）
 
-ページの状態を取得。**MCPコンテンツタイプでメディア分離**。
+ページの状態を取得。**スクリーンショットはファイル保存+URL返却**。
 
-#### 設計原則: コンテキストドレイン防止
+#### 設計原則
 
-MCPプロトコルの`content`配列を活用し、テキストと画像を分離:
-- `type: "text"` → AIのテキストコンテキストへ
-- `type: "image"` → AIのビジョン処理へ（テキストコンテキスト消費なし）
+1. **コンテキストドレイン防止**: レスポンスにbase64画像を含めない
+2. **ファイル参照方式**: スクリーンショットはセッションフォルダに保存、URLで参照
+3. **AI最適化テキスト**: 操作可能要素とラベルのみ、冗長なDOM不要
+
+#### ファイル保存構造
+
+```
+sessions/
+└── my-session/
+    └── captures/
+        ├── cap_20240207_104300.png
+        ├── cap_20240207_104315.png
+        └── ...
+```
 
 #### 基本リクエスト
 ```json
@@ -210,21 +221,29 @@ MCPプロトコルの`content`配列を活用し、テキストと画像を分�
 }
 ```
 
-#### MCPレスポンス
+#### レスポンス
 ```json
 {
   "content": [
     {
       "type": "text",
-      "text": "URL: https://example.com/login\nTitle: ログイン - Example\n\n【状態】\nログインページ。メールとパスワードの入力欄あり。\n\n【操作可能要素】\n- input#email (空)\n- input#password (空)\n- button#login-btn 「ログイン」\n- a.forgot 「パスワードを忘れた方」"
-    },
-    {
-      "type": "image",
-      "data": "iVBORw0KGgo...",
-      "mimeType": "image/png"
+      "text": "URL: https://example.com/login\nTitle: ログイン - Example\n\n【操作可能要素】\n- input#email placeholder='メールアドレス' (空)\n- input#password type=password (空)\n- button#login-btn 「ログイン」\n- a.forgot 「パスワードを忘れた方」\n\n【スクリーンショット】\nhttp://127.0.0.1:9400/files/my-session/cap_20240207_104300.png"
     }
   ]
 }
+```
+
+#### AIがVision処理したい場合
+
+1. レスポンスのURLを取得
+2. Gemini Vision等に直接URLを渡す
+3. または `GET /files/{session}/{filename}` で画像取得
+
+```
+// AIの処理イメージ
+capture_result = capture(session="my-session")
+screenshot_url = extract_url(capture_result)
+vision_analysis = gemini_vision(screenshot_url)
 ```
 
 #### テキスト部分の最適化
@@ -234,10 +253,11 @@ AIが判断に必要な情報のみ含める:
 | 含める | 含めない |
 |--------|----------|
 | URL、タイトル | 全ページHTML |
-| 状態要約（1-2文） | 全テキスト内容 |
-| 操作可能要素リスト | 装飾要素 |
-| エラーメッセージ | Cookie詳細 |
-| フォーム状態 | 隠し要素 |
+| 操作可能要素リスト | 全テキスト内容 |
+| 要素のラベル・placeholder | 装飾要素 |
+| フォーム状態（値、選択状態） | Cookie詳細 |
+| エラーメッセージ | 隠し要素 |
+| **スクリーンショットURL** | base64画像データ |
 
 **テキスト部分の目安サイズ: 500-2000文字**
 
@@ -247,7 +267,7 @@ AIが判断に必要な情報のみ含める:
 {
   "tool": "capture",
   "include": ["cookies", "full_text"],
-  "screenshot": false,
+  "screenshot": true,  // default: true
   "text_max_chars": 5000,
   "selector": "#main"
 }
@@ -255,9 +275,19 @@ AIが判断に必要な情報のみ含める:
 
 | パラメータ | 説明 |
 |-----------|------|
-| `screenshot` | スクリーンショット含める（default: true） |
+| `screenshot` | スクリーンショット保存+URL返却（default: true） |
 | `include` | 追加項目: cookies, full_text, html, images |
 | `text_max_chars` | full_text時の最大文字数 |
+| `selector` | 特定領域のみ |
+| `full_page` | フルページスクリーンショット |
+
+#### ファイル管理
+
+- **保存先**: `sessions/{session}/captures/`
+- **ファイル名**: `cap_{timestamp}.png`
+- **アクセス**: `GET /files/{session}/{filename}`
+- **クリーンアップ**: セッション解放時に自動削除（オプション）
+- **保持数制限**: 最新N件のみ保持（設定可能）
 | `selector` | 特定領域のみ |
 | `full_page` | フルページスクリーンショット |
 
