@@ -318,9 +318,13 @@ async fn execute_action(
             let wait_script = generate_wait_for_clickable_script(target, timeout_ms);
             execute_script(session, wait_script, state, timeout_ms).await?;
             
-            // Type with events
+            // Type with events - extend timeout based on text length
+            // Each char takes ~10ms, plus overhead
+            let type_timeout = timeout_ms.max(5000 + (value.len() as u64 * 20));
+            tracing::info!("[type] Input length: {}, timeout: {}ms", value.len(), type_timeout);
+            
             let type_script = generate_type_with_events_script(target, value, *clear);
-            let result = execute_script(session, type_script, state, timeout_ms).await?;
+            let result = execute_script(session, type_script, state, type_timeout).await?;
             
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .map_err(|e| format!("Failed to parse type result: {}", e))?;
@@ -328,6 +332,10 @@ async fn execute_action(
             if !parsed["success"].as_bool().unwrap_or(false) {
                 return Err(parsed["error"].as_str().unwrap_or("Type failed").to_string());
             }
+            
+            tracing::info!("[type] Success: typed {} chars, final value: {}", 
+                parsed["length"].as_u64().unwrap_or(0),
+                parsed["value"].as_str().unwrap_or("?"));
             
             Ok(None)
         }
