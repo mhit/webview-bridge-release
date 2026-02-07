@@ -312,8 +312,22 @@ impl SessionManagerV2 {
         if let Some(mut session) = existing {
             if request.reuse {
                 // Reuse existing session
-                session.meta.last_accessed = now;
+                session.meta.last_accessed = now.clone();
                 session.acquired = true;
+                
+                // If handle is None (session loaded from disk), we need to create a new window
+                if session.handle.is_none() {
+                    // Create session options (v1 compatible)
+                    let options = SessionOptions {
+                        profile: session.meta.profile.clone(),
+                        headless: request.headless,
+                        user_agent: None,
+                    };
+                    
+                    // Create the actual session window
+                    let (_id, handle) = create_session_fn(options)?;
+                    session.handle = Some(handle);
+                }
                 
                 // Update in map
                 {

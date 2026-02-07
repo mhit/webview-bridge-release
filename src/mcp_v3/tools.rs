@@ -612,7 +612,7 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             create_if_missing: true,
             headless: req.headless,
             auth_check: None,
-            ttl_hours: 168,  // 1 week
+            ttl_hours: 168,  // 1 week (0 = no expiration)
             auto_extend: true,
             restore: req.restore,
         };
@@ -623,11 +623,21 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
         
         match manager.acquire(acquire_request, create_fn).await {
             Ok(response) => {
+                // Verify session is accessible via get_handle
+                let handle_check = manager.get_handle(&response.session);
+                let handle_status = if handle_check.is_some() { "OK" } else { "MISSING" };
+                
+                tracing::info!(
+                    "MCP session acquire: {} is_new={} handle={}",
+                    response.session, response.is_new, handle_status
+                );
+                
                 return McpToolResponse::success_text(format!(
-                    "Session '{}' acquired successfully\nis_new: {}\nprofile: {:?}",
+                    "Session '{}' acquired successfully\nis_new: {}\nprofile: {:?}\nhandle_status: {}",
                     response.session,
                     response.is_new,
-                    response.profile
+                    response.profile,
+                    handle_status
                 ));
             }
             Err(e) => return McpToolResponse::error("SESSION_ACQUIRE_FAILED", &e),
