@@ -4,7 +4,7 @@
 
 ## 概要
 
-セレクタだけでは判断できない「人間が見てクリックしたくなる要素」を、Vision LLMで分析・スコア化する機能。
+セレクタだけでは判断できない「人間が見てクリックしたくなる要素」を、DOM/CSS情報を抽出してLLMで分析・スコア化する機能。
 
 ## 背景・問題
 
@@ -28,11 +28,74 @@
 
 ## 解決策
 
-### アプローチ
+### アプローチ：DOM/CSS情報抽出 + テキストLLM分析
 
-1. 各インタラクティブ要素の**周辺画像**をキャプチャ
-2. **Vision LLM**に「クリック可能に見えるか？」を問い合わせ
-3. **スコア（0-1）と理由**を返却
+Vision LLMではなく、**DOM/CSSプロパティを構造化データとして抽出**し、通常のテキストLLMで分析する。
+
+### なぜVisionではなくDOM/CSS？
+
+| Vision LLM | DOM/CSS + テキストLLM |
+|------------|----------------------|
+| 画像エンコード必要 | テキストのみ、軽量 |
+| Vision対応モデル限定 | 任意のLLMで動作 |
+| 遅い（画像処理） | 高速 |
+| 高コスト | 低コスト |
+
+### 抽出するDOM/CSS情報
+
+```javascript
+function extractVisualProperties(element) {
+  const style = getComputedStyle(element);
+  const hoverStyle = getHoverStyles(element); // 疑似クラス
+  const rect = element.getBoundingClientRect();
+  
+  return {
+    // 基本情報
+    tag: element.tagName.toLowerCase(),
+    text: element.textContent?.trim().slice(0, 50),
+    role: element.getAttribute('role'),
+    ariaLabel: element.getAttribute('aria-label'),
+    
+    // サイズ・位置
+    size: { width: rect.width, height: rect.height },
+    
+    // ボタンらしさの指標
+    cursor: style.cursor,  // "pointer" = クリック可能
+    hasOnClick: !!element.onclick || element.hasAttribute('onclick'),
+    
+    // 視覚スタイル
+    backgroundColor: style.backgroundColor,
+    borderRadius: style.borderRadius,
+    border: style.border,
+    boxShadow: style.boxShadow,
+    
+    // テキストスタイル
+    fontWeight: style.fontWeight,
+    textTransform: style.textTransform,
+    color: style.color,
+    
+    // ホバー効果（重要！）
+    hoverChanges: {
+      backgroundColor: hoverStyle?.backgroundColor !== style.backgroundColor,
+      transform: hoverStyle?.transform !== 'none',
+      boxShadow: hoverStyle?.boxShadow !== style.boxShadow,
+      scale: hoverStyle?.transform?.includes('scale'),
+    },
+    
+    // アイコン・画像
+    hasIcon: hasIconChild(element),  // svg, img, ::before/after
+    hasImage: !!element.querySelector('img'),
+    
+    // インタラクティブ属性
+    isDisabled: element.disabled || element.getAttribute('aria-disabled') === 'true',
+    tabIndex: element.tabIndex,
+    
+    // コンテキスト
+    parentTag: element.parentElement?.tagName.toLowerCase(),
+    position: style.position,
+  };
+}
+```
 
 ### データフロー
 
@@ -43,26 +106,27 @@ capture(analyze_interactivity=true)
 ┌─────────────────────────────────────────────────────┐
 │ 1. ページからインタラクティブ要素を抽出              │
 │    - button, a, input, [onclick], [role=button]...  │
+│    - cursor:pointer の要素                          │
 └─────────────────────────┬───────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────┐
-│ 2. 各要素の周辺領域をキャプチャ                      │
-│    - 要素のboundingRect取得                         │
-│    - padding追加（周辺コンテキスト含める）            │
-│    - 個別にスクリーンショット（base64）              │
+│ 2. 各要素のDOM/CSS情報を抽出                         │
+│    - computed styles                                │
+│    - hover時のスタイル変化                          │
+│    - アイコン・画像の有無                           │
+│    - ARIA属性                                      │
 └─────────────────────────┬───────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────┐
-│ 3. Vision LLMに送信（バッチ or 個別）               │
+│ 3. テキストLLMに送信（バッチ）                      │
 │                                                     │
 │  プロンプト:                                        │
-│  「この画像の中央にある要素は、人間がクリック        │
-│   したくなるように見えますか？                      │
-│   0から1のスコアと、その理由を返してください。       │
-│   ボタン形状、色のコントラスト、アイコン、          │
-│   ホバー効果の示唆などを考慮してください。」        │
+│  「以下のDOM/CSS情報から、各要素が人間にとって      │
+│   クリックしたくなるように見えるか評価してください。 │
+│   ボタン形状、色のコントラスト、ホバー効果、        │
+│   cursor:pointer などを考慮してください。」         │
 └─────────────────────────┬───────────────────────────┘
                           │
                           ▼
@@ -82,10 +146,8 @@ capture(analyze_interactivity=true)
     "session": "default",
     "analyze_interactivity": true,
     "interactivity_options": {
-      "max_elements": 20,           // 分析対象の最大数
-      "min_size": [30, 20],         // 最小サイズ（px）
-      "padding": 10,                // 周辺キャプチャのpadding
-      "include_hover_state": true   // ホバー時の見た目も分析
+      "max_elements": 20,
+      "min_size": [30, 20]
     }
   }
 }
@@ -103,199 +165,188 @@ capture(analyze_interactivity=true)
       "selector": "div.custom-btn",
       "tag": "div",
       "text": "今すぐ購入",
-      "rect": {"x": 100, "y": 200, "width": 150, "height": 40},
+      "visual_properties": {
+        "cursor": "pointer",
+        "backgroundColor": "rgb(255, 102, 0)",
+        "borderRadius": "8px",
+        "boxShadow": "0 2px 4px rgba(0,0,0,0.2)",
+        "hoverChanges": {
+          "backgroundColor": true,
+          "transform": true
+        },
+        "fontWeight": "700"
+      },
       "interactivity": {
         "score": 0.95,
-        "confidence": "high",
-        "reason": "ボタン形状、オレンジ色の背景、太字テキスト、角丸デザイン",
-        "visual_cues": ["button_shape", "high_contrast", "call_to_action_text"]
+        "reason": "cursor:pointer、オレンジ背景、角丸、影、太字、ホバーで変化"
       }
     },
     {
       "index": 2,
       "selector": "span.label",
-      "tag": "span", 
+      "tag": "span",
       "text": "商品説明",
-      "rect": {"x": 50, "y": 300, "width": 80, "height": 20},
+      "visual_properties": {
+        "cursor": "default",
+        "backgroundColor": "transparent",
+        "borderRadius": "0",
+        "hoverChanges": {}
+      },
       "interactivity": {
-        "score": 0.12,
-        "confidence": "high",
-        "reason": "装飾なし、背景と同色、静的テキストに見える",
-        "visual_cues": ["no_decoration", "low_contrast"]
-      }
-    },
-    {
-      "index": 3,
-      "selector": "div.dropdown",
-      "tag": "div",
-      "text": "カテゴリ ▼",
-      "rect": {"x": 200, "y": 50, "width": 120, "height": 35},
-      "interactivity": {
-        "score": 0.78,
-        "confidence": "medium",
-        "reason": "ドロップダウン矢印アイコン、枠線あり",
-        "visual_cues": ["dropdown_arrow", "border"]
+        "score": 0.08,
+        "reason": "cursor:default、装飾なし、ホバー効果なし"
       }
     }
   ]
 }
 ```
 
-## 技術詳細
+## ホバースタイル取得
 
-### 1. 要素キャプチャ方法
+### 課題
+
+`getComputedStyle`は現在の状態しか取得できない。`:hover`時のスタイルを取得するには工夫が必要。
+
+### 解決策
 
 ```javascript
-// JavaScript側
-function captureElementRegion(selector, padding = 10) {
-  const el = document.querySelector(selector);
-  const rect = el.getBoundingClientRect();
+function getHoverStyles(element) {
+  // 方法1: CSSStyleSheetから:hoverルールを検索
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) {
+        if (rule.selectorText?.includes(':hover') && 
+            element.matches(rule.selectorText.replace(':hover', ''))) {
+          return rule.style;
+        }
+      }
+    } catch (e) {
+      // Cross-origin stylesheetは読めない
+    }
+  }
   
-  // paddingを追加した領域
-  const captureRect = {
-    x: Math.max(0, rect.left - padding),
-    y: Math.max(0, rect.top - padding),
-    width: rect.width + padding * 2,
-    height: rect.height + padding * 2
+  // 方法2: 一時的にhover状態をシミュレート（マウス位置移動）
+  // → やや重いがより正確
+  
+  // 方法3: transition/animation プロパティの存在で推測
+  const style = getComputedStyle(element);
+  return {
+    hasTransition: style.transition !== 'none' && style.transition !== 'all 0s ease 0s',
+    hasAnimation: style.animation !== 'none'
   };
-  
-  // その領域だけをキャプチャ（Canvas API or WebView2 API）
-  return captureRegion(captureRect);
 }
 ```
 
-### 2. Vision LLMプロンプト
+## ルールベース事前スコアリング
+
+LLMを呼ぶ前に、ルールベースで事前スコアを計算して効率化：
+
+```javascript
+function preScore(props) {
+  let score = 0;
+  
+  // cursor: pointer は強力な指標
+  if (props.cursor === 'pointer') score += 0.3;
+  
+  // 角丸がある
+  if (parseFloat(props.borderRadius) > 0) score += 0.1;
+  
+  // 影がある
+  if (props.boxShadow !== 'none') score += 0.1;
+  
+  // ホバーで変化する
+  if (Object.values(props.hoverChanges).some(v => v)) score += 0.2;
+  
+  // 背景色がある（透明でない）
+  if (!props.backgroundColor.includes('transparent') && 
+      !props.backgroundColor.includes('rgba(0, 0, 0, 0)')) score += 0.1;
+  
+  // CTAテキスト
+  const ctaWords = ['購入', '申込', '登録', '送信', 'submit', 'buy', 'add', 'cart'];
+  if (ctaWords.some(w => props.text?.toLowerCase().includes(w))) score += 0.15;
+  
+  // onclick属性
+  if (props.hasOnClick) score += 0.2;
+  
+  return Math.min(1, score);
+}
+```
+
+## LLMプロンプト
 
 ```
-あなたはUIデザインの専門家です。以下の画像の中央にある要素を分析してください。
-
-質問: この要素は、ユーザーがクリック/タップしたくなるように見えますか？
+あなたはUI/UXデザインの専門家です。以下のDOM/CSS情報から、各要素が人間にとって「クリックしたくなる」ように見えるか評価してください。
 
 評価基準:
-- ボタンらしい形状（角丸、影、立体感）
-- 色のコントラスト（背景との差）
-- テキスト内容（「購入」「送信」などのCTA）
-- アイコンの存在
-- 枠線やホバー効果の示唆
-- サイズの適切さ
+- cursor: pointer → 強くクリック可能を示唆
+- borderRadius > 0 → ボタンらしい形状
+- boxShadow → 立体感、押せそう
+- ホバー時のスタイル変化 → インタラクティブ
+- backgroundColor（透明でない）→ 目立つ
+- fontWeight: bold → 重要なアクション
+- テキスト内容（購入、送信など）→ CTA
 
-出力形式（JSON）:
-{
-  "score": 0.0-1.0,
-  "confidence": "high" | "medium" | "low",
-  "reason": "分析理由を日本語で",
-  "visual_cues": ["検出した視覚的手がかりの配列"]
-}
+入力:
+[要素1]
+tag: div
+text: "今すぐ購入"
+cursor: pointer
+backgroundColor: rgb(255, 102, 0)
+borderRadius: 8px
+boxShadow: 0 2px 4px rgba(0,0,0,0.2)
+hoverChanges: { backgroundColor: true, transform: true }
+fontWeight: 700
+
+[要素2]
+tag: span
+text: "商品説明"
+cursor: default
+backgroundColor: transparent
+borderRadius: 0
+hoverChanges: {}
+fontWeight: 400
+
+出力形式（JSON配列）:
+[
+  {"index": 1, "score": 0.95, "reason": "..."},
+  {"index": 2, "score": 0.08, "reason": "..."}
+]
 ```
 
-### 3. 対応Vision LLM
+## パフォーマンス
 
-| プロバイダ | モデル | 備考 |
-|-----------|-------|------|
-| Ollama | LLaVA, Bakllava | ローカル、無料 |
-| Gemini | gemini-2.0-flash | 高速、安価 |
-| OpenAI | gpt-4o-mini | 高精度 |
+| 処理 | 時間目安 |
+|------|---------|
+| DOM/CSS抽出（20要素） | ~50ms |
+| ルールベース事前スコア | ~5ms |
+| LLM分析（テキスト） | ~500ms-2s |
+| **合計** | **~1-3秒** |
 
-### 4. config.toml設定
-
-```toml
-[ai.vision]
-enabled = true
-provider = "ollama"          # ollama, gemini, openai
-model = "llava:13b"          # Vision対応モデル
-# api_key = "..."            # Gemini/OpenAI用
-```
-
-## パフォーマンス考慮
-
-### 最適化戦略
-
-| 戦略 | 説明 |
-|------|------|
-| **要素数制限** | `max_elements`でN件に限定（デフォルト20） |
-| **サイズフィルタ** | 小さすぎる要素は除外（クリック困難） |
-| **バッチ処理** | 複数要素を1回のLLMコールで分析 |
-| **キャッシュ** | 同一ページ・同一要素は再分析しない |
-| **事前フィルタ** | CSSで明らかにnon-interactiveな要素は除外 |
-
-### 事前フィルタ例
-
-```javascript
-// 分析不要な要素を除外
-function shouldAnalyze(el) {
-  const style = getComputedStyle(el);
-  
-  // 非表示
-  if (style.display === 'none' || style.visibility === 'hidden') return false;
-  
-  // 小さすぎる
-  const rect = el.getBoundingClientRect();
-  if (rect.width < 30 || rect.height < 20) return false;
-  
-  // pointer-events: none
-  if (style.pointerEvents === 'none') return false;
-  
-  return true;
-}
-```
-
-## 想定所要時間
-
-| 要素数 | Ollama (LLaVA 13B) | Gemini Flash |
-|--------|-------------------|--------------|
-| 5件 | ~3秒 | ~1秒 |
-| 10件 | ~6秒 | ~2秒 |
-| 20件 | ~12秒 | ~4秒 |
-
-※ バッチ処理で軽減可能
+Vision LLMの場合は5-15秒かかるため、**大幅に高速化**。
 
 ## 実装フェーズ
 
-### Phase 1: 基本実装
-- [ ] 要素の個別キャプチャ機能
-- [ ] Vision LLM連携（Ollama）
-- [ ] 基本的なスコアリング
+### Phase 1: DOM/CSS抽出
+- [ ] extractVisualProperties関数
+- [ ] ホバースタイル推定
+- [ ] ルールベース事前スコア
 
-### Phase 2: 最適化
+### Phase 2: LLM分析
+- [ ] プロンプト設計
 - [ ] バッチ処理
-- [ ] キャッシュ機能
-- [ ] 事前フィルタ
+- [ ] レスポンスパース
 
-### Phase 3: 拡張
-- [ ] ホバー状態分析
-- [ ] Gemini/OpenAI対応
-- [ ] スコアに基づくソート
-
-## 使用例
-
-### AIエージェントでの活用
-
-```
-AI: capture(analyze_interactivity=true)
-
-レスポンス:
-{
-  "elements": [
-    {"selector": ".buy-btn", "interactivity": {"score": 0.95, ...}},
-    {"selector": ".info-text", "interactivity": {"score": 0.1, ...}},
-    ...
-  ]
-}
-
-AI: 「score 0.95の.buy-btnが購入ボタンだな」
-    → interact(click=".buy-btn")
-```
-
-### Agenticモードでの活用
-
-内部AIがcapture時に自動でinteractivity分析を行い、より正確な要素選択が可能になる。
+### Phase 3: 統合
+- [ ] capture APIに統合
+- [ ] agent内部で自動活用
+- [ ] キャッシュ
 
 ## まとめ
 
 | 項目 | 内容 |
 |------|------|
 | **目的** | セレクタだけでは判断できない視覚的操作性を分析 |
-| **手法** | 要素周辺キャプチャ + Vision LLM |
-| **出力** | スコア（0-1）、理由、視覚的手がかり |
-| **利点** | AIがより正確に操作対象を特定可能 |
-| **トレードオフ** | 分析時間が増加（要素数に比例） |
+| **手法** | DOM/CSS抽出 + ルールベース + テキストLLM |
+| **Visionとの違い** | 軽量、高速、任意のLLMで動作 |
+| **出力** | スコア（0-1）、理由 |
+| **性能** | 20要素で1-3秒 |
