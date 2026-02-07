@@ -1323,12 +1323,31 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                     daily_usage_usd: 0.0,
                 };
                 
+                // Build history of past actions for this session
+                let history_text = if steps.is_empty() {
+                    "（初回アクション）".to_string()
+                } else {
+                    steps.iter().map(|s| {
+                        let action = s["action"].as_str().unwrap_or("?");
+                        let result = s.get("result").map(|r| r.to_string()).unwrap_or_default();
+                        let success = result.contains("success");
+                        format!("Step {}: {} - {}", 
+                            s["step"].as_u64().unwrap_or(0),
+                            action,
+                            if success { "成功" } else { "失敗" }
+                        )
+                    }).collect::<Vec<_>>().join("\n")
+                };
+                
                 let ai_prompt = format!(r#"あなたはブラウザ自動操作エージェントです。
 {}
 【目標】
 {}
 
 【コンテキスト】
+{}
+
+【これまでの操作履歴】
 {}
 
 【現在のページ状態】
@@ -1338,6 +1357,12 @@ URL: {}
 
 【操作可能な要素】
 {}
+
+【重要な注意】
+- 同じアクションを繰り返さないでください
+- 入力後はsubmit:trueでEnterを押すか、検索ボタンをクリックしてください
+- ページが変わったら目標達成かどうかを判断してください
+- 検索結果が表示されたら目標達成です
 
 【指示】
 次にどのアクションを実行すべきか、JSONで回答してください。
@@ -1353,6 +1378,7 @@ JSON以外は出力しないでください。"#,
                     if custom_prompt.is_empty() { String::new() } else { format!("\n【追加指示】\n{}\n", custom_prompt) },
                     goal,
                     context_text,
+                    history_text,
                     page_data["url"].as_str().unwrap_or("unknown"),
                     page_data["title"].as_str().unwrap_or("unknown"),
                     page_data["text"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),
