@@ -179,6 +179,20 @@ async fn run_http_server(config: Config) {
     tracing::info!("API: http://{}/", addr);
     tracing::info!("MCP: webview-bridge-rust.exe --mcp-stdio (requires server running)");
 
+    // Start auto-suspend timer (suspends idle sessions after 5 minutes)
+    let idle_timeout_secs = 300u64; // 5 minutes
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60)); // Check every minute
+        loop {
+            interval.tick().await;
+            let manager = crate::api_v2::get_session_manager_v2();
+            let suspended = manager.auto_suspend_idle(idle_timeout_secs);
+            if !suspended.is_empty() {
+                tracing::info!("[AutoSuspend] Suspended {} idle sessions", suspended.len());
+            }
+        }
+    });
+
     match axum::serve(
         tokio::net::TcpListener::bind(&addr).await.unwrap(),
         app,

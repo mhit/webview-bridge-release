@@ -476,6 +476,87 @@ impl SessionManagerV2 {
         Ok(())
     }
     
+    /// Suspend a session (close WebView but keep metadata for later resume)
+    /// Returns the session ID that was closed, if any
+    pub fn suspend_session(&self, name: &str) -> Result<Option<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        
+        // Don't suspend acquired sessions
+        if session.acquired {
+            return Err(format!("Session '{}' is currently acquired", name));
+        }
+        
+        // Get the handle ID before clearing
+        let handle_id = session.handle.as_ref().map(|h| h.id.clone());
+        
+        // Clear the handle (WebView will be closed by the session thread)
+        session.handle = None;
+        session.meta.last_accessed = chrono_now_iso8601();
+        
+        tracing::info!("[SessionManagerV2] Suspended session '{}', handle={:?}", name, handle_id);
+        
+        drop(sessions);
+        self.save_sessions()?;
+        
+        Ok(handle_id)
+    }
+    
+    /// Auto-suspend idle sessions that haven't been used for the specified duration
+    /// Returns list of suspended session names
+    pub fn auto_suspend_idle(&self, idle_seconds: u64) -> Vec<String> {
+        let now = chrono::Utc::now();
+        let mut suspended = Vec::new();
+        
+        // First, collect sessions to suspend
+        let sessions_to_suspend: Vec<String> = {
+            let sessions = match self.sessions.read() {
+                Ok(s) => s,
+                Err(_) => return suspended,
+            };
+            
+            sessions.values()
+                .filter(|s| {
+                    // Skip acquired sessions
+                    if s.acquired {
+                        return false;
+                    }
+                    
+                    // Skip sessions without handles (already suspended)
+                    if s.handle.is_none() {
+                        return false;
+                    }
+                    
+                    // Check if idle for too long
+                    if let Ok(last_accessed) = chrono::DateTime::parse_from_rfc3339(&s.meta.last_accessed) {
+                        let last_accessed_utc = last_accessed.with_timezone(&chrono::Utc);
+                        let idle_duration = now.signed_duration_since(last_accessed_utc);
+                        idle_duration.num_seconds() as u64 >= idle_seconds
+                    } else {
+                        false
+                    }
+                })
+                .map(|s| s.meta.name.clone())
+                .collect()
+        };
+        
+        // Suspend each session
+        for name in sessions_to_suspend {
+            if let Ok(Some(_)) = self.suspend_session(&name) {
+                suspended.push(name);
+            }
+        }
+        
+        if !suspended.is_empty() {
+            tracing::info!("[SessionManagerV2] Auto-suspended {} idle sessions: {:?}", suspended.len(), suspended);
+        }
+        
+        suspended
+    }
+    
     /// Update session's last URL (for session restore)
     pub fn update_last_url(&self, name: &str, url: &str) -> Result<(), String> {
         let mut sessions = self.sessions.write()
