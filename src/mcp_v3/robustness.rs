@@ -299,8 +299,52 @@ pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bo
             typoCount++;
         }}
         
+        // Double space typo (2% chance when typing space)
+        if (char === ' ' && Math.random() < 0.02) {{
+            el.value += ' ';
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            await new Promise(r => setTimeout(r, 50 + Math.random() * 30));
+            // Realize mistake
+            await new Promise(r => setTimeout(r, 100 + Math.random() * 150));
+            el.value = el.value.slice(0, -1);
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            typoCount++;
+        }}
+        
+        // Capitalize typo: forgot shift (1.5% at word start) or held shift (1% for next char)
+        let charToType = char;
+        const isWordStart = i === 0 || text[i-1] === ' ' || text[i-1] === '.';
+        if (isWordStart && char === char.toUpperCase() && char !== char.toLowerCase()) {{
+            // Should be uppercase, but forgot shift (1.5%)
+            if (Math.random() < 0.015) {{
+                charToType = char.toLowerCase();
+                // Notice and fix
+                el.value += charToType;
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 120 + Math.random() * 80));
+                el.value = el.value.slice(0, -1);
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 30 + Math.random() * 20));
+                charToType = char; // Now type correct one
+                typoCount++;
+            }}
+        }} else if (i > 0 && text[i-1] === text[i-1].toUpperCase() && text[i-1] !== text[i-1].toLowerCase()) {{
+            // Previous was uppercase, held shift too long (1%)
+            if (char === char.toLowerCase() && char !== char.toUpperCase() && Math.random() < 0.01) {{
+                charToType = char.toUpperCase();
+                el.value += charToType;
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 100 + Math.random() * 80));
+                el.value = el.value.slice(0, -1);
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 30 + Math.random() * 20));
+                charToType = char;
+                typoCount++;
+            }}
+        }}
+        
         // Type correct character
-        el.value += char;
+        el.value += charToType;
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
         typedChars++;
         
