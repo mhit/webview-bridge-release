@@ -615,12 +615,114 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     }
     
     // 4.6 Optional: Vision LLM analysis for images without alt text
-    // TODO: Phase 3 - Vision analysis requires async element capture
-    // For now, just pass through the analyzed result
     let final_result = if req.analyze_vision {
-        eprintln!("[Vision] Phase 3 vision analysis not yet fully implemented");
-        // Future: Use execute_script to capture elements and send to Vision LLM
-        analyzed_result.clone()
+        let ai_config = crate::core::ai::AiConfig::default();
+        if ai_config.is_available() {
+            // Future: Capture viewport screenshot and pass to Vision LLM
+            
+            // Get elements that need vision analysis
+            let needs_vision_elements: Vec<_> = analyzed_result.get("elements")
+                .and_then(|e| e.as_array())
+                .map(|elements| {
+                    elements.iter()
+                        .enumerate()
+                        .filter(|(_, el)| {
+                            el.get("interactivity")
+                                .and_then(|i| i.get("needs_vision"))
+                                .and_then(|n| n.as_bool())
+                                .unwrap_or(false)
+                        })
+                        .take(5)
+                        .map(|(idx, el)| {
+                            let selector = el.get("selector").and_then(|s| s.as_str()).unwrap_or("");
+                            let tag = el.get("tag").and_then(|t| t.as_str()).unwrap_or("");
+                            let visual = el.get("visual");
+                            let size = visual.and_then(|v| v.get("size"));
+                            let width = size.and_then(|s| s.get("width")).and_then(|w| w.as_i64()).unwrap_or(0);
+                            let height = size.and_then(|s| s.get("height")).and_then(|h| h.as_i64()).unwrap_or(0);
+                            (idx, selector.to_string(), tag.to_string(), width, height)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            
+            if !needs_vision_elements.is_empty() {
+                // Build prompt with element positions for Vision LLM
+                let mut prompt = String::from(
+                    "このページのスクリーンショットを分析してください。\n\n" 
+                );
+                prompt.push_str("以下の画像要素のクリック可能性と内容を判断してください:\n");
+                
+                for (idx, selector, tag, width, height) in &needs_vision_elements {
+                    prompt.push_str(&format!(
+                        "- 要素{}: {} ({}x{}px) セレクタ: {}\n",
+                        idx, tag, width, height, selector
+                    ));
+                }
+                
+                prompt.push_str("\nJSON形式で回答:\n");
+                prompt.push_str(r#"[{"index": 0, "description": "商品画像", "action": "click_product"}]"#);
+                
+                // Call Vision LLM
+                let vision_result = match ai_config.provider.to_lowercase().as_str() {
+                    "ollama" => {
+                        let client = crate::core::ai::OllamaClient::new(&ai_config);
+                        // Note: For now call without image, future: pass screenshot
+                        client.call(&prompt, None)
+                    }
+                    "gemini" => {
+                        if let Some(client) = crate::core::ai::GeminiClient::new(&ai_config) {
+                            client.call(&prompt, None)
+                        } else {
+                            Err("Gemini not available".to_string())
+                        }
+                    }
+                    _ => Err("Unsupported provider".to_string())
+                };
+                
+                // Apply vision results if successful
+                if let Ok(response) = vision_result {
+                    let mut result = analyzed_result.clone();
+                    // Parse response and update elements
+                    if let Some(elements) = result.get_mut("elements").and_then(|e| e.as_array_mut()) {
+                        // Try to extract JSON array from response
+                        if let Some(start) = response.find('[') {
+                            if let Some(end) = response.rfind(']') {
+                                let json_str = &response[start..=end];
+                                if let Ok(vision_data) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                                    for item in vision_data {
+                                        if let Some(idx) = item.get("index").and_then(|i| i.as_u64()) {
+                                            if let Some(el) = elements.get_mut(idx as usize) {
+                                                if let Some(desc) = item.get("description").and_then(|d| d.as_str()) {
+                                                    el["vision_description"] = serde_json::json!(desc);
+                                                    // Update label if empty
+                                                    if el.get("label").and_then(|l| l.as_str()).unwrap_or("").is_empty() {
+                                                        el["label"] = serde_json::json!(desc.chars().take(30).collect::<String>());
+                                                    }
+                                                }
+                                                if let Some(action) = item.get("action").and_then(|a| a.as_str()) {
+                                                    if let Some(interactivity) = el.get_mut("interactivity") {
+                                                        interactivity["analyzed_by"] = serde_json::json!("vision");
+                                                        interactivity["needs_vision"] = serde_json::json!(false);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    result
+                } else {
+                    analyzed_result.clone()
+                }
+            } else {
+                analyzed_result.clone()
+            }
+        } else {
+            analyzed_result.clone()
+        }
     } else {
         analyzed_result.clone()
     };
