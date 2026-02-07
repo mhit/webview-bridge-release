@@ -829,22 +829,25 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "interact",
-            "description": "Execute browser actions with robustness (retry, visibility checks). Actions: click, type, scroll, hover, select, wait, screenshot",
+            "description": "Execute browser actions with retry and visibility checks. Action types: click{target}, type{target,value,clear?}, scroll{direction?,amount?,target?}, hover{target}, select{target,value}, wait{condition,value?,timeout_ms?}, screenshot. For wait, condition can be: timeout, element, element_visible, element_clickable, element_hidden, url_contains, text_contains, network_idle. Example: {\"type\":\"wait\",\"condition\":\"timeout\",\"timeout_ms\":1500}",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "default": "default" },
                     "actions": {
                         "type": "array",
+                        "description": "Array of action objects. Examples: {\"type\":\"click\",\"target\":\"#btn\"}, {\"type\":\"type\",\"target\":\"#input\",\"value\":\"text\",\"clear\":true}, {\"type\":\"scroll\",\"direction\":\"down\",\"amount\":500}, {\"type\":\"wait\",\"condition\":\"timeout\",\"timeout_ms\":1500}, {\"type\":\"wait\",\"condition\":\"element\",\"value\":\"#loaded\"}",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["click", "type", "scroll", "hover", "select", "wait", "screenshot"] },
-                                "target": { "type": "string" },
-                                "value": { "type": "string" },
-                                "clear": { "type": "boolean" },
-                                "condition": { "type": "string" },
-                                "timeout_ms": { "type": "integer" }
+                                "type": { "type": "string", "enum": ["click", "type", "scroll", "hover", "select", "wait", "screenshot"], "description": "Action type" },
+                                "target": { "type": "string", "description": "CSS selector (required for click, type, hover, select)" },
+                                "value": { "type": "string", "description": "Input text (for type/select) or selector/pattern (for wait conditions)" },
+                                "clear": { "type": "boolean", "description": "Clear input before typing (for type action)" },
+                                "condition": { "type": "string", "enum": ["timeout", "element", "element_visible", "element_clickable", "element_hidden", "url_contains", "url_matches", "text_contains", "network_idle"], "description": "Wait condition type (required for wait action)" },
+                                "timeout_ms": { "type": "integer", "description": "Timeout in ms (for wait action, default: 10000)" },
+                                "direction": { "type": "string", "enum": ["down", "up", "left", "right"], "description": "Scroll direction (for scroll action)" },
+                                "amount": { "type": "integer", "description": "Scroll amount in pixels (for scroll action, default: 500)" }
                             },
                             "required": ["type"]
                         }
@@ -855,7 +858,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
                             "wait_timeout_ms": { "type": "integer", "default": 10000 },
                             "retry_count": { "type": "integer", "default": 3 },
                             "screenshot_on_error": { "type": "boolean", "default": false },
-                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: random delays between actions (100-500ms) to evade bot detection" }
+                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: random delays (100-500ms), natural mouse movement with bezier curves and jitter" }
                         }
                     }
                 },
