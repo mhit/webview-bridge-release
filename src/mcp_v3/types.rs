@@ -104,6 +104,9 @@ pub struct InteractOptions {
     pub screenshot_on_error: bool,
     #[serde(default)]
     pub slow_mode_ms: u64,
+    /// Enable human-like behavior: random delays, slight mouse jitter, natural scrolling
+    #[serde(default)]
+    pub human_mode: bool,
 }
 
 fn default_wait_timeout() -> u64 { 10000 }

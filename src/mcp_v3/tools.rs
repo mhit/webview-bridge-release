@@ -235,8 +235,21 @@ async fn execute_action_with_retry(
             tokio::time::sleep(Duration::from_millis(options.retry_delay_ms * attempt as u64)).await;
         }
         
-        match execute_action(session, action, options.wait_timeout_ms, state).await {
-            Ok(screenshot) => return Ok(screenshot),
+        // Human mode: add random delay before action (100-500ms)
+        if options.human_mode {
+            let delay = 100 + (rand::random::<u64>() % 400);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        
+        match execute_action(session, action, options.wait_timeout_ms, state, options.human_mode).await {
+            Ok(screenshot) => {
+                // Human mode: add random delay after action (50-200ms)
+                if options.human_mode {
+                    let delay = 50 + (rand::random::<u64>() % 150);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+                return Ok(screenshot);
+            }
             Err(e) => {
                 last_error = e;
                 tracing::debug!("Action attempt {} failed: {}", attempt + 1, last_error);
@@ -252,6 +265,7 @@ async fn execute_action(
     action: &Action,
     timeout_ms: u64,
     state: &V2AppState,
+    _human_mode: bool, // For future: mouse jitter, natural scrolling
 ) -> Result<Option<String>, String> {
     match action {
         Action::Click { target, wait_after_ms } => {
@@ -264,6 +278,15 @@ async fn execute_action(
             
             if !parsed["success"].as_bool().unwrap_or(false) {
                 return Err(parsed["error"].as_str().unwrap_or("Element not clickable").to_string());
+            }
+            
+            // Human mode: simulate mouse movement to element with natural curve
+            if _human_mode {
+                let mouse_move_script = generate_human_mouse_move_script(target);
+                let _ = execute_script(session, mouse_move_script, state, timeout_ms).await;
+                // Small delay after mouse movement
+                let delay = 50 + (rand::random::<u64>() % 100);
+                tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             
             // Scroll and click
@@ -831,7 +854,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                         "properties": {
                             "wait_timeout_ms": { "type": "integer", "default": 10000 },
                             "retry_count": { "type": "integer", "default": 3 },
-                            "screenshot_on_error": { "type": "boolean", "default": false }
+                            "screenshot_on_error": { "type": "boolean", "default": false },
+                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: random delays between actions (100-500ms) to evade bot detection" }
                         }
                     }
                 },

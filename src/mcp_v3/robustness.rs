@@ -93,6 +93,70 @@ pub fn generate_scroll_and_click_script(selector: &str) -> String {
 "#, selector.replace('"', "\\\""))
 }
 
+/// Simulate human-like mouse movement to element with natural curve and jitter
+pub fn generate_human_mouse_move_script(selector: &str) -> String {
+    format!(r#"
+(async function() {{
+    const el = document.querySelector("{}");
+    if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
+    
+    const rect = el.getBoundingClientRect();
+    const targetX = rect.left + rect.width / 2 + (Math.random() - 0.5) * 10;
+    const targetY = rect.top + rect.height / 2 + (Math.random() - 0.5) * 10;
+    
+    // Get current mouse position (or start from random edge position)
+    let startX = Math.random() * window.innerWidth;
+    let startY = Math.random() * 100; // Start from top area
+    
+    // Generate bezier curve control points for natural movement
+    const cp1x = startX + (targetX - startX) * 0.3 + (Math.random() - 0.5) * 100;
+    const cp1y = startY + (targetY - startY) * 0.2 + (Math.random() - 0.5) * 50;
+    const cp2x = startX + (targetX - startX) * 0.7 + (Math.random() - 0.5) * 50;
+    const cp2y = startY + (targetY - startY) * 0.8 + (Math.random() - 0.5) * 30;
+    
+    // Cubic bezier interpolation
+    const bezier = (t, p0, p1, p2, p3) => {{
+        const u = 1 - t;
+        return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3;
+    }};
+    
+    // Number of steps varies slightly for human-like variation
+    const steps = 15 + Math.floor(Math.random() * 10);
+    const baseDelay = 8 + Math.random() * 4; // 8-12ms between moves
+    
+    for (let i = 0; i <= steps; i++) {{
+        const t = i / steps;
+        const x = bezier(t, startX, cp1x, cp2x, targetX);
+        const y = bezier(t, startY, cp1y, cp2y, targetY);
+        
+        // Add micro-jitter to simulate hand tremor
+        const jitterX = (Math.random() - 0.5) * 2;
+        const jitterY = (Math.random() - 0.5) * 2;
+        
+        // Dispatch mouse move event
+        const event = new MouseEvent('mousemove', {{
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x + jitterX,
+            clientY: y + jitterY
+        }});
+        document.elementFromPoint(x + jitterX, y + jitterY)?.dispatchEvent(event);
+        
+        // Variable delay between moves
+        const delay = baseDelay * (0.5 + Math.random());
+        await new Promise(r => setTimeout(r, delay));
+    }}
+    
+    // Dispatch final hover event on target
+    el.dispatchEvent(new MouseEvent('mouseenter', {{ bubbles: true, view: window }}));
+    el.dispatchEvent(new MouseEvent('mouseover', {{ bubbles: true, view: window }}));
+    
+    return JSON.stringify({{ success: true, moved: true, target: "{}" }});
+}})();
+"#, selector.replace('"', "\\\""), selector.replace('"', "\\\""))
+}
+
 /// Type text with input event simulation
 pub fn generate_type_with_events_script(selector: &str, text: &str, clear: bool) -> String {
     let clear_code = if clear {
