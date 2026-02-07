@@ -660,9 +660,9 @@ async fn root_handler() -> Html<&'static str> {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">プロバイダー</label>
-                            <select class="form-input" id="ai-provider">
+                            <select class="form-input" id="ai-provider" onchange="onProviderChange()">
                                 <option value="gemini">Google Gemini</option>
-                                <option value="openai" disabled>OpenAI (未対応)</option>
+                                <option value="ollama">Ollama (ローカルLLM)</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -672,6 +672,15 @@ async fn root_handler() -> Html<&'static str> {
                                 <option value="gemini-1.5-flash">gemini-1.5-flash</option>
                                 <option value="gemini-1.5-pro">gemini-1.5-pro</option>
                             </select>
+                            <button class="btn btn-secondary" style="margin-top:0.5rem" onclick="refreshModels()">🔄 モデル更新</button>
+                        </div>
+                    </div>
+                    
+                    <div id="ollama-settings" style="display:none">
+                        <div class="form-group">
+                            <label class="form-label">Ollama ホスト</label>
+                            <input type="text" class="form-input" id="ollama-host" placeholder="http://localhost:11434">
+                            <div class="form-hint">環境変数 OLLAMA_HOST でも設定可能</div>
                         </div>
                     </div>
                     
@@ -924,6 +933,8 @@ async fn root_handler() -> Html<&'static str> {
                 if (config.ai.api_key) document.getElementById('ai-api-key').value = config.ai.api_key;
                 document.getElementById('ai-timeout').value = config.ai.timeout_ms || 30000;
                 if (config.ai.daily_budget_usd) document.getElementById('ai-budget').value = config.ai.daily_budget_usd;
+                // Trigger provider change to show/hide Ollama settings
+                setTimeout(() => onProviderChange(), 100);
             }
             if (config.server) {
                 document.getElementById('server-bind').value = config.server.bind || '0.0.0.0';
@@ -945,6 +956,58 @@ async fn root_handler() -> Html<&'static str> {
         
         // === Settings ===
         const toggleAI = () => document.getElementById('ai-enabled').classList.toggle('active');
+        
+        const onProviderChange = () => {
+            const provider = document.getElementById('ai-provider').value;
+            const ollamaSettings = document.getElementById('ollama-settings');
+            const apiKeyField = document.getElementById('ai-api-key').parentElement.parentElement;
+            
+            if (provider === 'ollama') {
+                ollamaSettings.style.display = 'block';
+                apiKeyField.style.display = 'none';
+                refreshModels();
+            } else {
+                ollamaSettings.style.display = 'none';
+                apiKeyField.style.display = 'block';
+                // Reset to Gemini models
+                const modelSelect = document.getElementById('ai-model');
+                modelSelect.innerHTML = `
+                    <option value="gemini-2.0-flash">gemini-2.0-flash (推奨)</option>
+                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                `;
+            }
+        };
+        
+        const refreshModels = async () => {
+            const provider = document.getElementById('ai-provider').value;
+            const modelSelect = document.getElementById('ai-model');
+            const currentValue = modelSelect.value;
+            
+            try {
+                // Use MCP session tool to get models
+                const res = await api('/v2/mcp', 'POST', {
+                    tool: 'session',
+                    ai_models: true
+                });
+                
+                if (res.content && res.content[0]?.text) {
+                    const data = JSON.parse(res.content[0].text);
+                    if (data.models && data.models.length > 0) {
+                        modelSelect.innerHTML = data.models.map(m => 
+                            `<option value="${m}">${m}</option>`
+                        ).join('');
+                        // Restore selection if still valid
+                        if (data.models.includes(currentValue)) {
+                            modelSelect.value = currentValue;
+                        }
+                        showToast(`${data.models.length} モデルを取得しました`);
+                    }
+                }
+            } catch (e) {
+                showToast('モデル取得失敗', 'error');
+            }
+        };
         
         const toggleApiKeyVisibility = () => {
             const input = document.getElementById('ai-api-key');
