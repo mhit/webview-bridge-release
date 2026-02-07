@@ -584,9 +584,10 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
 // 5. Session
 // ============================================================================
 
-async fn handle_session(req: SessionRequest, _state: &V2AppState) -> McpToolResponse {
+async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolResponse {
+    let manager = get_session_manager_v2();
+    
     if req.list {
-        let manager = get_session_manager_v2();
         match manager.list() {
             Ok(response) => {
                 let session_names: Vec<String> = response.sessions.iter()
@@ -603,13 +604,41 @@ async fn handle_session(req: SessionRequest, _state: &V2AppState) -> McpToolResp
     }
     
     if let Some(name) = &req.acquire {
-        // TODO: Implement proper session acquisition
-        return McpToolResponse::success_text(format!("Session '{}' acquired", name));
+        // Build AcquireRequest from our simple parameters
+        let acquire_request = crate::core::session_v2::AcquireRequest {
+            name: name.clone(),
+            profile: None,
+            reuse: true,
+            create_if_missing: true,
+            headless: req.headless,
+            auth_check: None,
+            ttl_hours: 168,  // 1 week
+            auto_extend: true,
+            restore: req.restore,
+        };
+        
+        let create_fn = |options: crate::core::SessionOptions| -> Result<(String, crate::core::session_v2::SessionHandle), String> {
+            (state.create_session_fn)(options)
+        };
+        
+        match manager.acquire(acquire_request, create_fn).await {
+            Ok(response) => {
+                return McpToolResponse::success_text(format!(
+                    "Session '{}' acquired successfully\nis_new: {}\nprofile: {:?}",
+                    response.session,
+                    response.is_new,
+                    response.profile
+                ));
+            }
+            Err(e) => return McpToolResponse::error("SESSION_ACQUIRE_FAILED", &e),
+        }
     }
     
     if let Some(name) = &req.release {
-        // TODO: Implement proper session release
-        return McpToolResponse::success_text(format!("Session '{}' released", name));
+        match manager.release(name) {
+            Ok(_) => return McpToolResponse::success_text(format!("Session '{}' released", name)),
+            Err(e) => return McpToolResponse::error("SESSION_RELEASE_FAILED", &e),
+        }
     }
     
     if let Some(name) = &req.import {
