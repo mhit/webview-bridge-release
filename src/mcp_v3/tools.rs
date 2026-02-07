@@ -604,6 +604,45 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         }
     }
     
+    if req.include.contains(&CaptureInclude::Html) {
+        let max_chars = req.text_max_chars.unwrap_or(50000);
+        let html_script = format!(r#"
+            JSON.stringify({{
+                html: document.documentElement.outerHTML.substring(0, {})
+            }});
+        "#, max_chars);
+        
+        if let Ok(result) = execute_script(&req.session, html_script, state, 5000).await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
+                if let Some(html) = parsed["html"].as_str() {
+                    text.push_str(&format!("\n\n【HTML】({}文字)\n{}", html.len(), html));
+                }
+            }
+        }
+    }
+    
+    if req.include.contains(&CaptureInclude::Images) {
+        let images_script = generate_collect_images_script(None, 50, 50, 30);
+        
+        if let Ok(result) = execute_script(&req.session, images_script, state, 5000).await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
+                if let Some(images) = parsed["images"].as_array() {
+                    text.push_str(&format!("\n\n【画像】({}件)\n", images.len()));
+                    for img in images.iter().take(10) {
+                        let src = img["src"].as_str().unwrap_or("?");
+                        let alt = img["alt"].as_str().unwrap_or("");
+                        let w = img["width"].as_u64().unwrap_or(0);
+                        let h = img["height"].as_u64().unwrap_or(0);
+                        text.push_str(&format!("- {}x{} {} {}\n", w, h, alt, src.chars().take(60).collect::<String>()));
+                    }
+                    if images.len() > 10 {
+                        text.push_str(&format!("... 他{}件\n", images.len() - 10));
+                    }
+                }
+            }
+        }
+    }
+    
     McpToolResponse::success_text(text)
 }
 
