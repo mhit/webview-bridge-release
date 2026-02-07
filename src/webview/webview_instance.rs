@@ -45,6 +45,69 @@ thread_local! {
     static PENDING_SCRIPT_COUNT: RefCell<std::sync::atomic::AtomicUsize> = RefCell::new(std::sync::atomic::AtomicUsize::new(0));
 }
 
+/// Anti-bot detection script that runs on every page load
+/// Masks WebView2/automation fingerprints to appear as a normal browser
+const ANTI_BOT_SCRIPT: &str = r#"
+(function() {
+    // Remove navigator.webdriver flag (main automation detection)
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+        configurable: true
+    });
+    
+    // Remove WebDriver indicator from navigator prototype
+    delete Object.getPrototypeOf(navigator).webdriver;
+    
+    // Override navigator.plugins to appear as normal browser
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+            const plugins = [
+                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                { name: 'Native Client', filename: 'internal-nacl-plugin' }
+            ];
+            plugins.item = (i) => plugins[i];
+            plugins.namedItem = (name) => plugins.find(p => p.name === name);
+            plugins.refresh = () => {};
+            return plugins;
+        },
+        configurable: true
+    });
+    
+    // Override navigator.languages
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['ja-JP', 'ja', 'en-US', 'en'],
+        configurable: true
+    });
+    
+    // Mask WebGL vendor/renderer if needed
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';  // UNMASKED_VENDOR_WEBGL
+        if (param === 37446) return 'Intel Iris OpenGL Engine';  // UNMASKED_RENDERER_WEBGL
+        return getParameter.call(this, param);
+    };
+    
+    // Remove automation console message
+    const originalConsoleDebug = console.debug;
+    console.debug = function(...args) {
+        if (args[0]?.includes?.('webdriver')) return;
+        return originalConsoleDebug.apply(this, args);
+    };
+    
+    // Mask permission query override (used by some detection)
+    const originalQuery = navigator.permissions?.query;
+    if (originalQuery) {
+        navigator.permissions.query = (parameters) => {
+            if (parameters.name === 'notifications') {
+                return Promise.resolve({ state: 'denied', onchange: null });
+            }
+            return originalQuery.call(navigator.permissions, parameters);
+        };
+    }
+})();
+"#;
+
 pub struct WebViewInstance {
     window: WebViewWindow,
     controller: Option<ICoreWebView2Controller>,
@@ -522,6 +585,19 @@ impl WebViewInstance {
 
         if let Some(c) = controller {
             log_webview_success("WebViewInstance::claim_controller", None);
+            
+            // Inject anti-bot script on document creation
+            unsafe {
+                if let Ok(webview) = c.CoreWebView2() {
+                    let anti_bot_script = HSTRING::from(ANTI_BOT_SCRIPT);
+                    let _ = webview.AddScriptToExecuteOnDocumentCreated(
+                        &anti_bot_script,
+                        None,
+                    );
+                    log_webview_debug("WebViewInstance::claim_controller", "Anti-bot script injected");
+                }
+            }
+            
             self.controller = Some(c);
         } else {
             log_webview_error(
