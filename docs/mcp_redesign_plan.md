@@ -190,6 +190,90 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 - XPath: `"xpath://button[@type='submit']"`
 - テキスト: `"text:ログイン"`
 
+#### 堅牢化設計（MCP層で実装）
+
+既存V2 APIは低レベルで即時実行（空振りリスクあり）。
+MCP `interact`は堅牢なラッパーとして各アクションを安全に実行。
+
+**clickアクションの実行フロー**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. 要素存在待機（最大 wait_timeout_ms）                     │
+│     └→ document.querySelector() でポーリング                │
+├─────────────────────────────────────────────────────────────┤
+│  2. 可視性チェック                                          │
+│     └→ getBoundingClientRect() で width/height > 0          │
+│     └→ getComputedStyle() で display != none                │
+├─────────────────────────────────────────────────────────────┤
+│  3. クリック可能チェック                                     │
+│     └→ elementFromPoint() で要素が最前面か確認              │
+│     └→ ローディングオーバーレイ検出 (.loading, [aria-busy]) │
+├─────────────────────────────────────────────────────────────┤
+│  4. ビューポート内にスクロール                               │
+│     └→ el.scrollIntoView({block: 'center'})                 │
+├─────────────────────────────────────────────────────────────┤
+│  5. クリック実行                                            │
+│     └→ el.click()                                           │
+├─────────────────────────────────────────────────────────────┤
+│  6. 安定待機（オプション）                                   │
+│     └→ アニメーション/遷移完了を待つ                        │
+├─────────────────────────────────────────────────────────────┤
+│  7. 失敗時リトライ（バックオフ付き、最大3回）                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**typeアクションの実行フロー**:
+```
+1. 要素存在 + 可視 + enabled待機
+2. フォーカス (el.focus())
+3. 既存値クリア（clear: true時）
+4. inputイベント発火しながら1文字ずつ入力（reactive form対応）
+   または高速モードで一括代入
+5. blur/changeイベント発火
+6. 値反映確認
+```
+
+**waitアクションの条件**:
+| condition | value | 説明 |
+|-----------|-------|------|
+| `element` | selector | 要素が存在するまで |
+| `element_visible` | selector | 要素が可視になるまで |
+| `element_clickable` | selector | 要素がクリック可能になるまで |
+| `element_hidden` | selector | 要素が消えるまで |
+| `url_contains` | text | URLに文字列が含まれるまで |
+| `url_matches` | regex | URLがパターンにマッチするまで |
+| `text_contains` | text | ページにテキストが含まれるまで |
+| `network_idle` | - | 通信が落ち着くまで |
+
+**グローバルオプション**:
+```json
+{
+  "tool": "interact",
+  "actions": [...],
+  "options": {
+    "wait_timeout_ms": 10000,      // 各アクションのタイムアウト
+    "retry_count": 3,              // 失敗時リトライ回数
+    "retry_delay_ms": 500,         // リトライ間隔
+    "screenshot_on_error": true,   // エラー時スクリーンショット保存
+    "slow_mode_ms": 0              // 各アクション間の遅延（デバッグ用）
+  }
+}
+```
+
+**エラーレスポンス**:
+```json
+{
+  "success": false,
+  "error": {
+    "action_index": 2,
+    "action": {"type": "click", "target": "#submit-btn"},
+    "reason": "Element not clickable (obscured by .loading-overlay)",
+    "attempts": 3,
+    "screenshot": "http://127.0.0.1:9400/files/my-session/error_20240207_105030.png"
+  },
+  "completed_actions": [0, 1]
+}
+
 ---
 
 ### 3. `capture` - 状態取得（Direct）
