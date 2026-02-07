@@ -239,6 +239,7 @@ async fn execute_action_with_retry(
         // Human mode: add random delay before action (100-500ms)
         if options.human_mode {
             let delay = 100 + (rand::random::<u64>() % 400);
+            tracing::info!("[human_mode] Pre-action delay: {}ms", delay);
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         
@@ -247,6 +248,7 @@ async fn execute_action_with_retry(
                 // Human mode: add random delay after action (50-200ms)
                 if options.human_mode {
                     let delay = 50 + (rand::random::<u64>() % 150);
+                    tracing::info!("[human_mode] Post-action delay: {}ms", delay);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
                 return Ok(screenshot);
@@ -283,10 +285,12 @@ async fn execute_action(
             
             // Human mode: simulate mouse movement to element with natural curve
             if _human_mode {
+                tracing::info!("[human_mode] Simulating mouse movement to: {}", target);
                 let mouse_move_script = generate_human_mouse_move_script(target);
                 let _ = execute_script(session, mouse_move_script, state, timeout_ms).await;
                 // Small delay after mouse movement
                 let delay = 50 + (rand::random::<u64>() % 100);
+                tracing::info!("[human_mode] Mouse settle delay: {}ms", delay);
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             
@@ -792,12 +796,20 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
     if req.list {
         match manager.list() {
             Ok(response) => {
-                let session_names: Vec<String> = response.sessions.iter()
-                    .map(|s| s.name.clone())
+                let sessions: Vec<serde_json::Value> = response.sessions.iter()
+                    .map(|s| serde_json::json!({
+                        "name": s.name,
+                        "profile": s.profile,
+                        "status": format!("{:?}", s.auth_status),
+                        "last_accessed": s.last_accessed,
+                        "active": s.active,
+                        "acquired": s.acquired,
+                        "expired": s.expired
+                    }))
                     .collect();
                 return McpToolResponse::success_json(serde_json::json!({
-                    "sessions": session_names,
-                    "count": session_names.len()
+                    "sessions": sessions,
+                    "count": sessions.len()
                 }));
             }
             Err(e) => return McpToolResponse::error("SESSION_LIST_FAILED", &e),
