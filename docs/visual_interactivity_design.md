@@ -26,20 +26,76 @@
 - 実際の見た目やアフォーダンス（行動誘発性）を判断できない
 - 結果、正しい要素を選べずエラー
 
-## 解決策
+### SPAへの優位性
 
-### アプローチ：DOM/CSS情報抽出 + テキストLLM分析
+クライアントサイドレンダリング（React/Vue/Angular/Next.js等）では、静的HTMLからは何もわからない：
 
-Vision LLMではなく、**DOM/CSSプロパティを構造化データとして抽出**し、通常のテキストLLMで分析する。
+```html
+<!-- サーバーから返るHTML -->
+<div id="root"></div>
 
-### なぜVisionではなくDOM/CSS？
+<!-- ↓ JavaScriptでレンダリング後 -->
+<div id="root">
+  <button class="xyz123">購入</button>  <!-- 動的生成、クラス名はハッシュ -->
+  <div data-v-abc>...</div>              <!-- Vueスコープ -->
+</div>
+```
 
-| Vision LLM | DOM/CSS + テキストLLM |
-|------------|----------------------|
-| 画像エンコード必要 | テキストのみ、軽量 |
-| Vision対応モデル限定 | 任意のLLMで動作 |
-| 遅い（画像処理） | 高速 |
-| 高コスト | 低コスト |
+**本機能の優位性:**
+
+| 静的HTML分析 | 本機能（レンダリング後分析） |
+|-------------|--------------------------|
+| `<div id="root"></div>`しか見えない | 実際のDOM構造を取得 |
+| クラス名がハッシュ化されて意味不明 | **スタイルを取得**して判断 |
+| CSS-in-JSは取得不可 | **computedStyle**で最終結果取得 |
+| 状態依存の表示は不明 | 現在の状態を反映 |
+
+
+### アプローチ：ハイブリッド分析
+
+1. **DOM/CSS分析**（基本）: テキストLLMで軽量に分析
+2. **アクション予測**: 「クリックできる」だけでなく「何ができるか」を推定
+3. **画像分析フォールバック**: alt無しの画像リンクはVision LLMで内容分析
+
+### なぜハイブリッド？
+
+| 要素タイプ | 分析方法 | 理由 |
+|-----------|---------|------|
+| テキストボタン | DOM/CSS | スタイルとテキストで判断可能 |
+| アイコンボタン | DOM/CSS + アイコン推定 | SVGクラス名などから推測 |
+| 画像リンク（alt有） | DOM/CSS | altテキストで意図判断 |
+| 画像リンク（alt無） | **Vision LLM** | 画像内容を見ないとわからない |
+
+### 出力の拡張：アクション予測
+
+単なる「クリック可能スコア」ではなく、**何ができそうか**も返す：
+
+```json
+{
+  "selector": "div.dropdown-trigger",
+  "interactivity": {
+    "score": 0.85,
+    "predicted_actions": [
+      {"action": "click", "purpose": "ドロップダウンメニューを開く"},
+      {"action": "hover", "purpose": "サブメニューを表示"}
+    ],
+    "reason": "矢印アイコン、枠線、cursor:pointer"
+  }
+}
+```
+
+### アクション種別
+
+| アクション | 検出根拠 |
+|-----------|---------|
+| `click_navigate` | `<a href>`, router-link |
+| `click_submit` | `<button type=submit>`, formAction |
+| `click_toggle` | checkbox, switch, accordion |
+| `click_expand` | dropdown, menu, ▼アイコン |
+| `click_select` | select, option, radio |
+| `type_input` | input, textarea |
+| `hover_reveal` | tooltip, popover, :hover変化 |
+| `scroll` | overflow: scroll, infinite scroll領域 |
 
 ### 抽出するDOM/CSS情報
 
@@ -237,7 +293,110 @@ function getHoverStyles(element) {
 }
 ```
 
-## ルールベース事前スコアリング
+## 画像分析フォールバック（Vision LLM）
+
+### 問題
+
+```html
+<a href="/product/12345">
+  <img src="product.jpg">  <!-- alt無し！ -->
+</a>
+```
+
+DOM/CSSだけでは「何の画像か」「クリックすると何が起こるか」わからない。
+
+### 解決策
+
+alt属性が無い、またはtextContentが空の画像リンクのみ、**Vision LLMで画像内容を分析**：
+
+```javascript
+function needsVisionAnalysis(element) {
+  // 画像を含むリンクかどうか
+  if (element.tagName !== 'A') return false;
+  
+  const img = element.querySelector('img');
+  if (!img) return false;
+  
+  // altがあればVision不要
+  if (img.alt && img.alt.trim() !== '') return false;
+  
+  // aria-labelがあればVision不要
+  if (element.getAttribute('aria-label')) return false;
+  
+  // textContentがあればVision不要
+  if (element.textContent.trim() !== '') return false;
+  
+  return true;  // Vision分析が必要
+}
+```
+
+### Vision分析フロー
+
+```
+needsVisionAnalysis(element) = true
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│ 1. 画像のsrcを取得                                   │
+│    - 相対パス → 絶対パスに変換                       │
+│    - base64の場合はそのまま使用                      │
+└─────────────────────────┬───────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│ 2. Vision LLM (Gemini/LLaVA) に送信                 │
+│                                                     │
+│  プロンプト:                                        │
+│  「この画像は何を表していますか？                    │
+│   クリックするとどこに遷移しそうですか？             │
+│   簡潔に日本語で回答してください。」                 │
+└─────────────────────────┬───────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│ 3. 結果を構造化                                      │
+│    {                                                │
+│      "image_content": "ワイヤレスマウスの商品写真",  │
+│      "predicted_action": "商品詳細ページへ遷移",     │
+│      "confidence": 0.9                              │
+│    }                                                │
+└─────────────────────────────────────────────────────┘
+```
+
+### レスポンス例（画像分析付き）
+
+```json
+{
+  "selector": "a.product-link",
+  "tag": "a",
+  "text": "",
+  "has_image": true,
+  "image_analysis": {
+    "content": "ワイヤレスマウスの商品画像、Ankerロゴ入り",
+    "predicted_action": "click_navigate",
+    "purpose": "商品詳細ページへ遷移",
+    "analyzed_by": "vision"
+  },
+  "interactivity": {
+    "score": 0.92,
+    "reason": "商品画像リンク、クリックで詳細ページへ遷移と推定"
+  }
+}
+```
+
+### パフォーマンス考慮
+
+Vision分析は重いため、最小限に抑える：
+
+| 条件 | Vision使用 |
+|------|-----------|
+| alt属性あり | ❌ 不要 |
+| aria-labelあり | ❌ 不要 |
+| textContentあり | ❌ 不要 |
+| 上記全て無し | ✅ 使用 |
+| 画像サイズ小（< 50px） | ❌ アイコン扱い |
+
+
 
 LLMを呼ぶ前に、ルールベースで事前スコアを計算して効率化：
 
