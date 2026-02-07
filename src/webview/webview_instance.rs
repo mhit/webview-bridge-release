@@ -613,6 +613,14 @@ impl WebViewInstance {
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
+                
+                // Ensure anti-bot script is registered (for restored sessions)
+                let anti_bot_script = HSTRING::from(ANTI_BOT_SCRIPT);
+                let _ = webview.AddScriptToExecuteOnDocumentCreated(
+                    &anti_bot_script,
+                    None,
+                );
+                
                 log_webview_debug("WebViewInstance::navigate", "Calling webview.Navigate()");
                 webview.Navigate(&HSTRING::from(url))?;
             }
