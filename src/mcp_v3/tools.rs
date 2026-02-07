@@ -547,7 +547,44 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     
     // Handle additional includes
     if req.include.contains(&CaptureInclude::Cookies) {
-        text.push_str("\n\n【Cookies】\n(Cookie取得は別途実装)");
+        let cookie_script = r#"
+            (function() {
+                const cookies = document.cookie.split(';').map(c => {
+                    const [name, ...valueParts] = c.trim().split('=');
+                    return {
+                        name: name,
+                        value: valueParts.join('='),
+                        domain: window.location.hostname
+                    };
+                }).filter(c => c.name);
+                return JSON.stringify({
+                    success: true,
+                    count: cookies.length,
+                    cookies: cookies
+                });
+            })();
+        "#;
+        
+        match execute_script(&req.session, cookie_script.to_string(), state, 5000).await {
+            Ok(result) => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
+                    if let Some(cookies) = parsed["cookies"].as_array() {
+                        text.push_str(&format!("\n\n【Cookies】({}件)\n", cookies.len()));
+                        for cookie in cookies.iter().take(20) {
+                            let name = cookie["name"].as_str().unwrap_or("?");
+                            let value = cookie["value"].as_str().unwrap_or("").chars().take(30).collect::<String>();
+                            text.push_str(&format!("- {}={}\n", name, value));
+                        }
+                        if cookies.len() > 20 {
+                            text.push_str(&format!("... 他{}件\n", cookies.len() - 20));
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                text.push_str("\n\n【Cookies】取得失敗");
+            }
+        }
     }
     
     if req.include.contains(&CaptureInclude::FullText) {
