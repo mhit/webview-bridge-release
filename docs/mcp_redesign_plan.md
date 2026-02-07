@@ -151,20 +151,26 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 
 複数の操作を一括実行。決定的（AI不使用）。
 
+**常に `actions` 配列を使用**（単一操作も配列で指定）:
+
 ```json
 {
   "tool": "interact",
   "session": "my-session",
-  // 複数アクション
   "actions": [
     {"type": "type", "target": "#username", "value": "user@example.com"},
     {"type": "type", "target": "#password", "value": "secret"},
     {"type": "click", "target": "button[type=submit]"},
     {"type": "wait", "condition": "url_contains", "value": "/dashboard"}
-  ],
-  // または単一アクション
-  "action": "click",
-  "target": "#submit-btn"
+  ]
+}
+```
+
+**単一アクションの場合も配列**:
+```json
+{
+  "tool": "interact",
+  "actions": [{"type": "click", "target": "#submit-btn"}]
 }
 ```
 
@@ -188,32 +194,53 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 
 ### 3. `capture` - 状態取得（Direct）
 
-ページ情報を一括取得。
+ページ情報を一括取得。**デフォルトで主要情報を全て返す**。
 
+**基本（パラメータなしで全取得）**:
+```json
+{
+  "tool": "capture",
+  "session": "my-session"
+}
+```
+
+**レスポンス（デフォルト）**:
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "screenshot": "base64...",
+  "text": "ページテキスト..."
+}
+```
+
+**オプション: 項目を絞る場合のみ `only` を指定**:
 ```json
 {
   "tool": "capture",
   "session": "my-session",
-  "include": ["screenshot", "text", "images", "cookies", "html", "url"],
+  "only": ["screenshot"],
   "selector": "main",
-  "image_filter": {
-    "min_width": 100,
-    "min_height": 100
-  }
+  "full_page": true
 }
 ```
 
-**レスポンス**:
+**追加項目を含める場合は `include`**:
 ```json
 {
-  "url": "https://example.com/page",
-  "screenshot": "capture_123.png",
-  "text": "ページテキスト...",
-  "images": [{"src": "...", "alt": "..."}],
-  "cookies": [...],
-  "html": "<html>..."
+  "tool": "capture",
+  "include": ["cookies", "html", "images"],
+  "image_filter": {"min_width": 100, "min_height": 100}
 }
 ```
+
+| パラメータ | 説明 |
+|-----------|------|
+| (なし) | url, title, screenshot, text を返す |
+| `only` | 指定項目のみ返す |
+| `include` | デフォルト＋追加項目 |
+| `selector` | 特定領域のみ |
+| `full_page` | フルページスクリーンショット |
 
 ---
 
@@ -239,15 +266,39 @@ CSSセレクタで構造化抽出。
 
 ### 5. `session` - セッション管理（Direct）
 
+**操作をパラメータ名で直接指定**（`action`パラメータ廃止）:
+
+**セッション取得**:
 ```json
 {
   "tool": "session",
-  "action": "acquire|release|list|import",
-  // acquire
-  "name": "my-session",
+  "acquire": "my-session",
   "headless": false,
-  "restore": true,
-  // import (ブラウザCookieインポート)
+  "restore": true
+}
+```
+
+**セッション解放**:
+```json
+{
+  "tool": "session",
+  "release": "my-session"
+}
+```
+
+**セッション一覧**:
+```json
+{
+  "tool": "session",
+  "list": true
+}
+```
+
+**ブラウザCookieインポート**:
+```json
+{
+  "tool": "session",
+  "import": "my-session",
   "browser": "chrome|edge|firefox",
   "domains": ["google.com"]
 }
