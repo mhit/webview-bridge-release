@@ -1354,7 +1354,7 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                 
                 // Build history of past actions for this session
                 let history_text = if steps.is_empty() {
-                    "（初回アクション）".to_string()
+                    "(first action)".to_string()
                 } else {
                     steps.iter().map(|s| {
                         let action = s["action"].as_str().unwrap_or("?");
@@ -1363,48 +1363,49 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                         format!("Step {}: {} - {}", 
                             s["step"].as_u64().unwrap_or(0),
                             action,
-                            if success { "成功" } else { "失敗" }
+                            if success { "OK" } else { "FAIL" }
                         )
                     }).collect::<Vec<_>>().join("\n")
                 };
                 
-                let ai_prompt = format!(r#"あなたはブラウザ自動操作エージェントです。
+                let ai_prompt = format!(r#"You are a browser automation agent.
 {}
-【目標】
-{}
-
-【コンテキスト】
+[GOAL]
 {}
 
-【これまでの操作履歴】
+[CONTEXT]
 {}
 
-【現在のページ状態】
+[ACTION HISTORY]
+{}
+
+[CURRENT PAGE STATE]
 URL: {}
-タイトル: {}
-ページテキスト(抜粋): {}
+Title: {}
+Page text (excerpt): {}
 
-【操作可能な要素】
+[INTERACTIVE ELEMENTS]
 {}
 
-【重要な注意】
-- 同じアクションを繰り返さないでください
-- 入力後はsubmit:trueでEnterを押すか、検索ボタンをクリックしてください
-- ページが変わったら目標達成かどうかを判断してください
-- 検索結果が表示されたら目標達成です
+[RULES]
+- Do NOT repeat the same action
+- After typing, use submit:true to press Enter OR click the search button
+- If the page changed, evaluate if goal is achieved
+- Search results page = goal achieved
 
-【指示】
-次にどのアクションを実行すべきか、JSONで回答してください。
-回答形式:
-- 目標達成: {{"done": true, "result": "達成した結果の説明"}}
-- クリック: {{"action": "click", "selector": "CSSセレクタ", "reason": "理由"}}
-- 入力: {{"action": "type", "selector": "CSSセレクタ", "value": "入力値", "reason": "理由"}}
-- 入力後Enter: {{"action": "type", "selector": "CSSセレクタ", "value": "入力値", "submit": true, "reason": "理由"}}
-- ナビゲート: {{"action": "navigate", "url": "URL", "reason": "理由"}}
-- 失敗: {{"failed": true, "reason": "失敗理由"}}
+[INSTRUCTION]
+Decide the next action. Respond with JSON only.
 
-JSON以外は出力しないでください。"#,
-                    if custom_prompt.is_empty() { String::new() } else { format!("\n【追加指示】\n{}\n", custom_prompt) },
+Response formats:
+- Goal achieved: {{"done": true, "result": "description"}}
+- Click: {{"action": "click", "selector": "CSS_SELECTOR", "reason": "why"}}
+- Type: {{"action": "type", "selector": "CSS_SELECTOR", "value": "TEXT", "reason": "why"}}
+- Type+Enter: {{"action": "type", "selector": "CSS_SELECTOR", "value": "TEXT", "submit": true, "reason": "why"}}
+- Navigate: {{"action": "navigate", "url": "URL", "reason": "why"}}
+- Failed: {{"failed": true, "reason": "why"}}
+
+Output JSON only, no explanation."#,
+                    if custom_prompt.is_empty() { String::new() } else { format!("\n[CUSTOM INSTRUCTIONS]\n{}\n", custom_prompt) },
                     goal,
                     context_text,
                     history_text,
