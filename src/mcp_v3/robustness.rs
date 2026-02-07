@@ -503,14 +503,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
     r#"
 (function() {
     const selectors = 'a, button, input, select, textarea, [role="button"], [onclick], [tabindex], [role="link"], [role="menuitem"]';
-    const noiseParents = ['nav', 'footer', 'header:not(:has(form))', '.sidebar', '.advertisement', '.cookie-banner'];
-    
-    const isInNoiseArea = (el) => {
-        for (const selector of noiseParents) {
-            if (el.closest(selector)) return true;
-        }
-        return false;
-    };
+    // Note: noiseParentsは将来のフィルタリング用に保持（現在未使用）
 
     const getLabel = (el) => {
         // Try label element
@@ -613,11 +606,14 @@ pub fn generate_extract_interactive_elements_script() -> String {
             hasImage: hasImage,
             imageAlt: imageAlt,
             
-            // アクセシビリティ
             role: el.getAttribute('role'),
             ariaLabel: el.getAttribute('aria-label'),
             tabIndex: el.tabIndex,
-            isDisabled: el.disabled || el.getAttribute('aria-disabled') === 'true'
+            isDisabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
+            
+            // 追加: フォーム文脈
+            isInForm: el.closest('form') !== null,
+            inputType: el.type || null
         };
     };
 
@@ -695,6 +691,25 @@ pub fn generate_extract_interactive_elements_script() -> String {
         if (props.isDisabled) {
             score = Math.max(0, score - 0.5);
             reasons.push('disabled');
+        }
+        
+        // tabIndex > 0 は明示的なインタラクティブ指定 (+0.1)
+        if (props.tabIndex > 0) {
+            score += 0.1;
+            reasons.push('tabIndex');
+        }
+        
+        // フォーム内の要素はインタラクティブの可能性高い (+0.05)
+        if (props.isInForm) {
+            score += 0.05;
+            reasons.push('form内');
+        }
+        
+        // input要素はタイプ別にボーナス
+        const interactiveInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'];
+        if (interactiveInputTypes.includes(props.inputType)) {
+            score += 0.2;  // inputはcursor:textなので補正
+            reasons.push('input要素');
         }
         
         // 画像リンクでaltなしの場合はフラグ
