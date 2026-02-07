@@ -1,11 +1,8 @@
 pub mod api_v2;
 pub mod core;
-pub mod mcp;
-pub mod mcp_stdio;
 pub mod webview;
 
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
@@ -47,7 +44,6 @@ fn parse_args() -> Option<Config> {
                 println!("Options:");
                 println!("  --bind <IP>       Bind address (default: 0.0.0.0)");
                 println!("  --port <PORT>     Port number (default: 9400)");
-                println!("  --mcp-stdio       Run in MCP stdio proxy mode");
                 println!("  --help, -h        Show this help message");
                 return None;
             }
@@ -69,9 +65,6 @@ fn parse_args() -> Option<Config> {
                     });
                 }
             }
-            "--mcp-stdio" => {
-                // Handled separately
-            }
             _ => {
                 // Ignore unknown args for now
             }
@@ -83,22 +76,13 @@ fn parse_args() -> Option<Config> {
 }
 
 fn main() {
-    // Check for MCP stdio mode BEFORE tokio runtime
-    let args: Vec<String> = std::env::args().collect();
-    if args.contains(&"--mcp-stdio".to_string()) {
-        // MCP stdio mode: synchronous, connects to HTTP server
-        eprintln!("WebView Bridge MCP proxy starting (connecting to http://127.0.0.1:9400)...");
-        mcp_stdio::run_mcp_stdio_proxy();
-        return;
-    }
-    
     // Parse command line arguments
     let config = match parse_args() {
         Some(c) => c,
         None => return, // --help was shown
     };
     
-    // Normal HTTP server mode with tokio
+    // HTTP server mode with tokio
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

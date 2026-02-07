@@ -7,7 +7,4 @@
 
 pub mod api_v2;
 pub mod core;
-pub mod mcp;
-pub mod mcp_stdio;
 pub mod webview;
-
