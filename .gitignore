@@ -18,10 +18,19 @@ obj/
 # Build
 publish/
 out/
+output/
+downloads/
 
 # Logs
 *.log
 test_logs/
+build.txt
+build_errors.txt
+
+# Test output
+*.png
+*_output.txt
+coverage.txt
 
 # Local settings
 appsettings.Development.json
@@ -36,3 +45,4 @@ Thumbs.db
 .claude
 .opencode
 .legacy
+data/sessions.json

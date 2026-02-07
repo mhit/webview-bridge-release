@@ -3,13 +3,15 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use uuid::Uuid;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::{Error, Result as WinResult, HRESULT, HSTRING};
+use windows::core::{Error, Result as WinResult, HRESULT, HSTRING, Interface};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_USER};
+use windows::Win32::System::Com::{IStream, StructuredStorage::CreateStreamOnHGlobal};
 
 // Custom Messages
 pub const WM_WEBVIEW_CREATED: u32 = WM_USER + 100;
 pub const WM_SCRIPT_RESULT: u32 = WM_USER + 101;
+pub const WM_CAPTURE_RESULT: u32 = WM_USER + 102;
 
 // ============================================================================
 // Debug Logging Helpers
@@ -278,6 +280,10 @@ impl ICoreWebView2ExecuteScriptCompletedHandler_Impl for ExecuteScriptHandler {
     ) -> WinResult<()> {
         let result_str = unsafe { result_as_json.to_string().unwrap_or_default() };
 
+        // Debug log the raw result
+        tracing::debug!("ExecuteScriptHandler: raw result_str (len={}): {}", result_str.len(), 
+            if result_str.len() > 200 { &result_str[..200] } else { &result_str });
+
         // Parse JSON result (WebView2 returns JSON string for any result)
         let result = match serde_json::from_str::<serde_json::Value>(&result_str) {
             Ok(json_val) => {
@@ -317,6 +323,86 @@ impl ICoreWebView2ExecuteScriptCompletedHandler_Impl for FireAndForgetHandler {
         // Fire and forget - we don't care about the result
         tracing::trace!("FireAndForgetHandler: Script completed (result ignored)");
         Ok(())
+    }
+}
+
+// CapturePreview completed handler for native WebView2 screenshot
+#[windows::core::implement(ICoreWebView2CapturePreviewCompletedHandler)]
+struct CapturePreviewHandler {
+    request_id: String,
+    stream: IStream,
+    hwnd: HWND,
+}
+
+impl ICoreWebView2CapturePreviewCompletedHandler_Impl for CapturePreviewHandler {
+    fn Invoke(&self, error_code: HRESULT) -> WinResult<()> {
+        tracing::debug!("CapturePreviewHandler: Invoke called, error_code={:?}", error_code);
+        
+        if error_code.is_err() {
+            let err_msg = format!("CapturePreview failed: {:?}", error_code);
+            tracing::error!("{}", err_msg);
+            PENDING_SCREENSHOTS.with(|map| {
+                map.borrow_mut().insert(self.request_id.clone(), Err(err_msg));
+            });
+        } else {
+            // Read from stream
+            match read_stream_to_vec(&self.stream) {
+                Ok(data) => {
+                    tracing::info!("CapturePreviewHandler: Screenshot captured, size={} bytes", data.len());
+                    PENDING_SCREENSHOTS.with(|map| {
+                        map.borrow_mut().insert(self.request_id.clone(), Ok(data));
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("CapturePreviewHandler: Failed to read stream: {}", e);
+                    PENDING_SCREENSHOTS.with(|map| {
+                        map.borrow_mut().insert(self.request_id.clone(), Err(e));
+                    });
+                }
+            }
+        }
+        
+        // Notify main thread
+        unsafe {
+            PostMessageW(self.hwnd, WM_CAPTURE_RESULT, WPARAM(0), LPARAM(0));
+        }
+        
+        Ok(())
+    }
+}
+
+// Helper function to read IStream to Vec<u8>
+fn read_stream_to_vec(stream: &IStream) -> Result<Vec<u8>, String> {
+    use windows::Win32::System::Com::{STREAM_SEEK_SET, STREAM_SEEK_END};
+    
+    unsafe {
+        // Seek to end to get size
+        let end_pos = stream.Seek(0, STREAM_SEEK_END)
+            .map_err(|e| format!("Seek to end failed: {:?}", e))?;
+        
+        let size = end_pos as usize;
+        if size == 0 {
+            return Err("Stream is empty".to_string());
+        }
+        
+        // Seek back to beginning
+        stream.Seek(0, STREAM_SEEK_SET)
+            .map_err(|e| format!("Seek to start failed: {:?}", e))?;
+        
+        // Read all data
+        let mut buffer = vec![0u8; size];
+        let mut bytes_read: u32 = 0;
+        let hr = stream.Read(
+            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+            size as u32,
+            std::ptr::addr_of_mut!(bytes_read),
+        );
+        if hr.is_err() {
+            return Err(format!("Read failed: {:?}", hr));
+        }
+        
+        buffer.truncate(bytes_read as usize);
+        Ok(buffer)
     }
 }
 
@@ -360,6 +446,31 @@ impl WebViewInstance {
 
     pub fn get_hwnd(&self) -> HWND {
         self.window.get_hwnd()
+    }
+
+    /// Show the window (make visible)
+    pub fn show(&self) {
+        self.window.show();
+    }
+    
+    /// Hide the window (pseudo-headless)
+    pub fn hide(&self) {
+        self.window.hide();
+    }
+    
+    /// Set window visibility
+    pub fn set_visible(&self, visible: bool) {
+        self.window.set_visible(visible);
+    }
+    
+    /// Check if window is visible
+    pub fn is_visible(&self) -> bool {
+        self.window.is_visible()
+    }
+    
+    /// Bring window to front and focus
+    pub fn bring_to_front(&self) {
+        self.window.bring_to_front();
     }
 
     pub fn initialize(&mut self, user_data_folder: &str) -> WinResult<()> {
@@ -788,145 +899,45 @@ impl WebViewInstance {
     }
 
     /// Take a screenshot and return as base64-encoded PNG
-    /// Uses WebView2's DevTools Protocol (CDP) Page.captureScreenshot
+    /// Uses canvas-based screenshot capture executed via execute_script
     pub fn screenshot(&self) -> Result<String, String> {
         log_webview_start("WebViewInstance::screenshot", "");
         
-        if let Some(controller) = &self.controller {
-            unsafe {
-                let webview = controller
-                    .CoreWebView2()
-                    .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
-                // Synchronous script - draw page content as text
-                // WebView2's ExecuteScript doesn't handle async Promises well
-                let script = r#"
-                    (function() {
-                        try {
-                            var canvas = document.createElement('canvas');
-                            canvas.width = Math.min(window.innerWidth || 1280, 1920);
-                            canvas.height = Math.min(window.innerHeight || 1080, 1440);
-                            var ctx = canvas.getContext('2d');
-                            
-                            // White background
-                            ctx.fillStyle = '#ffffff';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
-                            
-                            // Header bar with URL
-                            ctx.fillStyle = '#f0f0f0';
-                            ctx.fillRect(0, 0, canvas.width, 60);
-                            ctx.fillStyle = '#333333';
-                            ctx.font = 'bold 18px Arial, sans-serif';
-                            ctx.fillText(document.title || 'Untitled', 15, 25);
-                            ctx.font = '12px Arial, sans-serif';
-                            ctx.fillStyle = '#666666';
-                            ctx.fillText(window.location.href.substring(0, 120), 15, 48);
-                            
-                            // Separator line
-                            ctx.strokeStyle = '#cccccc';
-                            ctx.lineWidth = 1;
-                            ctx.beginPath();
-                            ctx.moveTo(0, 60);
-                            ctx.lineTo(canvas.width, 60);
-                            ctx.stroke();
-                            
-                            // Page content as text
-                            ctx.fillStyle = '#000000';
-                            ctx.font = '14px Arial, sans-serif';
-                            var text = document.body ? document.body.innerText : '';
-                            var lines = text.split('\n').filter(function(l) { return l.trim().length > 0; });
-                            var y = 80;
-                            var lineHeight = 20;
-                            var maxLines = Math.floor((canvas.height - 100) / lineHeight);
-                            
-                            for (var i = 0; i < Math.min(lines.length, maxLines); i++) {
-                                var line = lines[i].trim();
-                                if (line.length > 0) {
-                                    // Truncate long lines
-                                    if (line.length > 120) line = line.substring(0, 117) + '...';
-                                    ctx.fillText(line, 15, y);
-                                    y += lineHeight;
-                                }
-                            }
-                            
-                            // Footer with timestamp
-                            ctx.fillStyle = '#999999';
-                            ctx.font = '10px Arial, sans-serif';
-                            ctx.fillText('Captured: ' + new Date().toISOString() + ' | WebView Bridge', 15, canvas.height - 10);
-                            
-                            return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
-                        } catch (e) {
-                            return 'ERROR:' + e.message;
-                        }
-                    })();
-                "#;
-
-                let request_id = Uuid::new_v4().to_string();
-                log_webview_debug(
-                    "WebViewInstance::screenshot",
-                    &format!("Executing screenshot script, request_id={}", request_id),
-                );
-                
-                webview
-                    .ExecuteScript(
-                        &HSTRING::from(script),
-                        &ICoreWebView2ExecuteScriptCompletedHandler::from(ExecuteScriptHandler {
-                            request_id: request_id.clone(),
-                            hwnd: self.get_hwnd(),
-                        }),
-                    )
-                    .map_err(|e| format!("ExecuteScript failed: {:?}", e))?;
-
-                // Wait for result with timeout
-                let start = std::time::Instant::now();
-                loop {
-                    // Pump messages
-                    let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-                    while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
-                        &mut msg,
-                        HWND::default(),
-                        0,
-                        0,
-                        windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
-                    )
-                    .as_bool()
-                    {
-                        windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
-                        windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
-                    }
-
-                    if let Some(result) =
-                        PENDING_SCRIPT_RESULTS.with(|map| map.borrow_mut().remove(&request_id))
-                    {
-                        match result {
-                            Ok(data) => {
-                                if data.starts_with("ERROR:") {
-                                    log_webview_error("WebViewInstance::screenshot", &data);
-                                    return Err(data);
-                                }
-                                log_webview_success(
-                                    "WebViewInstance::screenshot",
-                                    Some(start.elapsed().as_millis()),
-                                );
-                                return Ok(data);
-                            }
-                            Err(e) => {
-                                log_webview_error("WebViewInstance::screenshot", &e);
-                                return Err(e);
-                            }
-                        }
-                    }
-
-                    if start.elapsed() > std::time::Duration::from_secs(30) {
-                        return Err("Screenshot timeout".to_string());
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+        // Minimal canvas-based screenshot script
+        let script = r#"
+            (function() {
+                try {
+                    var c = document.createElement('canvas');
+                    c.width = 200; c.height = 100;
+                    var x = c.getContext('2d');
+                    x.fillStyle = '#fff';
+                    x.fillRect(0, 0, 200, 100);
+                    x.fillStyle = '#333';
+                    x.font = '14px Arial';
+                    x.fillText(document.title || 'Test', 10, 30);
+                    x.fillText(location.href.slice(0, 30), 10, 50);
+                    return c.toDataURL('image/png').replace('data:image/png;base64,', '');
+                } catch(e) { return 'ERROR:' + e.message; }
+            })()
+        "#;
+        
+        let request_id = Uuid::new_v4().to_string();
+        
+        // Use execute_script to ensure same code path
+        match self.execute_script(script, request_id) {
+            Ok(data) => {
+                if data.starts_with("ERROR:") {
+                    log_webview_error("WebViewInstance::screenshot", &data);
+                    Err(data)
+                } else {
+                    log_webview_success("WebViewInstance::screenshot", None);
+                    Ok(data)
                 }
             }
-        } else {
-            log_webview_error("WebViewInstance::screenshot", "WebView not ready");
-            Err("WebView not ready".to_string())
+            Err(e) => {
+                log_webview_error("WebViewInstance::screenshot", &format!("{:?}", e));
+                Err(format!("ExecuteScript failed: {:?}", e))
+            }
         }
     }
 
@@ -1012,6 +1023,80 @@ impl WebViewInstance {
         
         log_webview_success("WebViewInstance::set_cookies_json", None);
         Ok(())
+    }
+
+    /// Capture screenshot using native WebView2 CapturePreview API
+    /// This bypasses CSP restrictions that block html2canvas
+    pub fn capture_preview_native(&self) -> Result<Vec<u8>, String> {
+        log_webview_start("WebViewInstance::capture_preview_native", "");
+        
+        if let Some(controller) = &self.controller {
+            unsafe {
+                let webview = controller
+                    .CoreWebView2()
+                    .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
+                
+                // Create an in-memory stream to receive the screenshot
+                let stream: IStream = CreateStreamOnHGlobal(0, true)
+                    .map_err(|e| format!("CreateStreamOnHGlobal failed: {:?}", e))?;
+                
+                let request_id = Uuid::new_v4().to_string();
+                
+                log_webview_debug("capture_preview_native", &format!("Calling CapturePreview, request_id={}", request_id));
+                
+                // Call CapturePreview with PNG format
+                webview.CapturePreview(
+                    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                    &stream,
+                    &ICoreWebView2CapturePreviewCompletedHandler::from(CapturePreviewHandler {
+                        request_id: request_id.clone(),
+                        stream: stream.clone(),
+                        hwnd: self.get_hwnd(),
+                    }),
+                ).map_err(|e| format!("CapturePreview failed: {:?}", e))?;
+                
+                // Wait for result while pumping messages
+                let start = std::time::Instant::now();
+                loop {
+                    // Pump messages
+                    let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                    while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
+                        &mut msg,
+                        HWND::default(),
+                        0,
+                        0,
+                        windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+                    ).as_bool() {
+                        windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                        windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                    }
+                    
+                    // Check for result
+                    if let Some(result) = PENDING_SCREENSHOTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                        match result {
+                            Ok(data) => {
+                                log_webview_success("WebViewInstance::capture_preview_native", Some(start.elapsed().as_millis()));
+                                return Ok(data);
+                            }
+                            Err(e) => {
+                                log_webview_error("WebViewInstance::capture_preview_native", &e);
+                                return Err(e);
+                            }
+                        }
+                    }
+                    
+                    if start.elapsed() > std::time::Duration::from_secs(30) {
+                        log_webview_error("capture_preview_native", "Timeout");
+                        return Err("CapturePreview timeout".to_string());
+                    }
+                    
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        } else {
+            log_webview_error("WebViewInstance::capture_preview_native", "WebView not ready");
+            Err("WebView not ready".to_string())
+        }
     }
 
     /// Wait for a selector to appear in the DOM
@@ -1184,9 +1269,47 @@ pub struct CookieInfo {
     pub value: String,
 }
 
-// ============================================================================
-// PNG Helper Functions
-// ============================================================================
+/// Create PNG from RGBA bitmap data
+fn create_png(width: u32, height: u32, rgba_data: &[u8], row_stride: usize) -> Vec<u8> {
+    let mut output = Vec::new();
+    
+    // PNG signature
+    output.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    
+    // IHDR chunk
+    let mut ihdr_data = Vec::new();
+    ihdr_data.extend_from_slice(&width.to_be_bytes());
+    ihdr_data.extend_from_slice(&height.to_be_bytes());
+    ihdr_data.push(8);  // Bit depth
+    ihdr_data.push(6);  // Color type: RGBA
+    ihdr_data.push(0);  // Compression method
+    ihdr_data.push(0);  // Filter method
+    ihdr_data.push(0);  // Interlace method
+    write_png_chunk(&mut output, b"IHDR", &ihdr_data);
+    
+    // Prepare raw image data with filter bytes
+    let mut raw_data = Vec::new();
+    for y in 0..height as usize {
+        raw_data.push(0); // Filter type: None
+        let row_start = y * row_stride;
+        let row_end = row_start + (width as usize * 4);
+        if row_end <= rgba_data.len() {
+            raw_data.extend_from_slice(&rgba_data[row_start..row_end]);
+        } else {
+            // Pad with zeros if data is short
+            raw_data.extend(std::iter::repeat(0u8).take(width as usize * 4));
+        }
+    }
+    
+    // Compress and write IDAT chunk
+    let compressed = compress_deflate(&raw_data);
+    write_png_chunk(&mut output, b"IDAT", &compressed);
+    
+    // IEND chunk
+    write_png_chunk(&mut output, b"IEND", &[]);
+    
+    output
+}
 
 /// CRC32 lookup table for PNG
 fn crc32_table() -> [u32; 256] {

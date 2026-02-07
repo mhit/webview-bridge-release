@@ -61,14 +61,20 @@ fn default_ai_timeout() -> u64 {
 
 impl Default for AiConfig {
     fn default() -> Self {
+        // Try to load from global config first
+        let global_config = crate::core::config::get_config();
+        let ai_settings = &global_config.ai;
+        
         Self {
-            provider: default_provider(),
-            api_key: std::env::var("WEBVIEW_BRIDGE_AI_API_KEY").ok(),
-            model: default_model(),
-            daily_budget_usd: None,
+            provider: ai_settings.provider.clone(),
+            api_key: ai_settings.api_key.clone()
+                .or_else(|| std::env::var("WEBVIEW_BRIDGE_AI_API_KEY").ok())
+                .or_else(|| std::env::var("GEMINI_API_KEY").ok()),
+            model: ai_settings.model.clone(),
+            daily_budget_usd: ai_settings.daily_budget_usd,
             daily_usage_usd: 0.0,
-            enabled: true,
-            timeout_ms: default_ai_timeout(),
+            enabled: ai_settings.enabled,
+            timeout_ms: ai_settings.timeout_ms,
         }
     }
 }
@@ -342,11 +348,7 @@ impl SensitiveDataMasker {
     }
 }
 
-// ============================================================================
-// Gemini API Integration
-// ============================================================================
-
-/// Gemini API client placeholder
+/// Gemini API client with real API integration
 #[derive(Debug, Clone)]
 pub struct GeminiClient {
     pub api_key: String,
@@ -361,6 +363,165 @@ impl GeminiClient {
             model: config.model.clone(),
             timeout_ms: config.timeout_ms,
         })
+    }
+    
+    /// Make a request to Gemini API
+    pub fn call(&self, prompt: &str, image_base64: Option<&str>) -> Result<String, String> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+        
+        // Build request body based on whether image is provided
+        let request_body = if let Some(image_data) = image_base64 {
+            // Vision request with image
+            serde_json::json!({
+                "contents": [{
+                    "parts": [
+                        {
+                            "text": prompt
+                        },
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": image_data
+                            }
+                        }
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 4096
+                }
+            })
+        } else {
+            // Text-only request
+            serde_json::json!({
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 4096
+                }
+            })
+        };
+        
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .build();
+        
+        let response = client
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&request_body)
+            .map_err(|e| format!("Gemini API request failed: {}", e))?;
+        
+        let response_body: serde_json::Value = response
+            .into_json()
+            .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
+        
+        // Extract text from response
+        let text = response_body
+            .get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.get(0))
+            .and_then(|p| p.get("text"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| {
+                // Check for error in response
+                let error = response_body.get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown error");
+                format!("Gemini API error: {}", error)
+            })?;
+        
+        Ok(text.to_string())
+    }
+    
+    /// Analyze screenshot for login form detection
+    pub fn analyze_login_form(&self, screenshot_base64: &str) -> Result<LoginFormAnalysis, String> {
+        let prompt = r#"
+Analyze this webpage screenshot and identify login form elements.
+Look for:
+1. Username/email input field - identify its likely CSS selector
+2. Password input field - identify its likely CSS selector  
+3. Login/Submit button - identify its likely CSS selector
+4. Any CAPTCHA or verification challenges
+5. Current login status (already logged in or not)
+
+Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
+{
+    "has_login_form": true/false,
+    "already_logged_in": true/false,
+    "username_selector": "CSS selector string or null",
+    "password_selector": "CSS selector string or null", 
+    "submit_selector": "CSS selector string or null",
+    "captcha_present": true/false,
+    "captcha_type": "recaptcha/hcaptcha/image/none",
+    "two_factor_field": "CSS selector string or null",
+    "error_message_visible": true/false,
+    "confidence": 0.0-1.0
+}
+"#;
+        
+        let response = self.call(prompt, Some(screenshot_base64))?;
+        
+        // Parse JSON from response
+        let json_str = extract_json_from_response(&response);
+        serde_json::from_str(&json_str)
+            .map_err(|e| format!("Failed to parse login analysis: {} - Response: {}", e, response))
+    }
+    
+    /// Analyze image for product/content quality
+    pub fn analyze_image(&self, image_base64: &str, analysis_type: &ImageAnalysisType, custom_criteria: &[String]) -> Result<ImageAnalysis, String> {
+        let prompt = Self::generate_image_analysis_prompt(analysis_type, custom_criteria);
+        let response = self.call(&prompt, Some(image_base64))?;
+        
+        let json_str = extract_json_from_response(&response);
+        
+        // Parse the analysis result
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| format!("Failed to parse image analysis: {} - Response: {}", e, response))?;
+        
+        let scores: HashMap<String, f32> = parsed.get("scores")
+            .and_then(|s| serde_json::from_value(s.clone()).ok())
+            .unwrap_or_default();
+        
+        Ok(ImageAnalysis {
+            image_index: 0,
+            scores,
+            overall_score: parsed.get("overall_score")
+                .and_then(|s| s.as_f64())
+                .map(|s| s as f32)
+                .unwrap_or(0.0),
+            issues: parsed.get("issues")
+                .and_then(|i| i.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            improvements: parsed.get("improvements")
+                .and_then(|i| i.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            improved_prompt: parsed.get("improved_prompt")
+                .and_then(|p| p.as_str())
+                .map(String::from),
+        })
+    }
+    
+    /// Extract data from webpage screenshot
+    pub fn extract_from_screenshot(&self, screenshot_base64: &str, description: &str, schema: Option<&serde_json::Value>) -> Result<serde_json::Value, String> {
+        let prompt = Self::generate_extract_prompt(description, schema);
+        let response = self.call(&prompt, Some(screenshot_base64))?;
+        
+        let json_str = extract_json_from_response(&response);
+        serde_json::from_str(&json_str)
+            .map_err(|e| format!("Failed to parse extraction result: {} - Response: {}", e, response))
     }
     
     /// Analyze screenshot for login form detection
@@ -393,7 +554,13 @@ Analyze this product image for e-commerce quality. Evaluate:
 - Product visibility and framing
 - Color accuracy
 
-Return JSON with scores (0-100) for each criterion, overall score, issues list, and improvements list.
+Return ONLY valid JSON (no markdown) with this structure:
+{
+    "scores": {"clarity": 0-100, "lighting": 0-100, "background": 0-100, "framing": 0-100, "color": 0-100},
+    "overall_score": 0-100,
+    "issues": ["issue1", "issue2"],
+    "improvements": ["improvement1", "improvement2"]
+}
 "#.to_string(),
             ImageAnalysisType::Composition => r#"
 Analyze the visual composition of this image:
@@ -403,7 +570,13 @@ Analyze the visual composition of this image:
 - Color harmony
 - Negative space usage
 
-Return JSON with scores (0-100) for each criterion, overall score, and composition suggestions.
+Return ONLY valid JSON (no markdown) with this structure:
+{
+    "scores": {"thirds": 0-100, "balance": 0-100, "focal_point": 0-100, "color_harmony": 0-100, "negative_space": 0-100},
+    "overall_score": 0-100,
+    "issues": ["issue1"],
+    "improvements": ["improvement1"]
+}
 "#.to_string(),
             ImageAnalysisType::BrandConsistency => r#"
 Analyze this image for brand consistency:
@@ -413,7 +586,13 @@ Analyze this image for brand consistency:
 - Logo placement and visibility
 - Overall brand alignment
 
-Return JSON with scores (0-100) for each criterion and brand consistency notes.
+Return ONLY valid JSON (no markdown) with this structure:
+{
+    "scores": {"color_palette": 0-100, "typography": 0-100, "visual_style": 0-100, "logo": 0-100, "alignment": 0-100},
+    "overall_score": 0-100,
+    "issues": ["issue1"],
+    "improvements": ["improvement1"]
+}
 "#.to_string(),
             ImageAnalysisType::Custom => {
                 let criteria_str = custom_criteria.join("\n- ");
@@ -421,7 +600,13 @@ Return JSON with scores (0-100) for each criterion and brand consistency notes.
 Analyze this image based on the following custom criteria:
 - {}
 
-Return JSON with scores (0-100) for each criterion, overall score, issues, and improvements.
+Return ONLY valid JSON (no markdown) with this structure:
+{{
+    "scores": {{"criterion1": 0-100, "criterion2": 0-100}},
+    "overall_score": 0-100,
+    "issues": ["issue1"],
+    "improvements": ["improvement1"]
+}}
 "#, criteria_str)
             }
         };
@@ -436,14 +621,66 @@ Return JSON with scores (0-100) for each criterion, overall score, issues, and i
             .unwrap_or_default();
         
         format!(r#"
-Analyze this webpage and extract the following information:
+Analyze this webpage screenshot and extract the following information:
 {}
 {}
 
-Return the extracted data as valid JSON. If multiple items are found, return an array.
-Only return the JSON, no other text.
+Return ONLY the extracted data as valid JSON. If multiple items are found, return an array.
+No markdown formatting, no explanation, just the JSON.
 "#, description, schema_hint)
     }
+}
+
+/// Login form analysis result from Gemini
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginFormAnalysis {
+    pub has_login_form: bool,
+    #[serde(default)]
+    pub already_logged_in: bool,
+    pub username_selector: Option<String>,
+    pub password_selector: Option<String>,
+    pub submit_selector: Option<String>,
+    #[serde(default)]
+    pub captcha_present: bool,
+    #[serde(default)]
+    pub captcha_type: Option<String>,
+    #[serde(default)]
+    pub two_factor_field: Option<String>,
+    #[serde(default)]
+    pub error_message_visible: bool,
+    #[serde(default)]
+    pub confidence: f32,
+}
+
+/// Extract JSON from AI response, handling markdown code blocks
+fn extract_json_from_response(response: &str) -> String {
+    let response = response.trim();
+    
+    // Handle markdown code blocks
+    if response.starts_with("```json") {
+        let start = response.find('\n').unwrap_or(7) + 1;
+        let end = response.rfind("```").unwrap_or(response.len());
+        return response[start..end].trim().to_string();
+    }
+    if response.starts_with("```") {
+        let start = response.find('\n').unwrap_or(3) + 1;
+        let end = response.rfind("```").unwrap_or(response.len());
+        return response[start..end].trim().to_string();
+    }
+    
+    // Try to find JSON object or array
+    if let Some(start) = response.find('{') {
+        if let Some(end) = response.rfind('}') {
+            return response[start..=end].to_string();
+        }
+    }
+    if let Some(start) = response.find('[') {
+        if let Some(end) = response.rfind(']') {
+            return response[start..=end].to_string();
+        }
+    }
+    
+    response.to_string()
 }
 
 // ============================================================================

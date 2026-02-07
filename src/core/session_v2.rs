@@ -52,11 +52,31 @@ pub struct NamedSessionMeta {
     pub auth_status: AuthStatus,
     /// Last accessed timestamp (ISO 8601)
     pub last_accessed: String,
-    /// Whether to auto-extend lifetime
+    /// Whether to auto-extend lifetime on access
     pub auto_extend: bool,
     /// Creation timestamp (ISO 8601)
     pub created_at: String,
+    /// Time-to-live in hours (0 = no expiration, default: 168 = 1 week)
+    #[serde(default = "default_ttl_hours")]
+    pub ttl_hours: u64,
+    /// Expiration timestamp (ISO 8601, calculated from created_at + ttl_hours)
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    
+    // Session state (for Chrome-like restore)
+    /// Last URL the session was on
+    #[serde(default)]
+    pub last_url: Option<String>,
+    /// Navigation history (URLs visited in this session)
+    #[serde(default)]
+    pub navigation_history: Vec<String>,
+    /// Whether to auto-restore last URL on acquire
+    #[serde(default = "default_auto_restore")]
+    pub auto_restore: bool,
 }
+
+fn default_ttl_hours() -> u64 { 168 } // 1 week
+fn default_auto_restore() -> bool { true } // Auto-restore last URL by default
 
 /// Named session state (in-memory, includes runtime handle)
 #[derive(Clone)]
@@ -114,6 +134,15 @@ pub struct AcquireRequest {
     pub headless: bool,
     #[serde(default)]
     pub auth_check: Option<AuthCheckConfig>,
+    /// Time-to-live in hours (0 = no expiration, default: 168 = 1 week)
+    #[serde(default = "default_ttl_hours")]
+    pub ttl_hours: u64,
+    /// Auto-extend TTL on each access (default: true)
+    #[serde(default = "default_true")]
+    pub auto_extend: bool,
+    /// Restore last URL on acquire (default: true)
+    #[serde(default = "default_true")]
+    pub restore: bool,
 }
 
 fn default_true() -> bool {
@@ -128,6 +157,9 @@ pub struct AcquireResponse {
     pub profile: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_status: Option<AuthStatus>,
+    /// URL that was restored (if auto-restore was triggered)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restored_url: Option<String>,
 }
 
 /// Response for GET /v2/session/list
@@ -139,6 +171,12 @@ pub struct SessionListItem {
     pub last_accessed: String,
     pub active: bool,
     pub acquired: bool,
+    /// Time-to-live in hours
+    pub ttl_hours: u64,
+    /// Expiration timestamp (ISO 8601)
+    pub expires_at: Option<String>,
+    /// Whether session is expired
+    pub expired: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -291,6 +329,7 @@ impl SessionManagerV2 {
                     is_new: false,
                     profile: session.meta.profile,
                     auth_status: Some(session.meta.auth_status),
+                    restored_url: None, // Restored by API layer
                 });
             }
         }
@@ -319,13 +358,26 @@ impl SessionManagerV2 {
         // Create the actual session
         let (_id, handle) = create_session_fn(options)?;
         
+        // Calculate expiration time if TTL is set
+        let expires_at = if request.ttl_hours > 0 {
+            Some(chrono_add_hours(&now, request.ttl_hours))
+        } else {
+            None
+        };
+        
         let meta = NamedSessionMeta {
             name: request.name.clone(),
             profile: profile_name.clone(),
             auth_status: AuthStatus::default(),
             last_accessed: now.clone(),
-            auto_extend: true,
+            auto_extend: request.auto_extend,
             created_at: now,
+            ttl_hours: request.ttl_hours,
+            expires_at,
+            // Session state
+            last_url: None,
+            navigation_history: Vec::new(),
+            auto_restore: true,
         };
         
         let session = NamedSession {
@@ -348,7 +400,43 @@ impl SessionManagerV2 {
             is_new: true,
             profile: profile_name,
             auth_status: None,
+            restored_url: None, // New session, nothing to restore
         })
+    }
+    
+    /// Register an externally created session
+    /// Used when sessions are created through other means (e.g., MCP)
+    pub fn register(&self, name: &str, id: &str, profile: &str, _headless: bool) {
+        let now = chrono_now_iso8601();
+        let ttl_hours = default_ttl_hours();
+        let expires_at = Some(chrono_add_hours(&now, ttl_hours));
+        
+        let meta = NamedSessionMeta {
+            name: name.to_string(),
+            profile: profile.to_string(),
+            auth_status: AuthStatus::default(),
+            last_accessed: now.clone(),
+            auto_extend: true,
+            created_at: now,
+            ttl_hours,
+            expires_at,
+            // Session state
+            last_url: None,
+            navigation_history: Vec::new(),
+            auto_restore: true,
+        };
+        
+        let session = NamedSession {
+            meta,
+            handle: Some(SessionHandle { id: id.to_string() }),
+            acquired: true,
+        };
+        
+        if let Ok(mut sessions) = self.sessions.write() {
+            sessions.insert(name.to_string(), session);
+        }
+        
+        let _ = self.save_sessions();
     }
     
     /// Release a session (keep profile, mark as not acquired)
@@ -362,30 +450,184 @@ impl SessionManagerV2 {
         session.acquired = false;
         session.meta.last_accessed = chrono_now_iso8601();
         
-        drop(sessions);
-        self.save_sessions()?;
-        
-        Ok(())
-    }
-    
-    /// Destroy a session (close and remove)
-    pub fn destroy(&self, name: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.write()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        
-        let session = sessions.remove(name)
-            .ok_or_else(|| format!("Session '{}' not found", name))?;
-        
-        // Close the handle if active
-        if let Some(_handle) = session.handle {
-            // The handle will be dropped, closing the session
-            // We could send a Close command here if needed
+        // Extend expiration if auto_extend is enabled
+        if session.meta.auto_extend && session.meta.ttl_hours > 0 {
+            let now = chrono_now_iso8601();
+            session.meta.expires_at = Some(chrono_add_hours(&now, session.meta.ttl_hours));
         }
         
         drop(sessions);
         self.save_sessions()?;
         
         Ok(())
+    }
+    
+    /// Update session's last URL (for session restore)
+    pub fn update_last_url(&self, name: &str, url: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        
+        // Don't save empty or about:blank URLs
+        if url.is_empty() || url == "about:blank" {
+            return Ok(());
+        }
+        
+        // Add to history if different from last entry
+        if session.meta.navigation_history.last() != Some(&url.to_string()) {
+            session.meta.navigation_history.push(url.to_string());
+            
+            // Keep only last 50 entries
+            if session.meta.navigation_history.len() > 50 {
+                session.meta.navigation_history.remove(0);
+            }
+        }
+        
+        session.meta.last_url = Some(url.to_string());
+        session.meta.last_accessed = chrono_now_iso8601();
+        
+        drop(sessions);
+        
+        // Don't persist on every URL change (too expensive)
+        // Only persist when session is released
+        Ok(())
+    }
+    
+    /// Get the last URL for a session (for restore)
+    pub fn get_last_url(&self, name: &str) -> Option<String> {
+        let sessions = self.sessions.read().ok()?;
+        sessions.get(name).and_then(|s| s.meta.last_url.clone())
+    }
+    
+    /// Get session's navigation history
+    pub fn get_navigation_history(&self, name: &str) -> Vec<String> {
+        let sessions = match self.sessions.read() {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        sessions.get(name)
+            .map(|s| s.meta.navigation_history.clone())
+            .unwrap_or_default()
+    }
+    
+    /// Destroy a session (close and remove)
+    /// Returns the session ID if found, so caller can close the WebView
+    pub fn destroy(&self, name: &str) -> Result<Option<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let session = sessions.remove(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        
+        // Get the session ID to close
+        let session_id = session.handle.map(|h| h.id);
+        
+        drop(sessions);
+        self.save_sessions()?;
+        
+        Ok(session_id)
+    }
+    
+    /// Destroy all inactive sessions
+    /// Returns list of session IDs that need to be closed
+    pub fn cleanup_inactive(&self) -> Result<Vec<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let mut to_close = Vec::new();
+        let mut to_remove = Vec::new();
+        
+        for (name, session) in sessions.iter() {
+            if !session.acquired {
+                if let Some(ref handle) = session.handle {
+                    to_close.push(handle.id.clone());
+                }
+                to_remove.push(name.clone());
+            }
+        }
+        
+        for name in &to_remove {
+            sessions.remove(name);
+        }
+        
+        drop(sessions);
+        let _ = self.save_sessions();
+        
+        println!("[SessionManagerV2] Cleaned up {} inactive sessions", to_remove.len());
+        
+        Ok(to_close)
+    }
+    
+    /// Cleanup old sessions based on last_accessed time
+    /// Returns list of session IDs that need to be closed
+    pub fn cleanup_old(&self, max_age_hours: u64) -> Result<Vec<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let now = SystemTime::now();
+        let max_age = Duration::from_secs(max_age_hours * 3600);
+        let mut to_close = Vec::new();
+        let mut to_remove = Vec::new();
+        
+        for (name, session) in sessions.iter() {
+            // Parse the last_accessed timestamp
+            if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&session.meta.last_accessed) {
+                let session_time = SystemTime::UNIX_EPOCH + Duration::from_secs(ts.timestamp() as u64);
+                if let Ok(elapsed) = now.duration_since(session_time) {
+                    if elapsed > max_age && !session.acquired {
+                        if let Some(ref handle) = session.handle {
+                            to_close.push(handle.id.clone());
+                        }
+                        to_remove.push(name.clone());
+                    }
+                }
+            }
+        }
+        
+        for name in &to_remove {
+            sessions.remove(name);
+        }
+        
+        drop(sessions);
+        let _ = self.save_sessions();
+        
+        println!("[SessionManagerV2] Cleaned up {} old sessions (older than {}h)", to_remove.len(), max_age_hours);
+        
+        Ok(to_close)
+    }
+    
+    /// Cleanup expired sessions (based on TTL)
+    /// Returns list of session IDs that need to be closed
+    pub fn cleanup_expired(&self) -> Result<Vec<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let mut to_close = Vec::new();
+        let mut to_remove = Vec::new();
+        
+        for (name, session) in sessions.iter() {
+            if is_expired(&session.meta.expires_at) && !session.acquired {
+                if let Some(ref handle) = session.handle {
+                    to_close.push(handle.id.clone());
+                }
+                to_remove.push(name.clone());
+            }
+        }
+        
+        for name in &to_remove {
+            sessions.remove(name);
+        }
+        
+        drop(sessions);
+        let _ = self.save_sessions();
+        
+        if !to_remove.is_empty() {
+            println!("[SessionManagerV2] Cleaned up {} expired sessions", to_remove.len());
+        }
+        
+        Ok(to_close)
     }
     
     /// List all sessions
@@ -401,6 +643,9 @@ impl SessionManagerV2 {
                 last_accessed: s.meta.last_accessed.clone(),
                 active: s.handle.is_some(),
                 acquired: s.acquired,
+                ttl_hours: s.meta.ttl_hours,
+                expires_at: s.meta.expires_at.clone(),
+                expired: is_expired(&s.meta.expires_at),
             })
             .collect();
         
@@ -443,6 +688,86 @@ impl SessionManagerV2 {
         self.sessions.read()
             .map(|s| s.len())
             .unwrap_or(0)
+    }
+    
+    /// Clone a session (copy profile to new name)
+    /// The new session will have a fresh browser instance but share the same cookies/storage
+    pub fn clone_session(&self, source_name: &str, new_name: &str) -> Result<(), String> {
+        // Check source exists
+        let source_meta = {
+            let sessions = self.sessions.read()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            sessions.get(source_name)
+                .ok_or_else(|| format!("Source session '{}' not found", source_name))?
+                .meta.clone()
+        };
+        
+        // Check new name doesn't exist
+        {
+            let sessions = self.sessions.read()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            if sessions.contains_key(new_name) {
+                return Err(format!("Session '{}' already exists", new_name));
+            }
+        }
+        
+        // Copy profile directory
+        let data_dir = crate::core::config::AppConfig::data_dir();
+        let source_profile_dir = data_dir.join("profiles").join(&source_meta.profile);
+        let new_profile_dir = data_dir.join("profiles").join(new_name);
+        
+        if source_profile_dir.exists() {
+            copy_dir_recursive(&source_profile_dir, &new_profile_dir)?;
+        }
+        
+        // Copy session data directory  
+        let source_session_dir = crate::core::config::AppConfig::get_session_dir(source_name);
+        let new_session_dir = crate::core::config::AppConfig::get_session_dir(new_name);
+        
+        if source_session_dir.exists() {
+            copy_dir_recursive(&source_session_dir, &new_session_dir)?;
+        }
+        
+        // Create new session metadata
+        let now = chrono_now_iso8601();
+        let ttl_hours = source_meta.ttl_hours;
+        let expires_at = if ttl_hours > 0 {
+            Some(chrono_add_hours(&now, ttl_hours))
+        } else {
+            None
+        };
+        
+        let new_meta = NamedSessionMeta {
+            name: new_name.to_string(),
+            profile: new_name.to_string(),
+            auth_status: source_meta.auth_status,
+            last_accessed: now.clone(),
+            auto_extend: source_meta.auto_extend,
+            created_at: now,
+            ttl_hours,
+            expires_at,
+            // Copy session state from source
+            last_url: source_meta.last_url,
+            navigation_history: source_meta.navigation_history,
+            auto_restore: source_meta.auto_restore,
+        };
+        
+        let new_session = NamedSession {
+            meta: new_meta,
+            handle: None, // New session starts without active handle
+            acquired: false,
+        };
+        
+        // Store new session
+        {
+            let mut sessions = self.sessions.write()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            sessions.insert(new_name.to_string(), new_session);
+        }
+        
+        self.save_sessions()?;
+        
+        Ok(())
     }
     
     /// Check authentication status using selectors
@@ -517,6 +842,9 @@ impl SessionManagerV2 {
                 create_if_missing: true,
                 headless: true, // Warm up in headless mode
                 auth_check: None,
+                ttl_hours: default_ttl_hours(),
+                auto_extend: true,
+                restore: false, // Don't restore during warm up
             };
             
             match self.acquire(request, &create_session_fn).await {
@@ -642,6 +970,82 @@ fn chrono_now_iso8601() -> String {
     )
 }
 
+/// Add hours to a timestamp and return new ISO 8601 string
+fn chrono_add_hours(base: &str, hours: u64) -> String {
+    use std::time::UNIX_EPOCH;
+    
+    // Parse base timestamp (approximate)
+    let base_secs = if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(base) {
+        ts.timestamp() as u64
+    } else {
+        // Fallback: use current time + hours
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    };
+    
+    let new_secs = base_secs + (hours * 3600);
+    let days_since_epoch = new_secs / 86400;
+    let secs_in_day = new_secs % 86400;
+    
+    let years = 1970 + (days_since_epoch / 365);
+    let remaining_days = days_since_epoch % 365;
+    let month = (remaining_days / 30) + 1;
+    let day = (remaining_days % 30) + 1;
+    
+    let hour = secs_in_day / 3600;
+    let minute = (secs_in_day % 3600) / 60;
+    let second = secs_in_day % 60;
+    
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        years, month.min(12), day.min(31), hour, minute, second
+    )
+}
+
+/// Check if a timestamp has expired (is in the past)
+fn is_expired(expires_at: &Option<String>) -> bool {
+    match expires_at {
+        None => false, // No expiration = never expires
+        Some(ts) => {
+            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(ts) {
+                let now = chrono::Utc::now();
+                exp.with_timezone(&chrono::Utc) < now
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    if !src.exists() {
+        return Ok(()); // Nothing to copy
+    }
+    
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create directory {:?}: {}", dst, e))?;
+    
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("Failed to read directory {:?}: {}", src, e))? 
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dest_path)?;
+        } else {
+            std::fs::copy(&path, &dest_path)
+                .map_err(|e| format!("Failed to copy {:?} to {:?}: {}", path, dest_path, e))?;
+        }
+    }
+    
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -738,6 +1142,8 @@ mod tests {
             last_accessed: "2026-02-05T12:00:00Z".to_string(),
             auto_extend: true,
             created_at: "2026-02-05T12:00:00Z".to_string(),
+            ttl_hours: 168,
+            expires_at: Some("2026-02-12T12:00:00Z".to_string()),
         };
         
         let json = serde_json::to_string(&meta).unwrap();
@@ -761,6 +1167,9 @@ mod tests {
             auth_status: AuthStatus::default(),
             last_accessed: "2026-02-05T12:00:00Z".to_string(),
             active: true,
+            ttl_hours: 168,
+            expires_at: Some("2026-02-12T12:00:00Z".to_string()),
+            expired: false,
         };
         
         let json = serde_json::to_string(&item).unwrap();

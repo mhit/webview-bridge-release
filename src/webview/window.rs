@@ -93,6 +93,47 @@ impl WebViewWindow {
         self.hwnd
     }
 
+    /// Show the window (make visible)
+    pub fn show(&self) {
+        unsafe {
+            ShowWindow(self.hwnd, SW_SHOW);
+            tracing::debug!("Window shown: {:?}", self.hwnd);
+        }
+    }
+    
+    /// Hide the window (pseudo-headless)
+    pub fn hide(&self) {
+        unsafe {
+            ShowWindow(self.hwnd, SW_HIDE);
+            tracing::debug!("Window hidden: {:?}", self.hwnd);
+        }
+    }
+    
+    /// Set window visibility
+    pub fn set_visible(&self, visible: bool) {
+        if visible {
+            self.show();
+        } else {
+            self.hide();
+        }
+    }
+    
+    /// Check if window is visible
+    pub fn is_visible(&self) -> bool {
+        unsafe {
+            IsWindowVisible(self.hwnd).as_bool()
+        }
+    }
+    
+    /// Bring window to front and focus
+    pub fn bring_to_front(&self) {
+        unsafe {
+            ShowWindow(self.hwnd, SW_RESTORE);
+            SetForegroundWindow(self.hwnd);
+            tracing::debug!("Window brought to front: {:?}", self.hwnd);
+        }
+    }
+
     pub fn close(&self) {
         unsafe {
             let _ = DestroyWindow(self.hwnd);

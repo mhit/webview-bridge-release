@@ -8,6 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 pub mod ai;
 pub mod comm;
+pub mod config;
+pub mod cookie_import;
 pub mod download;
 pub mod goal;
 pub mod macro_engine;
@@ -25,7 +27,7 @@ pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
 // Command Types for Main Thread Communication
 // ============================================================================
 
-/// Main thread command enum
+/// Main thread command enum (V2 only)
 #[derive(Debug)]
 pub enum AppCommand {
     CreateSession {
@@ -44,17 +46,11 @@ pub enum AppCommand {
     ExecuteScript {
         id: String,
         script: String,
-        request_id: String,
-        resp_tx: oneshot::Sender<Result<serde_json::Value, String>>,
+        resp_tx: oneshot::Sender<Result<String, String>>,
     },
     CloseSession {
         id: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
-    },
-    Act {
-        id: String,
-        action: ActionItem,
-        resp_tx: oneshot::Sender<Result<serde_json::Value, String>>,
     },
     Snapshot {
         id: String,
@@ -79,13 +75,6 @@ pub enum AppCommand {
         selector: String,
         timeout_ms: u64,
         resp_tx: oneshot::Sender<Result<bool, String>>,
-    },
-    Extract {
-        id: String,
-        selector: String,
-        attribute: String,
-        extract_all: bool,
-        resp_tx: oneshot::Sender<Result<String, String>>,
     },
 }
 
@@ -134,6 +123,15 @@ pub enum SessionCommand {
         attribute: String,
         extract_all: bool,
         resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    /// Set window visibility (pseudo-headless mode)
+    SetVisibility {
+        visible: bool,
+        resp_tx: oneshot::Sender<Result<bool, String>>,
+    },
+    /// Bring window to front for user interaction
+    BringToFront {
+        resp_tx: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -432,12 +430,198 @@ impl SessionManager {
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::Screenshot { resp_tx } => {
-                            tracing::debug!("[Session:{}] Screenshot", id);
+                            tracing::info!("[Session:{}] Screenshot command received", id);
                             if !webview.is_ready() {
+                                tracing::warn!("[Session:{}] WebView not ready", id);
                                 let _ = resp_tx.send(Err("WebView is not ready".to_string()));
                                 continue;
                             }
-                            let result = webview.screenshot();
+                            
+                            // Improved screenshot script with CSP bypass via fetch+eval
+                            // and multiple CDN fallbacks
+                            let init_script = r#"
+                                (function() {
+                                    window.__wbp_ss_data = null;
+                                    window.__wbp_ss_error = null;
+                                    window.__wbp_ss_status = 'initializing';
+                                    
+                                    function startCapture() {
+                                        window.__wbp_ss_status = 'capturing';
+                                        try {
+                                            html2canvas(document.body, {
+                                                useCORS: true,
+                                                allowTaint: true,
+                                                scale: 1,
+                                                logging: false,
+                                                removeContainer: true,
+                                                foreignObjectRendering: false,
+                                                windowWidth: document.documentElement.scrollWidth,
+                                                windowHeight: document.documentElement.scrollHeight
+                                            }).then(function(canvas) {
+                                                window.__wbp_ss_data = canvas.toDataURL('image/png').replace('data:image/png;base64,', '');
+                                                window.__wbp_ss_status = 'done';
+                                            }).catch(function(e) {
+                                                window.__wbp_ss_error = 'html2canvas error: ' + e.message;
+                                                window.__wbp_ss_status = 'error';
+                                            });
+                                        } catch(e) {
+                                            window.__wbp_ss_error = 'startCapture exception: ' + e.message;
+                                            window.__wbp_ss_status = 'error';
+                                        }
+                                    }
+                                    
+                                    // Check if html2canvas is already loaded
+                                    if (typeof html2canvas !== 'undefined') {
+                                        startCapture();
+                                        return 'html2canvas_ready';
+                                    }
+                                    
+                                    // Try loading via fetch+eval to bypass CSP script-src restrictions
+                                    var cdns = [
+                                        'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+                                        'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+                                        'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js'
+                                    ];
+                                    
+                                    window.__wbp_ss_status = 'loading';
+                                    
+                                    async function tryLoadFromCDN(index) {
+                                        if (index >= cdns.length) {
+                                            // All CDNs failed, try script tag as last resort
+                                            tryScriptTag(0);
+                                            return;
+                                        }
+                                        
+                                        try {
+                                            var response = await fetch(cdns[index]);
+                                            if (!response.ok) throw new Error('HTTP ' + response.status);
+                                            var code = await response.text();
+                                            
+                                            // Execute via Function constructor (may work where eval is blocked)
+                                            try {
+                                                (new Function(code))();
+                                            } catch(e) {
+                                                // Try eval as fallback
+                                                eval(code);
+                                            }
+                                            
+                                            if (typeof html2canvas !== 'undefined') {
+                                                startCapture();
+                                            } else {
+                                                throw new Error('html2canvas not defined after eval');
+                                            }
+                                        } catch(e) {
+                                            console.warn('CDN ' + index + ' failed:', e.message);
+                                            tryLoadFromCDN(index + 1);
+                                        }
+                                    }
+                                    
+                                    function tryScriptTag(index) {
+                                        if (index >= cdns.length) {
+                                            window.__wbp_ss_error = 'Failed to load html2canvas from all sources';
+                                            window.__wbp_ss_status = 'error';
+                                            return;
+                                        }
+                                        
+                                        var script = document.createElement('script');
+                                        script.src = cdns[index];
+                                        script.onload = function() {
+                                            if (typeof html2canvas !== 'undefined') {
+                                                startCapture();
+                                            } else {
+                                                tryScriptTag(index + 1);
+                                            }
+                                        };
+                                        script.onerror = function() {
+                                            tryScriptTag(index + 1);
+                                        };
+                                        document.head.appendChild(script);
+                                    }
+                                    
+                                    tryLoadFromCDN(0);
+                                    return 'loading_started';
+                                })()
+                            "#;
+                            
+                            // Execute init script
+                            let init_result = webview.execute_script(init_script, Uuid::new_v4().to_string());
+                            if init_result.is_err() {
+                                let _ = resp_tx.send(Err("Failed to start capture".to_string()));
+                                continue;
+                            }
+                            
+                            // Step 2: Poll for result (up to 15 seconds for slow pages)
+                            let poll_script = r#"
+                                JSON.stringify({
+                                    status: window.__wbp_ss_status || 'unknown',
+                                    hasData: !!window.__wbp_ss_data,
+                                    dataLen: window.__wbp_ss_data ? window.__wbp_ss_data.length : 0,
+                                    error: window.__wbp_ss_error
+                                })
+                            "#;
+                            
+                            let mut result: Result<String, String> = Err("Screenshot timeout".to_string());
+                            
+                            for i in 0..150 {  // 15 seconds max
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                
+                                if let Ok(status_json) = webview.execute_script(poll_script, Uuid::new_v4().to_string()) {
+                                    // Parse status JSON
+                                    if let Ok(status) = serde_json::from_str::<serde_json::Value>(&status_json) {
+                                        let ss_status = status.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+                                        let has_data = status.get("hasData").and_then(|v| v.as_bool()).unwrap_or(false);
+                                        let error = status.get("error").and_then(|e| e.as_str());
+                                        
+                                        if ss_status == "done" && has_data {
+                                            // Get the actual data
+                                            if let Ok(data) = webview.execute_script("window.__wbp_ss_data", Uuid::new_v4().to_string()) {
+                                                let clean_data = data.trim_matches('"').to_string();
+                                                if clean_data.starts_with("iVBOR") || clean_data.len() > 1000 {
+                                                    tracing::info!("[Session:{}] Screenshot success, len={}", id, clean_data.len());
+                                                    result = Ok(clean_data);
+                                                    break;
+                                                }
+                                            }
+                                        } else if ss_status == "error" {
+                                            let err_msg = error.unwrap_or("Unknown error");
+                                            tracing::warn!("[Session:{}] html2canvas error: {}, trying native CapturePreview", id, err_msg);
+                                            // html2canvas failed (likely CSP), try native API
+                                            result = Err(format!("html2canvas failed: {}", err_msg));
+                                            break;
+                                        }
+                                        
+                                        // Log progress every 2 seconds
+                                        if i % 20 == 0 && i > 0 {
+                                            tracing::debug!("[Session:{}] Screenshot status: {}", id, ss_status);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Cleanup html2canvas state
+                            let _ = webview.execute_script(
+                                "delete window.__wbp_ss_data; delete window.__wbp_ss_error; delete window.__wbp_ss_status;",
+                                Uuid::new_v4().to_string()
+                            );
+                            
+                            // If html2canvas failed, try native CapturePreview API
+                            if result.is_err() {
+                                tracing::info!("[Session:{}] Falling back to native CapturePreview API", id);
+                                match webview.capture_preview_native() {
+                                    Ok(png_data) => {
+                                        // Convert PNG bytes to base64
+                                        use base64::{Engine as _, engine::general_purpose::STANDARD};
+                                        let base64_data = STANDARD.encode(&png_data);
+                                        tracing::info!("[Session:{}] Native screenshot success, size={} bytes", id, base64_data.len());
+                                        result = Ok(base64_data);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("[Session:{}] Native CapturePreview also failed: {}", id, e);
+                                        // Keep the original error
+                                    }
+                                }
+                            }
+                            
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::GetCookies { resp_tx } => {
@@ -475,6 +659,17 @@ impl SessionManager {
                             }
                             let result = webview.extract(&selector, &attribute, extract_all);
                             let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::SetVisibility { visible, resp_tx } => {
+                            tracing::debug!("[Session:{}] SetVisibility: {}", id, visible);
+                            webview.set_visible(visible);
+                            let is_visible = webview.is_visible();
+                            let _ = resp_tx.send(Ok(is_visible));
+                        }
+                        SessionCommand::BringToFront { resp_tx } => {
+                            tracing::debug!("[Session:{}] BringToFront", id);
+                            webview.bring_to_front();
+                            let _ = resp_tx.send(Ok(()));
                         }
                     }
                 }
@@ -714,6 +909,46 @@ impl SessionManager {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(e)) => Err(e),
             Err(_) => Err("Extract response channel closed".to_string()),
+        }
+    }
+
+    /// Set window visibility (pseudo-headless mode)
+    pub async fn set_visibility(&self, id: &str, visible: bool) -> Result<bool, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::SetVisibility { visible, resp_tx: tx })?;
+
+        match rx.await {
+            Ok(Ok(is_visible)) => Ok(is_visible),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("SetVisibility response channel closed".to_string()),
+        }
+    }
+
+    /// Bring window to front for user interaction
+    pub async fn bring_to_front(&self, id: &str) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::BringToFront { resp_tx: tx })?;
+
+        match rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("BringToFront response channel closed".to_string()),
         }
     }
 

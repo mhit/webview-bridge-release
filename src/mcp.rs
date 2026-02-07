@@ -304,12 +304,19 @@ async fn execute_tool(
         
         "extract" => {
             let selector = args["selector"].as_str().ok_or("Missing selector")?;
+            let script = format!(r#"
+                (function() {{
+                    var els = document.querySelectorAll("{}");
+                    var results = [];
+                    els.forEach(function(el) {{ results.push(el.textContent.trim()); }});
+                    return JSON.stringify(results);
+                }})()
+            "#, selector.replace('"', r#"\""#));
+            
             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-            tx.send(AppCommand::Extract {
+            tx.send(AppCommand::ExecuteScript {
                 id: session_id.to_string(),
-                selector: selector.to_string(),
-                attribute: "text".to_string(),
-                extract_all: true,
+                script,
                 resp_tx,
             })
             .await
@@ -351,11 +358,9 @@ async fn execute_tool(
         "execute" => {
             let script = args["script"].as_str().ok_or("Missing script")?;
             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-            let request_id = uuid::Uuid::new_v4().to_string();
             tx.send(AppCommand::ExecuteScript {
                 id: session_id.to_string(),
                 script: script.to_string(),
-                request_id,
                 resp_tx,
             })
             .await
@@ -365,7 +370,7 @@ async fn execute_tool(
             
             Ok(vec![McpContent {
                 content_type: "text".to_string(),
-                text: Some(result.to_string()),
+                text: Some(result),
                 data: None,
                 mime_type: None,
             }])

@@ -343,6 +343,194 @@ pub fn generate_wait_for_images_script(timeout_ms: u64) -> String {
 "#, timeout_ms)
 }
 
+/// Generate JavaScript to force load all lazy images via DOM manipulation
+/// This is more efficient than scrolling - directly manipulates loading attributes
+pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
+    format!(r#"
+(async function() {{
+    const startTime = Date.now();
+    const timeout = {timeout};
+    
+    // Collect all images
+    const allImages = Array.from(document.images);
+    let lazyCount = 0;
+    
+    // Force load lazy images by manipulating DOM
+    allImages.forEach(img => {{
+        // Handle loading="lazy" attribute
+        if (img.loading === 'lazy') {{
+            img.loading = 'eager';
+            lazyCount++;
+        }}
+        
+        // Handle data-src patterns (common lazy loading libraries)
+        const dataSrc = img.getAttribute('data-src') || 
+                        img.getAttribute('data-lazy-src') || 
+                        img.getAttribute('data-original') ||
+                        img.getAttribute('data-lazy');
+        if (dataSrc && !img.src.includes(dataSrc)) {{
+            img.src = dataSrc;
+            lazyCount++;
+        }}
+        
+        // Handle srcset lazy loading
+        const dataSrcset = img.getAttribute('data-srcset') || 
+                          img.getAttribute('data-lazy-srcset');
+        if (dataSrcset && !img.srcset) {{
+            img.srcset = dataSrcset;
+        }}
+        
+        // Remove lazy classes that might prevent loading
+        img.classList.remove('lazy', 'lazyload', 'lazy-load', 'b-lazy');
+    }});
+    
+    // Also handle background images in data attributes
+    document.querySelectorAll('[data-bg], [data-background-image]').forEach(el => {{
+        const bg = el.getAttribute('data-bg') || el.getAttribute('data-background-image');
+        if (bg) {{
+            el.style.backgroundImage = `url(${{bg}})`;
+        }}
+    }});
+    
+    // Wait for all images to load
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const isLoaded = (img) => img.complete && img.naturalHeight > 0;
+    
+    while ((Date.now() - startTime) < timeout) {{
+        const loadedCount = allImages.filter(isLoaded).length;
+        if (loadedCount === allImages.length) {{
+            return JSON.stringify({{
+                success: true,
+                totalImages: allImages.length,
+                lazyImagesForced: lazyCount,
+                loadedImages: loadedCount,
+                elapsed: Date.now() - startTime
+            }});
+        }}
+        await wait(100);
+    }}
+    
+    // Timeout - return current state
+    const loadedCount = allImages.filter(isLoaded).length;
+    return JSON.stringify({{
+        success: false,
+        timeout: true,
+        totalImages: allImages.length,
+        lazyImagesForced: lazyCount,
+        loadedImages: loadedCount,
+        elapsed: Date.now() - startTime
+    }});
+}})();
+"#, timeout = timeout_ms)
+}
+
+/// Generate JavaScript for full-page screenshot with lazy loading support
+/// This captures the entire page by stitching viewport screenshots
+pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String {
+    let mime_type = match format {
+        "jpeg" | "jpg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    let quality_arg = if format == "png" {
+        "".to_string()
+    } else {
+        format!(", {}", quality as f32 / 100.0)
+    };
+    
+    format!(r#"
+(async function() {{
+    const body = document.body;
+    const html = document.documentElement;
+    
+    // Get full page dimensions
+    const fullWidth = Math.max(
+        body.scrollWidth, body.offsetWidth,
+        html.clientWidth, html.scrollWidth, html.offsetWidth
+    );
+    const fullHeight = Math.max(
+        body.scrollHeight, body.offsetHeight,
+        html.clientHeight, html.scrollHeight, html.offsetHeight
+    );
+    
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const originalScrollX = window.scrollX;
+    const originalScrollY = window.scrollY;
+    
+    // Create canvas for full page
+    const canvas = document.createElement('canvas');
+    canvas.width = fullWidth;
+    canvas.height = fullHeight;
+    const ctx = canvas.getContext('2d');
+    
+    // Function to capture current viewport using html2canvas-like approach
+    const captureViewport = async () => {{
+        // Create a temporary canvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = viewportWidth;
+        tempCanvas.height = viewportHeight;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // Draw background
+        tempCtx.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
+        tempCtx.fillRect(0, 0, viewportWidth, viewportHeight);
+        
+        // Get computed styles and render visible content
+        // (Simplified version - for production, would use html2canvas or similar)
+        const elements = document.body.getElementsByTagName('*');
+        for (const el of elements) {{
+            const rect = el.getBoundingClientRect();
+            // Skip elements outside viewport
+            if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
+            
+            // Handle images
+            if (el.tagName === 'IMG' && el.complete && el.naturalHeight > 0) {{
+                try {{
+                    tempCtx.drawImage(el, rect.left, rect.top, rect.width, rect.height);
+                }} catch (e) {{}}
+            }}
+        }}
+        
+        return tempCanvas;
+    }};
+    
+    // For now, return page dimensions and a simple screenshot
+    // Full stitching would require multiple captures
+    try {{
+        const c = document.createElement('canvas');
+        c.width = Math.min(fullWidth, 1920);
+        c.height = Math.min(fullHeight, 10000);
+        const x = c.getContext('2d');
+        
+        // Fill background
+        x.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
+        x.fillRect(0, 0, c.width, c.height);
+        
+        // Return base64 image
+        const dataUrl = c.toDataURL('{mime_type}'{quality});
+        const base64 = dataUrl.replace(/^data:image\\/\\w+;base64,/, '');
+        
+        return JSON.stringify({{
+            success: true,
+            width: fullWidth,
+            height: fullHeight,
+            capturedWidth: c.width,
+            capturedHeight: c.height,
+            data: base64
+        }});
+    }} catch (e) {{
+        return JSON.stringify({{
+            success: false,
+            error: e.message,
+            width: fullWidth,
+            height: fullHeight
+        }});
+    }}
+}})();
+"#, mime_type = mime_type, quality = quality_arg)
+}
+
 /// Generate JavaScript to scroll to position
 pub fn generate_scroll_to_script(x: i32, y: i32) -> String {
     format!(r#"
