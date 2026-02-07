@@ -777,10 +777,72 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
             ))
         }
         MediaAction::CollectImages { selector, min_width, min_height, download, max_images } => {
-            // TODO: Implement image collection
-            McpToolResponse::success_text("Image collection started".to_string())
+            let script = generate_collect_images_script(
+                selector.as_deref(),
+                min_width.unwrap_or(100),
+                min_height.unwrap_or(100),
+                max_images.unwrap_or(50)
+            );
+            
+            match execute_script(&req.session, script, state, 30000).await {
+                Ok(result) => {
+                    match serde_json::from_str::<serde_json::Value>(&result) {
+                        Ok(data) => McpToolResponse::success_json(data),
+                        Err(_) => McpToolResponse::success_text(result),
+                    }
+                }
+                Err(e) => McpToolResponse::error("COLLECT_IMAGES_FAILED", &e),
+            }
         }
     }
+}
+
+fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_height: u32, max_images: usize) -> String {
+    let selector_code = selector
+        .map(|s| format!("document.querySelectorAll('{}')", s.replace('\'', "\\'")))
+        .unwrap_or_else(|| "document.querySelectorAll('img')".to_string());
+    
+    format!(r#"
+(function() {{
+    const minWidth = {};
+    const minHeight = {};
+    const maxImages = {};
+    
+    const images = Array.from({})
+        .filter(img => {{
+            // Check natural dimensions
+            if (img.naturalWidth < minWidth || img.naturalHeight < minHeight) return false;
+            
+            // Check display dimensions
+            const rect = img.getBoundingClientRect();
+            if (rect.width < minWidth || rect.height < minHeight) return false;
+            
+            // Skip data URLs and tiny images
+            if (!img.src || img.src.startsWith('data:')) return false;
+            
+            // Skip common tracking/placeholder patterns
+            if (img.src.includes('pixel') || img.src.includes('spacer') || img.src.includes('blank')) return false;
+            
+            return true;
+        }})
+        .slice(0, maxImages)
+        .map(img => ({{
+            src: img.src,
+            alt: img.alt || null,
+            title: img.title || null,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            displayWidth: Math.round(img.getBoundingClientRect().width),
+            displayHeight: Math.round(img.getBoundingClientRect().height)
+        }}));
+    
+    return JSON.stringify({{
+        success: true,
+        count: images.length,
+        images: images
+    }});
+}})();
+"#, min_width, min_height, max_images, selector_code)
 }
 
 // ============================================================================
