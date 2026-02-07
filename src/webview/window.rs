@@ -5,6 +5,51 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::WindowsAndMessaging::*,
 };
+use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+// ============================================================================
+// Thread-Local WebView Controller Registry
+// ============================================================================
+
+// Thread-local registry mapping HWND -> WebView2 Controller
+// COM objects must stay on the same thread, so we use thread_local storage
+thread_local! {
+    static CONTROLLER_REGISTRY: RefCell<HashMap<isize, ICoreWebView2Controller>> = RefCell::new(HashMap::new());
+}
+
+/// Register a WebView controller for automatic resize handling
+pub fn register_controller(hwnd: HWND, controller: ICoreWebView2Controller) {
+    CONTROLLER_REGISTRY.with(|registry| {
+        registry.borrow_mut().insert(hwnd.0 as isize, controller);
+        tracing::debug!("Registered controller for HWND {:?}", hwnd);
+    });
+}
+
+/// Unregister a WebView controller when the window is closed
+pub fn unregister_controller(hwnd: HWND) {
+    CONTROLLER_REGISTRY.with(|registry| {
+        registry.borrow_mut().remove(&(hwnd.0 as isize));
+        tracing::debug!("Unregistered controller for HWND {:?}", hwnd);
+    });
+}
+
+/// Resize the WebView for a given HWND to match the client area
+fn resize_webview(hwnd: HWND) {
+    CONTROLLER_REGISTRY.with(|registry| {
+        if let Some(controller) = registry.borrow().get(&(hwnd.0 as isize)) {
+            unsafe {
+                let mut rect = RECT::default();
+                // GetClientRect returns BOOL - use as_bool() to check success
+                if GetClientRect(hwnd, &mut rect).as_bool() {
+                    let _ = controller.SetBounds(rect);
+                    tracing::trace!("Resized WebView to {:?}", rect);
+                }
+            }
+        }
+    });
+}
 
 pub struct WebViewWindow {
     hwnd: HWND,
@@ -135,6 +180,8 @@ impl WebViewWindow {
     }
 
     pub fn close(&self) {
+        // Unregister controller before destroying window
+        unregister_controller(self.hwnd);
         unsafe {
             let _ = DestroyWindow(self.hwnd);
         }
@@ -148,12 +195,13 @@ impl WebViewWindow {
     ) -> LRESULT {
         match msg {
             WM_DESTROY => {
-                // Do not quit the message loop here, as we support multiple windows/sessions.
-                // PostQuitMessage(0);
+                // Unregister controller when window is destroyed
+                unregister_controller(hwnd);
                 LRESULT(0)
             }
             WM_SIZE => {
-                tracing::debug!("WM_SIZE received for HWND {:?}", hwnd);
+                // Resize WebView to match new window size
+                resize_webview(hwnd);
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
             WM_RBUTTONUP => {
@@ -167,3 +215,4 @@ impl WebViewWindow {
         }
     }
 }
+

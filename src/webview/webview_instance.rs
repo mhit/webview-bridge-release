@@ -262,6 +262,9 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
         PENDING_CONTROLLERS.with(|map| {
             map.borrow_mut().insert(hwnd_val, controller.clone());
         });
+        
+        // Register controller in global registry for WM_SIZE handling
+        crate::webview::window::register_controller(self.hwnd, controller.clone());
 
         // Notify main loop
         log_webview_debug("ControllerHandler", "Posting WM_WEBVIEW_CREATED message");
@@ -725,6 +728,157 @@ impl WebViewInstance {
                 );
                 let _ = controller.SetBounds(rect);
             }
+        }
+    }
+    
+    /// Set the WebView viewport to specific dimensions (for device simulation)
+    /// This resizes both the window and the WebView content area
+    pub fn set_viewport(&self, width: u32, height: u32) -> WinResult<()> {
+        log_webview_start("WebViewInstance::set_viewport", &format!("{}x{}", width, height));
+        
+        if let Some(controller) = &self.controller {
+            unsafe {
+                // Calculate window size including non-client area (borders, title bar)
+                let style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+                    self.get_hwnd(),
+                    windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
+                ) as u32;
+                let ex_style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+                    self.get_hwnd(),
+                    windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
+                ) as u32;
+                
+                let mut rect = windows::Win32::Foundation::RECT {
+                    left: 0,
+                    top: 0,
+                    right: width as i32,
+                    bottom: height as i32,
+                };
+                
+                let _ = windows::Win32::UI::WindowsAndMessaging::AdjustWindowRectEx(
+                    &mut rect,
+                    windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE(style),
+                    false,
+                    windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(ex_style),
+                );
+                
+                let window_width = rect.right - rect.left;
+                let window_height = rect.bottom - rect.top;
+                
+                // Resize window
+                let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    self.get_hwnd(),
+                    windows::Win32::UI::WindowsAndMessaging::HWND_TOP,
+                    0, 0,
+                    window_width, window_height,
+                    windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE | 
+                    windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER,
+                );
+                
+                // Set WebView bounds to exact viewport size
+                let client_rect = windows::Win32::Foundation::RECT {
+                    left: 0,
+                    top: 0,
+                    right: width as i32,
+                    bottom: height as i32,
+                };
+                controller.SetBounds(client_rect)?;
+                
+                log_webview_success("WebViewInstance::set_viewport", None);
+            }
+        } else {
+            log_webview_error("WebViewInstance::set_viewport", "Controller not ready");
+            return Err(Error::from_win32());
+        }
+        
+        Ok(())
+    }
+    
+    /// Set the User-Agent string (for mobile device simulation)
+    /// Uses JavaScript to override navigator.userAgent
+    pub fn set_user_agent(&self, user_agent: &str) -> WinResult<()> {
+        log_webview_start("WebViewInstance::set_user_agent", user_agent);
+        
+        if let Some(controller) = &self.controller {
+            unsafe {
+                let webview = controller.CoreWebView2()?;
+                
+                // Use JavaScript to override navigator.userAgent
+                // This is more reliable than ICoreWebView2Settings2 which may not be available
+                let script = format!(r#"
+                    Object.defineProperty(navigator, 'userAgent', {{
+                        get: () => '{}',
+                        configurable: true
+                    }});
+                    Object.defineProperty(navigator, 'appVersion', {{
+                        get: () => '{}',
+                        configurable: true
+                    }});
+                "#, 
+                user_agent.replace("'", "\\'"),
+                user_agent.replace("Mozilla/", "").replace("'", "\\'")
+                );
+                let _ = webview.ExecuteScript(
+                    &HSTRING::from(&script),
+                    &ICoreWebView2ExecuteScriptCompletedHandler::from(FireAndForgetHandler),
+                );
+                log_webview_success("WebViewInstance::set_user_agent", None);
+            }
+        } else {
+            log_webview_error("WebViewInstance::set_user_agent", "Controller not ready");
+            return Err(Error::from_win32());
+        }
+        
+        Ok(())
+    }
+    
+    /// Apply device simulation (viewport + user agent + touch events)
+    pub fn simulate_device(&self, device_name: &str) -> WinResult<String> {
+        log_webview_start("WebViewInstance::simulate_device", device_name);
+        
+        // Get device preset
+        let presets = crate::core::screenshot_v2::get_device_presets();
+        let device = presets.iter().find(|p| p.name.to_lowercase() == device_name.to_lowercase());
+        
+        if let Some(preset) = device {
+            // Set viewport
+            self.set_viewport(preset.viewport.width, preset.viewport.height)?;
+            
+            // Set user agent if mobile
+            if preset.viewport.is_mobile {
+                let mobile_ua = format!(
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                );
+                let _ = self.set_user_agent(&mobile_ua);
+            }
+            
+            // Inject touch simulation if device has touch
+            if preset.viewport.has_touch {
+                let touch_script = r#"
+                    if (!('ontouchstart' in window)) {
+                        Object.defineProperty(navigator, 'maxTouchPoints', {
+                            get: () => 5,
+                            configurable: true
+                        });
+                    }
+                "#;
+                if let Some(controller) = &self.controller {
+                    unsafe {
+                        let webview = controller.CoreWebView2()?;
+                        let _ = webview.ExecuteScript(
+                            &HSTRING::from(touch_script),
+                            &ICoreWebView2ExecuteScriptCompletedHandler::from(FireAndForgetHandler),
+                        );
+                    }
+                }
+            }
+            
+            log_webview_success("WebViewInstance::simulate_device", None);
+            Ok(format!("Device simulation applied: {} ({}x{})", 
+                preset.name, preset.viewport.width, preset.viewport.height))
+        } else {
+            log_webview_error("WebViewInstance::simulate_device", "Device not found");
+            Err(Error::from_win32())
         }
     }
 
