@@ -284,8 +284,9 @@ impl SessionManager {
             options.profile
         );
 
-        // Create user data folder for this session
-        let user_data_folder = format!("./profiles/{}/{}", options.profile, id);
+        // Create user data folder based on profile name only (NOT session ID)
+        // This ensures cookies persist across sessions with the same profile
+        let user_data_folder = format!("./profiles/{}", options.profile);
 
         // Create WebViewInstance
         let mut webview = match crate::webview::webview_instance::WebViewInstance::new(
