@@ -643,6 +643,55 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         }
     }
     
+    // AI Summarization
+    if req.summarize {
+        // Get page text for summarization
+        let text_script = r#"
+            JSON.stringify({
+                text: document.body.innerText.substring(0, 8000)
+            });
+        "#;
+        
+        if let Ok(result) = execute_script(&req.session, text_script.to_string(), state, 5000).await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
+                if let Some(page_text) = parsed["text"].as_str() {
+                    // Create AI client
+                    let config = crate::core::config::get_config();
+                    let ai_config = crate::core::ai::AiConfig {
+                        enabled: config.ai.enabled,
+                        provider: config.ai.provider.clone(),
+                        model: config.ai.model.clone(),
+                        api_key: config.ai.api_key.clone(),
+                        timeout_ms: config.ai.timeout_ms,
+                        daily_budget_usd: config.ai.daily_budget_usd,
+                        daily_usage_usd: 0.0,
+                    };
+                    
+                    if let Some(client) = crate::core::ai::AiClient::new(&ai_config) {
+                        let prompt = format!(
+                            "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
+                            &page_text[..page_text.len().min(4000)]
+                        );
+                        
+                        match client.call(&prompt, None) {
+                            Ok(summary) => {
+                                text.push_str(&format!("\n\n【AI要約】({})\n{}", 
+                                    client.provider_name(),
+                                    summary.trim()
+                                ));
+                            }
+                            Err(e) => {
+                                text.push_str(&format!("\n\n【AI要約】エラー: {}", e));
+                            }
+                        }
+                    } else {
+                        text.push_str("\n\n【AI要約】AI未設定（provider/api_keyを確認）");
+                    }
+                }
+            }
+        }
+    }
+    
     McpToolResponse::success_text(text)
 }
 
