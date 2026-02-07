@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+// Note: These structs define the expected JSON structure but are not directly
+// instantiated in Rust. They serve as documentation and for future typed parsing.
+#[allow(dead_code)]
+
 /// Element with interactivity analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyzedElement {
@@ -88,7 +92,8 @@ pub fn analyze_with_llm(
                 .and_then(|s| s.as_f64())
                 .unwrap_or(0.0);
             // Analyze elements with scores 0.2-0.7 (uncertain range)
-            score >= 0.2 && score <= 0.7
+            // Elements >= 0.7 are clearly interactive, < 0.2 are clearly not
+            score >= 0.2 && score < 0.7
         })
         .take(10)  // Limit to 10 elements per batch
         .collect();
@@ -169,17 +174,41 @@ fn apply_llm_analysis(original_json: &str, llm_response: &str) -> Result<String,
         .map_err(|e| format!("Failed to parse original JSON: {}", e))?;
     
     // Try to extract JSON from LLM response (may be wrapped in markdown)
-    let json_start = llm_response.find('{').unwrap_or(0);
-    let json_end = llm_response.rfind('}').map(|i| i + 1).unwrap_or(llm_response.len());
+    // Use char_indices to avoid UTF-8 boundary issues
+    let json_start = llm_response.char_indices()
+        .find(|(_, c)| *c == '{')
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let json_end = llm_response.char_indices()
+        .rev()
+        .find(|(_, c)| *c == '}')
+        .map(|(i, _)| i + 1)
+        .unwrap_or(llm_response.len());
+    
+    if json_start >= json_end {
+        // No valid JSON found, return original unchanged
+        eprintln!("[Visual Interactivity] No valid JSON in LLM response, using rule-based scores");
+        return Ok(original_json.to_string());
+    }
+    
     let json_str = &llm_response[json_start..json_end];
     
-    // Parse LLM response
-    let llm_result: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| format!("Failed to parse LLM response: {} - Response: {}", e, json_str))?;
+    // Parse LLM response with fallback
+    let llm_result: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[Visual Interactivity] Failed to parse LLM response: {} - falling back to rule-based", e);
+            return Ok(original_json.to_string());
+        }
+    };
     
-    let results = llm_result.get("results")
-        .and_then(|r| r.as_array())
-        .ok_or("No results array in LLM response")?;
+    let results = match llm_result.get("results").and_then(|r| r.as_array()) {
+        Some(r) => r,
+        None => {
+            eprintln!("[Visual Interactivity] No 'results' array in LLM response");
+            return Ok(original_json.to_string());
+        }
+    };
     
     // Build index -> result map
     let mut result_map: std::collections::HashMap<u64, &serde_json::Value> = std::collections::HashMap::new();

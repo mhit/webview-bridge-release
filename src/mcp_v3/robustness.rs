@@ -726,10 +726,22 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('input要素');
         }
         
+        // checkbox/radio (+0.15)
+        if (['checkbox', 'radio'].includes(props.inputType)) {
+            score += 0.15;
+            reasons.push(props.inputType);
+        }
+        
         // select要素 (+0.2)
         if (props.tagName === 'select') {
             score += 0.2;
             reasons.push('select要素');
+        }
+        
+        // textarea要素 (+0.2)
+        if (props.tagName === 'textarea') {
+            score += 0.2;
+            reasons.push('textarea要素');
         }
         
         // 画像リンク（商品ページ等で重要）(+0.1)

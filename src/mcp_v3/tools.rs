@@ -578,7 +578,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         .unwrap_or(serde_json::json!({"error": "Parse failed"}));
     
     // 4.5 Optional: LLM analysis for mid-range scores
-    let analyzed_result = if req.analyze_interactivity {
+    let mut analyzed_result = if req.analyze_interactivity {
         let ai_config = crate::core::ai::AiConfig::default();
         if ai_config.is_available() {
             match crate::mcp_v3::visual_interactivity::analyze_with_llm(&elements_result, &ai_config) {
@@ -597,6 +597,23 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         parsed.clone()
     };
     
+    // Re-sort elements by score after LLM analysis
+    if req.analyze_interactivity {
+        if let Some(elements) = analyzed_result.get_mut("elements").and_then(|e| e.as_array_mut()) {
+            elements.sort_by(|a, b| {
+                let score_a = a.get("interactivity")
+                    .and_then(|i| i.get("score"))
+                    .and_then(|s| s.as_f64())
+                    .unwrap_or(0.0);
+                let score_b = b.get("interactivity")
+                    .and_then(|i| i.get("score"))
+                    .and_then(|s| s.as_f64())
+                    .unwrap_or(0.0);
+                score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+    
     // Build AI-optimized text response
     let url = analyzed_result["url"].as_str().unwrap_or("Unknown");
     let title = analyzed_result["title"].as_str().unwrap_or("Unknown");
@@ -614,11 +631,26 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             let score = el["interactivity"]["score"].as_f64();
             let analyzed_by = el["interactivity"]["analyzed_by"].as_str();
             
+            // Get size and position from visual properties
+            let width = el["visual"]["size"]["width"].as_u64().unwrap_or(0);
+            let height = el["visual"]["size"]["height"].as_u64().unwrap_or(0);
+            let in_viewport = el["inViewport"].as_bool().unwrap_or(true);
+            
             let mut line = format!("- {}", selector);
             
             if let Some(s) = score {
                 line.push_str(&format!(" [score:{:.2}]", s));
             }
+            
+            // Add size info (compact format)
+            if width > 0 && height > 0 {
+                line.push_str(&format!(" {}×{}", width, height));
+            }
+            
+            if !in_viewport {
+                line.push_str(" (画面外)");
+            }
+            
             if let Some(a) = analyzed_by {
                 if a == "llm" {
                     line.push_str(" (LLM)");
