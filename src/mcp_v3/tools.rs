@@ -623,22 +623,69 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
         
         match manager.acquire(acquire_request, create_fn).await {
             Ok(response) => {
-                // Verify session is accessible via get_handle
-                let handle_check = manager.get_handle(&response.session);
-                let handle_status = if handle_check.is_some() { "OK" } else { "MISSING" };
+                // Get the handle to wait for WebView ready
+                let handle = match manager.get_handle(&response.session) {
+                    Some(h) => h,
+                    None => {
+                        return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "Session created but handle not found");
+                    }
+                };
                 
-                tracing::info!(
-                    "MCP session acquire: {} is_new={} handle={}",
-                    response.session, response.is_new, handle_status
-                );
+                // Wait for WebView to be ready (poll GetStatus)
+                let max_wait_ms = 10000u64; // 10 seconds max
+                let poll_interval_ms = 100u64;
+                let mut waited_ms = 0u64;
                 
-                return McpToolResponse::success_text(format!(
-                    "Session '{}' acquired successfully\nis_new: {}\nprofile: {:?}\nhandle_status: {}",
-                    response.session,
-                    response.is_new,
-                    response.profile,
-                    handle_status
-                ));
+                loop {
+                    // Send GetStatus command
+                    let (tx, rx) = oneshot::channel();
+                    let cmd = crate::core::AppCommand::GetStatus {
+                        id: handle.id.clone(),
+                        resp_tx: tx,
+                    };
+                    
+                    if state.cmd_tx.send(cmd).is_err() {
+                        return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "Failed to send status check command");
+                    }
+                    
+                    match tokio::time::timeout(Duration::from_millis(1000), rx).await {
+                        Ok(Ok(Ok(status))) => {
+                            // Check if Ready (status is a String like "Ready", "Initializing", etc)
+                            if status.status == "Ready" {
+                                tracing::info!(
+                                    "MCP session acquire: {} is_new={} ready after {}ms",
+                                    response.session, response.is_new, waited_ms
+                                );
+                                
+                                return McpToolResponse::success_text(format!(
+                                    "Session '{}' acquired and ready\nis_new: {}\nprofile: {:?}\nwait_ms: {}",
+                                    response.session,
+                                    response.is_new,
+                                    response.profile,
+                                    waited_ms
+                                ));
+                            }
+                            
+                            // Check for error
+                            if status.status == "Error" {
+                                return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "WebView initialization failed");
+                            }
+                        }
+                        Ok(Ok(Err(e))) => {
+                            return McpToolResponse::error("SESSION_ACQUIRE_FAILED", &e);
+                        }
+                        _ => {
+                            // Timeout or channel error, continue waiting
+                        }
+                    }
+                    
+                    waited_ms += poll_interval_ms;
+                    if waited_ms >= max_wait_ms {
+                        return McpToolResponse::error("SESSION_ACQUIRE_TIMEOUT", "WebView did not become ready in time");
+                    }
+                    
+                    tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
+                }
             }
             Err(e) => return McpToolResponse::error("SESSION_ACQUIRE_FAILED", &e),
         }
