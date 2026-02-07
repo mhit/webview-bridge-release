@@ -657,6 +657,8 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                 if let Some(page_text) = parsed["text"].as_str() {
                     // Create AI client
                     let config = crate::core::config::get_config();
+                    tracing::info!("[summarize] provider={}, model={}", config.ai.provider, config.ai.model);
+                    
                     let ai_config = crate::core::ai::AiConfig {
                         enabled: config.ai.enabled,
                         provider: config.ai.provider.clone(),
@@ -667,7 +669,29 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                         daily_usage_usd: 0.0,
                     };
                     
-                    if let Some(client) = crate::core::ai::AiClient::new(&ai_config) {
+                    // Debug: check Ollama availability
+                    if config.ai.provider.to_lowercase() == "ollama" {
+                        let ollama = crate::core::ai::OllamaClient::new(&ai_config);
+                        tracing::info!("[summarize] Ollama available: {}, base_url: {}", ollama.is_available(), ollama.base_url);
+                        
+                        // Use Ollama directly (skip AiClient fallback logic)
+                        let prompt = format!(
+                            "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
+                            &page_text[..page_text.len().min(4000)]
+                        );
+                        
+                        match ollama.call(&prompt, None) {
+                            Ok(summary) => {
+                                text.push_str(&format!("\n\n【AI要約】(ollama/{})\n{}", 
+                                    config.ai.model,
+                                    summary.trim()
+                                ));
+                            }
+                            Err(e) => {
+                                text.push_str(&format!("\n\n【AI要約】Ollamaエラー: {}", e));
+                            }
+                        }
+                    } else if let Some(client) = crate::core::ai::AiClient::new(&ai_config) {
                         let prompt = format!(
                             "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
                             &page_text[..page_text.len().min(4000)]

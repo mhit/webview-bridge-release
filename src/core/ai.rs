@@ -662,7 +662,9 @@ impl OllamaClient {
     pub fn new(config: &AiConfig) -> Self {
         // Support custom Ollama URL via environment variable
         let base_url = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+            .ok()
+            .filter(|h| h.starts_with("http://") || h.starts_with("https://"))
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
         
         Self {
             base_url,
