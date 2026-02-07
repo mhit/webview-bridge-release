@@ -851,6 +851,88 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
         }));
     }
     
+    // AI Status - show current AI configuration
+    if req.ai_status {
+        let config = crate::core::config::get_config();
+        let ai_config = crate::core::ai::AiConfig::default();
+        
+        return McpToolResponse::success_json(serde_json::json!({
+            "provider": config.ai.provider,
+            "model": config.ai.model,
+            "enabled": config.ai.enabled,
+            "available": ai_config.is_available(),
+            "has_api_key": config.ai.api_key.is_some(),
+        }));
+    }
+    
+    // AI Models - list available models (Ollama only)
+    if req.ai_models {
+        let config = crate::core::config::get_config();
+        
+        if config.ai.provider.to_lowercase() == "ollama" {
+            let ollama = crate::core::ai::OllamaClient::new(&crate::core::ai::AiConfig::default());
+            
+            match ollama.list_models() {
+                Ok(models) => {
+                    return McpToolResponse::success_json(serde_json::json!({
+                        "provider": "ollama",
+                        "available": ollama.is_available(),
+                        "models": models,
+                        "current_model": config.ai.model
+                    }));
+                }
+                Err(e) => {
+                    return McpToolResponse::error("OLLAMA_MODELS_FAILED", &e);
+                }
+            }
+        } else {
+            // Gemini doesn't have a model list API, return known models
+            return McpToolResponse::success_json(serde_json::json!({
+                "provider": "gemini",
+                "models": [
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-pro",
+                    "gemini-pro-vision"
+                ],
+                "current_model": config.ai.model
+            }));
+        }
+    }
+    
+    // AI Config update
+    if let Some(update) = &req.ai_config {
+        let mut config = crate::core::config::get_config().clone();
+        
+        if let Some(provider) = &update.provider {
+            config.ai.provider = provider.clone();
+        }
+        if let Some(model) = &update.model {
+            config.ai.model = model.clone();
+        }
+        if let Some(api_key) = &update.api_key {
+            config.ai.api_key = Some(api_key.clone());
+        }
+        if let Some(enabled) = update.enabled {
+            config.ai.enabled = enabled;
+        }
+        
+        // Save updated config
+        match config.save() {
+            Ok(_) => {
+                return McpToolResponse::success_json(serde_json::json!({
+                    "status": "config_updated",
+                    "provider": config.ai.provider,
+                    "model": config.ai.model,
+                    "enabled": config.ai.enabled
+                }));
+            }
+            Err(e) => {
+                return McpToolResponse::error("CONFIG_SAVE_FAILED", &e);
+            }
+        }
+    }
+    
     McpToolResponse::error("INVALID_SESSION_REQUEST", "No valid session action specified")
 }
 

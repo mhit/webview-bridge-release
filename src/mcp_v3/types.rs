@@ -259,6 +259,21 @@ pub struct SessionRequest {
     pub browser: Option<String>,
     #[serde(default)]
     pub domains: Option<Vec<String>>,
+    // AI configuration
+    #[serde(default)]
+    pub ai_status: bool,
+    #[serde(default)]
+    pub ai_models: bool,
+    #[serde(default)]
+    pub ai_config: Option<AiConfigUpdate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AiConfigUpdate {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub enabled: Option<bool>,
 }
 
 // ============================================================================
