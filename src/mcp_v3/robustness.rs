@@ -502,7 +502,7 @@ pub fn generate_wait_for_no_skeleton_script(timeout_ms: u64) -> String {
 pub fn generate_extract_interactive_elements_script() -> String {
     r#"
 (function() {
-    const selectors = 'a, button, input, select, textarea, [role="button"], [onclick], [tabindex]';
+    const selectors = 'a, button, input, select, textarea, [role="button"], [onclick], [tabindex], [role="link"], [role="menuitem"]';
     const noiseParents = ['nav', 'footer', 'header:not(:has(form))', '.sidebar', '.advertisement', '.cookie-banner'];
     
     const isInNoiseArea = (el) => {
@@ -541,8 +541,8 @@ pub fn generate_extract_interactive_elements_script() -> String {
         if (el.name) return `${el.tagName.toLowerCase()}[name="${el.name}"]`;
         
         // Use class if unique
-        if (el.className) {
-            const classes = el.className.split(' ').filter(c => c && !c.startsWith('js-')).slice(0, 2);
+        if (el.className && typeof el.className === 'string') {
+            const classes = el.className.split(' ').filter(c => c && !c.startsWith('js-') && !c.match(/^[a-z]{20,}$/)).slice(0, 2);
             if (classes.length > 0) {
                 const selector = `${el.tagName.toLowerCase()}.${classes.join('.')}`;
                 if (document.querySelectorAll(selector).length === 1) return selector;
@@ -567,6 +567,195 @@ pub fn generate_extract_interactive_elements_script() -> String {
         return path;
     };
 
+    // ========== 視覚プロパティ抽出 ==========
+    const extractVisualProperties = (el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        
+        // ホバー効果の推定（transition/animationの存在で判断）
+        const hasTransition = style.transition !== 'none' && 
+                              style.transition !== 'all 0s ease 0s' &&
+                              style.transitionProperty !== 'none';
+        
+        // アイコンの存在チェック
+        const hasIcon = el.querySelector('svg, i[class*="icon"], span[class*="icon"]') !== null ||
+                        (style.backgroundImage !== 'none' && style.backgroundImage.includes('url'));
+        
+        // 画像の存在チェック
+        const img = el.querySelector('img');
+        const hasImage = img !== null;
+        const imageAlt = img ? img.alt : null;
+        
+        return {
+            // サイズ
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            
+            // ボタンらしさの指標
+            cursor: style.cursor,
+            hasOnClick: el.hasAttribute('onclick') || el.onclick !== null,
+            
+            // 視覚スタイル
+            backgroundColor: style.backgroundColor,
+            borderRadius: style.borderRadius,
+            border: style.borderWidth !== '0px' ? style.border : 'none',
+            boxShadow: style.boxShadow !== 'none' ? style.boxShadow : null,
+            
+            // テキストスタイル
+            fontWeight: style.fontWeight,
+            color: style.color,
+            
+            // ホバー効果の示唆
+            hasTransition: hasTransition,
+            
+            // アイコン・画像
+            hasIcon: hasIcon,
+            hasImage: hasImage,
+            imageAlt: imageAlt,
+            
+            // アクセシビリティ
+            role: el.getAttribute('role'),
+            ariaLabel: el.getAttribute('aria-label'),
+            tabIndex: el.tabIndex,
+            isDisabled: el.disabled || el.getAttribute('aria-disabled') === 'true'
+        };
+    };
+
+    // ========== ルールベース事前スコアリング ==========
+    const preScore = (props, label) => {
+        let score = 0;
+        const reasons = [];
+        
+        // cursor: pointer は強力な指標 (+0.3)
+        if (props.cursor === 'pointer') {
+            score += 0.3;
+            reasons.push('cursor:pointer');
+        }
+        
+        // 角丸がある (+0.1)
+        if (props.borderRadius && parseFloat(props.borderRadius) > 0) {
+            score += 0.1;
+            reasons.push('角丸');
+        }
+        
+        // 影がある (+0.1)
+        if (props.boxShadow && props.boxShadow !== 'none') {
+            score += 0.1;
+            reasons.push('影');
+        }
+        
+        // トランジション/アニメーションがある (+0.15)
+        if (props.hasTransition) {
+            score += 0.15;
+            reasons.push('hover効果');
+        }
+        
+        // 背景色がある（透明でない）(+0.1)
+        if (props.backgroundColor && 
+            !props.backgroundColor.includes('transparent') && 
+            !props.backgroundColor.includes('rgba(0, 0, 0, 0)')) {
+            score += 0.1;
+            reasons.push('背景色');
+        }
+        
+        // CTAテキスト (+0.15)
+        const ctaWords = ['購入', '申込', '登録', '送信', 'ログイン', 'サインイン', 'カート', 
+                          'submit', 'buy', 'add', 'cart', 'login', 'sign', 'register', 'checkout'];
+        const labelLower = (label || '').toLowerCase();
+        if (ctaWords.some(w => labelLower.includes(w))) {
+            score += 0.15;
+            reasons.push('CTAテキスト');
+        }
+        
+        // onclick属性 (+0.2)
+        if (props.hasOnClick) {
+            score += 0.2;
+            reasons.push('onclick');
+        }
+        
+        // role="button" (+0.15)
+        if (props.role === 'button') {
+            score += 0.15;
+            reasons.push('role=button');
+        }
+        
+        // 太字 (+0.05)
+        if (props.fontWeight && parseInt(props.fontWeight) >= 600) {
+            score += 0.05;
+            reasons.push('太字');
+        }
+        
+        return {
+            score: Math.min(1, Math.round(score * 100) / 100),
+            reasons: reasons
+        };
+    };
+
+    // ========== アクション予測 ==========
+    const predictAction = (el, props, label) => {
+        const tag = el.tagName.toLowerCase();
+        const type = el.type || null;
+        const href = el.getAttribute('href');
+        const actions = [];
+        
+        // リンク
+        if (tag === 'a' && href) {
+            if (href.startsWith('#')) {
+                actions.push({ action: 'click_anchor', purpose: 'ページ内移動' });
+            } else {
+                actions.push({ action: 'click_navigate', purpose: 'ページ遷移' });
+            }
+        }
+        
+        // 送信ボタン
+        if ((tag === 'button' && type === 'submit') || 
+            (tag === 'input' && type === 'submit')) {
+            actions.push({ action: 'click_submit', purpose: 'フォーム送信' });
+        }
+        
+        // 通常ボタン
+        if (tag === 'button' && type !== 'submit') {
+            actions.push({ action: 'click_action', purpose: 'アクション実行' });
+        }
+        
+        // チェックボックス・ラジオ
+        if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+            actions.push({ action: 'click_toggle', purpose: '選択切替' });
+        }
+        
+        // テキスト入力
+        if (tag === 'input' && ['text', 'email', 'password', 'search', 'tel', 'url'].includes(type)) {
+            actions.push({ action: 'type_input', purpose: 'テキスト入力' });
+        }
+        if (tag === 'textarea') {
+            actions.push({ action: 'type_input', purpose: '複数行入力' });
+        }
+        
+        // セレクト
+        if (tag === 'select') {
+            actions.push({ action: 'click_select', purpose: 'オプション選択' });
+        }
+        
+        // ドロップダウンの推定
+        const labelLower = (label || '').toLowerCase();
+        if (labelLower.includes('▼') || labelLower.includes('▾') || 
+            labelLower.includes('dropdown') || labelLower.includes('menu')) {
+            actions.push({ action: 'click_expand', purpose: 'メニュー展開' });
+        }
+        
+        // hover効果がある場合
+        if (props.hasTransition && actions.length === 0) {
+            actions.push({ action: 'hover_reveal', purpose: '情報表示' });
+        }
+        
+        // デフォルト
+        if (actions.length === 0 && props.cursor === 'pointer') {
+            actions.push({ action: 'click_action', purpose: '不明なアクション' });
+        }
+        
+        return actions;
+    };
+
     const elements = Array.from(document.querySelectorAll(selectors))
         .filter(el => {
             const rect = el.getBoundingClientRect();
@@ -575,25 +764,55 @@ pub fn generate_extract_interactive_elements_script() -> String {
             // Must be visible
             if (rect.width === 0 || rect.height === 0) return false;
             if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (style.opacity === '0') return false;
             
-            // Skip noise areas (optional)
-            // if (isInNoiseArea(el)) return false;
+            // Must be reasonably sized
+            if (rect.width < 20 || rect.height < 15) return false;
             
             return true;
         })
         .slice(0, 50)  // Limit to 50 elements
-        .map(el => {
+        .map((el, index) => {
             const rect = el.getBoundingClientRect();
+            const label = getLabel(el);
+            const visualProps = extractVisualProperties(el);
+            const scoreResult = preScore(visualProps, label);
+            const predictedActions = predictAction(el, visualProps, label);
+            
             return {
+                index: index + 1,
                 tag: el.tagName.toLowerCase(),
                 type: el.type || null,
                 selector: generateSelector(el),
-                label: getLabel(el),
+                label: label,
                 value: el.value || null,
                 placeholder: el.placeholder || null,
-                inViewport: rect.top < window.innerHeight && rect.bottom > 0
+                inViewport: rect.top < window.innerHeight && rect.bottom > 0,
+                
+                // 視覚プロパティ
+                visual: {
+                    cursor: visualProps.cursor,
+                    backgroundColor: visualProps.backgroundColor,
+                    borderRadius: visualProps.borderRadius,
+                    boxShadow: visualProps.boxShadow,
+                    hasTransition: visualProps.hasTransition,
+                    hasIcon: visualProps.hasIcon,
+                    hasImage: visualProps.hasImage,
+                    imageAlt: visualProps.imageAlt,
+                    size: { width: visualProps.width, height: visualProps.height }
+                },
+                
+                // インタラクティビティ分析
+                interactivity: {
+                    score: scoreResult.score,
+                    reasons: scoreResult.reasons,
+                    predicted_actions: predictedActions,
+                    analyzed_by: 'rule'
+                }
             };
-        });
+        })
+        // スコア順にソート
+        .sort((a, b) => b.interactivity.score - a.interactivity.score);
 
     return JSON.stringify({
         url: window.location.href,
@@ -604,6 +823,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
 })();
 "#.to_string()
 }
+
 
 /// Wait for specific condition
 pub fn generate_wait_for_condition_script(condition: &str, value: Option<&str>, timeout_ms: u64) -> String {
