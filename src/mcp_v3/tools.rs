@@ -577,22 +577,53 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     let parsed: serde_json::Value = serde_json::from_str(&elements_result)
         .unwrap_or(serde_json::json!({"error": "Parse failed"}));
     
+    // 4.5 Optional: LLM analysis for mid-range scores
+    let analyzed_result = if req.analyze_interactivity {
+        let ai_config = crate::core::ai::AiConfig::default();
+        if ai_config.is_available() {
+            match crate::mcp_v3::visual_interactivity::analyze_with_llm(&elements_result, &ai_config) {
+                Ok(analyzed) => {
+                    serde_json::from_str(&analyzed).unwrap_or(parsed.clone())
+                }
+                Err(e) => {
+                    eprintln!("[Visual Interactivity] LLM analysis failed: {}", e);
+                    parsed.clone()
+                }
+            }
+        } else {
+            parsed.clone()
+        }
+    } else {
+        parsed.clone()
+    };
+    
     // Build AI-optimized text response
-    let url = parsed["url"].as_str().unwrap_or("Unknown");
-    let title = parsed["title"].as_str().unwrap_or("Unknown");
+    let url = analyzed_result["url"].as_str().unwrap_or("Unknown");
+    let title = analyzed_result["title"].as_str().unwrap_or("Unknown");
     
     let mut text = format!("URL: {}\nTitle: {}\n\n【操作可能要素】\n", url, title);
     
-    if let Some(elements) = parsed["elements"].as_array() {
+    if let Some(elements) = analyzed_result["elements"].as_array() {
         for el in elements.iter().take(30) {
-            let tag = el["tag"].as_str().unwrap_or("?");
             let selector = el["selector"].as_str().unwrap_or("?");
             let label = el["label"].as_str();
             let value = el["value"].as_str();
             let el_type = el["type"].as_str();
             
+            // Include interactivity score if available
+            let score = el["interactivity"]["score"].as_f64();
+            let analyzed_by = el["interactivity"]["analyzed_by"].as_str();
+            
             let mut line = format!("- {}", selector);
             
+            if let Some(s) = score {
+                line.push_str(&format!(" [score:{:.2}]", s));
+            }
+            if let Some(a) = analyzed_by {
+                if a == "llm" {
+                    line.push_str(" (LLM)");
+                }
+            }
             if let Some(t) = el_type {
                 line.push_str(&format!(" type={}", t));
             }
@@ -611,6 +642,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             text.push('\n');
         }
     }
+
     
     // 5. Take screenshot (save to file, return URL)
     if req.screenshot {

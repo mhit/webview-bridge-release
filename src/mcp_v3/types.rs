@@ -202,7 +202,11 @@ pub struct CaptureRequest {
     pub text_max_chars: Option<usize>,
     #[serde(default)]
     pub summarize: bool,
+    /// Analyze interactivity of elements with LLM (Phase 2)
+    #[serde(default)]
+    pub analyze_interactivity: bool,
 }
+
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

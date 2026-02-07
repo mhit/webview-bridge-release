@@ -13,3 +13,4 @@
 pub mod types;
 pub mod tools;
 pub mod robustness;
+pub mod visual_interactivity;
