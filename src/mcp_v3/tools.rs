@@ -621,8 +621,25 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     let mut text = format!("URL: {}\nTitle: {}\n\n【操作可能要素】\n", url, title);
     
     if let Some(elements) = analyzed_result["elements"].as_array() {
-        for el in elements.iter().take(30) {
+        // Filter: score >= 0.3, limit to top 20 for context efficiency
+        let filtered: Vec<_> = elements.iter()
+            .filter(|el| {
+                el.get("interactivity")
+                    .and_then(|i| i.get("score"))
+                    .and_then(|s| s.as_f64())
+                    .unwrap_or(0.0) >= 0.3
+            })
+            .take(20)
+            .collect();
+        
+        for el in filtered {
+            // Truncate selector for AI context efficiency
             let selector = el["selector"].as_str().unwrap_or("?");
+            let short_selector: String = if selector.len() > 40 {
+                format!("{}...", selector.chars().take(37).collect::<String>())
+            } else {
+                selector.to_string()
+            };
             let label = el["label"].as_str();
             let value = el["value"].as_str();
             let el_type = el["type"].as_str();
@@ -636,7 +653,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             let height = el["visual"]["size"]["height"].as_u64().unwrap_or(0);
             let in_viewport = el["inViewport"].as_bool().unwrap_or(true);
             
-            let mut line = format!("- {}", selector);
+            let mut line = format!("- {}", short_selector);
             
             if let Some(s) = score {
                 line.push_str(&format!(" [score:{:.2}]", s));
@@ -661,7 +678,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
             if let Some(l) = label {
                 if !l.is_empty() {
-                    line.push_str(&format!(" 「{}」", l.chars().take(30).collect::<String>()));
+                    line.push_str(&format!(" 「{}」", l.chars().take(20).collect::<String>()));
                 }
             }
             if let Some(v) = value {
