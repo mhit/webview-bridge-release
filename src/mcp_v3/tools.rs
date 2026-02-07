@@ -969,11 +969,113 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
             }
         }
         MediaAction::VideoAnalyze { url, keyframes, audio, max_frames } => {
-            // TODO: Implement with ffmpeg
-            McpToolResponse::success_text(format!(
-                "Video analysis: {}\nKeyframes: {}, Audio: {}",
-                url, keyframes, audio
-            ))
+            // Create output directory
+            let output_path = crate::core::config::AppConfig::data_dir()
+                .join("analysis");
+            let _ = std::fs::create_dir_all(&output_path);
+            
+            let mut results = serde_json::json!({
+                "success": true,
+                "source": url,
+            });
+            
+            // Get video metadata using ffprobe
+            match std::process::Command::new("ffprobe")
+                .args(&[
+                    "-v", "quiet",
+                    "-print_format", "json",
+                    "-show_format",
+                    "-show_streams",
+                    &url
+                ])
+                .output()
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        if let Ok(metadata) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                            results["metadata"] = metadata;
+                        }
+                    }
+                }
+                Err(e) => {
+                    results["metadata_error"] = serde_json::json!(e.to_string());
+                }
+            }
+            
+            // Extract keyframes if requested
+            if keyframes {
+                let max = max_frames.unwrap_or(10);
+                let output_pattern = output_path.join("keyframe_%04d.jpg");
+                
+                let keyframe_result = std::process::Command::new("ffmpeg")
+                    .args(&[
+                        "-i", &url,
+                        "-vf", &format!("select='eq(pict_type,I)',scale=320:-1"),
+                        "-vsync", "vfr",
+                        "-frames:v", &max.to_string(),
+                        "-q:v", "5",
+                        "-y",
+                        &output_pattern.to_string_lossy()
+                    ])
+                    .output();
+                
+                match keyframe_result {
+                    Ok(output) => {
+                        if output.status.success() {
+                            // List extracted frames
+                            let frames: Vec<String> = (1..=max)
+                                .map(|i| format!("keyframe_{:04}.jpg", i))
+                                .filter(|f| output_path.join(f).exists())
+                                .collect();
+                            results["keyframes"] = serde_json::json!({
+                                "count": frames.len(),
+                                "directory": output_path.to_string_lossy(),
+                                "files": frames
+                            });
+                        } else {
+                            results["keyframes_error"] = serde_json::json!(String::from_utf8_lossy(&output.stderr));
+                        }
+                    }
+                    Err(e) => {
+                        results["keyframes_error"] = serde_json::json!(format!("ffmpeg not found: {}", e));
+                    }
+                }
+            }
+            
+            // Extract audio if requested
+            if audio {
+                let audio_output = output_path.join("audio.mp3");
+                
+                let audio_result = std::process::Command::new("ffmpeg")
+                    .args(&[
+                        "-i", &url,
+                        "-vn",
+                        "-acodec", "libmp3lame",
+                        "-ab", "192k",
+                        "-y",
+                        &audio_output.to_string_lossy()
+                    ])
+                    .output();
+                
+                match audio_result {
+                    Ok(output) => {
+                        if output.status.success() {
+                            results["audio"] = serde_json::json!({
+                                "file": audio_output.to_string_lossy(),
+                                "format": "mp3",
+                                "bitrate": "192k"
+                            });
+                        } else {
+                            results["audio_error"] = serde_json::json!(String::from_utf8_lossy(&output.stderr));
+                        }
+                    }
+                    Err(e) => {
+                        results["audio_error"] = serde_json::json!(format!("ffmpeg not found: {}", e));
+                    }
+                }
+            }
+            
+            McpToolResponse::success_json(results)
         }
         MediaAction::CollectImages { selector, min_width, min_height, download, max_images } => {
             let script = generate_collect_images_script(
