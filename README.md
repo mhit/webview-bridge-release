@@ -90,9 +90,10 @@ Amazonを開いてワイヤレスマウスを検索して
 
 ## 📖 ドキュメント
 
+- [クイックスタート](docs/QUICK_START.md) - 5分で始める
 - [MCPツール詳細](docs/MCP_TOOLS.md) - 各ツールの使い方
-- [設計書](docs/design.md) - アーキテクチャ詳細
-- [ユースケース](docs/use-cases.md) - 具体的な利用シナリオ
+- [アーキテクチャ](docs/ARCHITECTURE.md) - 内部構造
+- [REST API](docs/API.md) - REST APIリファレンス
 
 ## ⚠️ Bot対策サイトのコツ
 
