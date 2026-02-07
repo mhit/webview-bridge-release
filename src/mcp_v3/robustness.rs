@@ -623,7 +623,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
     };
 
     // ========== ルールベース事前スコアリング ==========
-    const preScore = (props, label) => {
+    const preScore = (props, label, el, rect) => {
         let score = 0;
         const reasons = [];
         
@@ -753,6 +753,56 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('画像リンク');
         }
         
+        // ========== 位置ボーナス（UI法則） ==========
+        
+        // viewport内（見えている）(+0.1)
+        if (rect && rect.top < window.innerHeight && rect.bottom > 0) {
+            score += 0.1;
+            reasons.push('viewport内');
+        }
+        
+        // F-pattern: 画面上部は重要 (+0.1 if y < 200)
+        if (rect && rect.top < 200) {
+            score += 0.1;
+            reasons.push('上部');
+        }
+        
+        // 画面中央付近（視線集中エリア）(+0.05)
+        if (rect) {
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            const elCenterX = rect.left + rect.width / 2;
+            const elCenterY = rect.top + rect.height / 2;
+            const distFromCenter = Math.sqrt(
+                Math.pow(elCenterX - centerX, 2) + 
+                Math.pow(elCenterY - centerY, 2)
+            );
+            if (distFromCenter < 300) {
+                score += 0.05;
+                reasons.push('中央');
+            }
+        }
+        
+        // 大きな要素は目立つ (+0.05 if area > 10000)
+        if (rect && rect.width * rect.height > 10000) {
+            score += 0.05;
+            reasons.push('大要素');
+        }
+        
+        // セマンティックエリア
+        if (el) {
+            // main/article内は主要コンテンツ (+0.1)
+            if (el.closest('main, article, [role="main"]')) {
+                score += 0.1;
+                reasons.push('main内');
+            }
+            // footer/aside内は補助的 (-0.1)
+            if (el.closest('footer, aside, [role="contentinfo"], [role="complementary"]')) {
+                score = Math.max(0.1, score - 0.1);
+                reasons.push('補助エリア');
+            }
+        }
+        
         // 画像リンクでaltなしの場合はフラグ
         const needsVisionAnalysis = props.hasImage && (!props.imageAlt || props.imageAlt.trim() === '');
         
@@ -851,7 +901,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
             const rect = el.getBoundingClientRect();
             const label = getLabel(el);
             const visualProps = extractVisualProperties(el);
-            const scoreResult = preScore(visualProps, label);
+            const scoreResult = preScore(visualProps, label, el, rect);
             const predictedActions = predictAction(el, visualProps, label);
             
             return {
