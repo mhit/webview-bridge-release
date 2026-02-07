@@ -1011,3 +1011,185 @@ click → button[type=submit]
 - `credentials`はメモリ内のみ、永続化しない
 - エージェントログにパスワード含めない
 - 内部AI呼び出しはオプトイン（APIキー設定必須）
+
+---
+
+## AI統合層（4層アーキテクチャ）
+
+状態取得と要約を効率的に行うための階層設計。
+
+### アーキテクチャ
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    capture() 呼び出し                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  L1: 視覚考慮DOM抽出（JS純粋、AI不使用）                      │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ - getBoundingClientRect() で可視要素のみ            │    │
+│  │ - 操作可能要素 + ラベル + 値                        │    │
+│  │ - フォーム状態                                      │    │
+│  │ - エラー要素（.error, [role="alert"]）              │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  L2: ノイズ除去（ルールベース、AI不使用）                     │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 除外: nav, footer, .sidebar, .ad, .cookie-banner    │    │
+│  │ 優先: main, [role="main"], #content, form           │    │
+│  │ ビューポート内要素を優先                             │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+               ┌──────────────┴──────────────┐
+               │                             │
+         summarize: false              summarize: true
+               │                             │
+               ↓                             ↓
+┌──────────────────────────┐  ┌──────────────────────────────┐
+│  L1+L2のみ返却            │  │  L3: ローカルLLM              │
+│  (高速、AI不使用)          │  │  ┌────────────────────────┐  │
+│                          │  │  │ candle / llama-cpp-rs  │  │
+│  レスポンス例:            │  │  │ gemma3:4b / phi3       │  │
+│  URL: ...                │  │  │                        │  │
+│  【操作可能要素】          │  │  │ 入力: DOM抽出結果       │  │
+│  - input#email           │  │  │ 出力: 状態要約(1-2文)   │  │
+│  - button#login          │  │  └────────────────────────┘  │
+└──────────────────────────┘  │                              │
+                              │  GPU: ~4GB VRAM, 100-200ms   │
+                              │  CPU: ~4GB RAM, 1-2秒        │
+                              └──────────────────────────────┘
+                                             │
+                              (Agentic Modeのみ)
+                                             ↓
+                              ┌──────────────────────────────┐
+                              │  L4: クラウドAI (Vision)     │
+                              │  ┌────────────────────────┐  │
+                              │  │ Gemini Vision API      │  │
+                              │  │ スクリーンショット解析   │  │
+                              │  │ 複雑なUI理解           │  │
+                              │  │ CAPTCHA検出            │  │
+                              │  └────────────────────────┘  │
+                              └──────────────────────────────┘
+```
+
+### 各層の詳細
+
+#### L1: 視覚考慮DOM抽出
+
+```javascript
+function extractInteractiveElements() {
+  const selectors = 'a, button, input, select, textarea, [role="button"], [onclick]';
+  
+  return Array.from(document.querySelectorAll(selectors))
+    .filter(el => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      // 可視要素のみ
+      return rect.width > 0 && rect.height > 0 && 
+             style.display !== 'none' && 
+             style.visibility !== 'hidden';
+    })
+    .map(el => ({
+      tag: el.tagName.toLowerCase(),
+      selector: generateUniqueSelector(el),
+      label: getElementLabel(el),
+      value: el.value || null,
+      type: el.type || null,
+      inViewport: isInViewport(el)
+    }));
+}
+
+function getElementLabel(el) {
+  return el.closest('label')?.textContent?.trim() ||
+         document.querySelector(`label[for="${el.id}"]`)?.textContent?.trim() ||
+         el.getAttribute('aria-label') ||
+         el.placeholder ||
+         el.textContent?.trim().substring(0, 50) ||
+         el.title ||
+         null;
+}
+```
+
+#### L2: ノイズ除去ルール
+
+```javascript
+const NOISE_SELECTORS = [
+  'nav:not(:has(form))',
+  'header:not(:has(form)):not(:has(input))',
+  'footer',
+  '[role="navigation"]',
+  '.sidebar', '.side-bar',
+  '.ad', '.ads', '.advertisement',
+  '.cookie-banner', '.cookie-notice',
+  '.social-share', '.share-buttons'
+];
+
+const PRIORITY_SELECTORS = [
+  'main', '[role="main"]',
+  '#content', '.content', '.main-content',
+  'form', '.login-form', '.search-form'
+];
+```
+
+#### L3: ローカルLLM統合
+
+```rust
+// Cargo.toml
+// candle-core = "0.4"
+// candle-transformers = "0.4"
+// または
+// llama-cpp-rs = "0.3"
+
+pub struct LocalLLM {
+    model: Model,  // gemma3:4b or phi3:mini
+}
+
+impl LocalLLM {
+    pub fn summarize(&self, dom_context: &str) -> String {
+        let prompt = format!(
+            "以下のWebページの状態を1-2文で要約してください:\n\n{}",
+            dom_context
+        );
+        self.generate(&prompt, max_tokens: 100)
+    }
+}
+```
+
+**対応モデル**:
+| モデル | サイズ | 用途 |
+|--------|--------|------|
+| gemma3:4b | 4GB | 汎用要約 |
+| phi3:mini | 2GB | 軽量、高速 |
+| qwen2:1.5b | 1.5GB | 超軽量 |
+
+#### L4: クラウドAI（Agentic Mode専用）
+
+Gemini Vision APIでスクリーンショット解析。
+複雑なUI理解、CAPTCHA検出、動的コンテンツ解析に使用。
+
+### パラメータによる層選択
+
+```json
+// L1+L2のみ（デフォルト、高速）
+{"tool": "capture"}
+
+// L3追加（ローカルLLM要約）
+{"tool": "capture", "summarize": true}
+
+// L4使用（Agentic Mode内部）
+// agent tool経由で自動的に使用
+```
+
+### 実装計画への追加
+
+**フェーズ2.5: ローカルLLM統合（2-3時間）**
+1. candle または llama-cpp-rs 依存追加
+2. モデルロード・キャッシュ
+3. 要約プロンプトチューニング
+4. `summarize` パラメータ対応
