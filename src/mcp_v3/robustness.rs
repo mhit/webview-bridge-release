@@ -503,7 +503,81 @@ pub fn generate_extract_interactive_elements_script() -> String {
     r#"
 (function() {
     const selectors = 'a, button, input, select, textarea, [role="button"], [onclick], [tabindex], [role="link"], [role="menuitem"]';
-    // Note: noiseParentsは将来のフィルタリング用に保持（現在未使用）
+    
+    // ========== CAPTCHA/Challenge Detection ==========
+    const detectChallenge = () => {
+        const challenges = [];
+        
+        // Cloudflare Turnstile
+        const turnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"], div.cf-turnstile, [data-sitekey]');
+        if (turnstile) {
+            const rect = turnstile.getBoundingClientRect();
+            challenges.push({
+                type: 'cloudflare_turnstile',
+                selector: turnstile.id ? `#${turnstile.id}` : 'iframe[src*="challenges.cloudflare.com"]',
+                visible: rect.width > 0 && rect.height > 0,
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+            });
+        }
+        
+        // Google reCAPTCHA v2
+        const recaptcha = document.querySelector('iframe[src*="google.com/recaptcha"], div.g-recaptcha, [data-sitekey*="recaptcha"]');
+        if (recaptcha) {
+            const rect = recaptcha.getBoundingClientRect();
+            challenges.push({
+                type: 'google_recaptcha_v2',
+                selector: 'div.g-recaptcha, iframe[src*="recaptcha"]',
+                visible: rect.width > 0 && rect.height > 0,
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+            });
+        }
+        
+        // Google reCAPTCHA v3 (invisible badge)
+        const recaptchaBadge = document.querySelector('.grecaptcha-badge');
+        if (recaptchaBadge) {
+            challenges.push({
+                type: 'google_recaptcha_v3',
+                selector: '.grecaptcha-badge',
+                visible: true,
+                invisible_challenge: true
+            });
+        }
+        
+        // hCaptcha
+        const hcaptcha = document.querySelector('iframe[src*="hcaptcha.com"], div.h-captcha');
+        if (hcaptcha) {
+            const rect = hcaptcha.getBoundingClientRect();
+            challenges.push({
+                type: 'hcaptcha',
+                selector: 'div.h-captcha, iframe[src*="hcaptcha.com"]',
+                visible: rect.width > 0 && rect.height > 0,
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+            });
+        }
+        
+        // Generic challenge page detection
+        const challengeIndicators = [
+            document.querySelector('div.cf-challenge'),
+            document.querySelector('[class*="challenge"]'),
+            document.querySelector('[id*="captcha"]'),
+            document.body?.textContent?.includes('Checking your browser') || 
+            document.body?.textContent?.includes('Please wait') ||
+            document.body?.textContent?.includes('Just a moment')
+        ].filter(Boolean);
+        
+        if (challengeIndicators.length > 0 && challenges.length === 0) {
+            challenges.push({
+                type: 'unknown_challenge',
+                indicators: challengeIndicators.length,
+                page_title: document.title
+            });
+        }
+        
+        return challenges;
+    };
+    
+    // Detect any active challenges first
+    const activeChallenge = detectChallenge();
 
     const getLabel = (el) => {
         // Try label element
@@ -944,7 +1018,9 @@ pub fn generate_extract_interactive_elements_script() -> String {
         url: window.location.href,
         title: document.title,
         elementCount: elements.length,
-        elements: elements
+        elements: elements,
+        // CAPTCHA/Challenge detection results
+        challenges: activeChallenge
     });
 })();
 "#.to_string()

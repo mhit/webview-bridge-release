@@ -817,6 +817,27 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             text.push('\n');
         }
     }
+    
+    // Add challenge detection results
+    if let Some(challenges) = final_result.get("challenges").and_then(|c| c.as_array()) {
+        if !challenges.is_empty() {
+            text.push_str("\n【⚠️ チャレンジ検出】\n");
+            for challenge in challenges {
+                let challenge_type = challenge.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                let visible = challenge.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
+                let selector = challenge.get("selector").and_then(|s| s.as_str()).unwrap_or("");
+                
+                text.push_str(&format!("- {}: {}", challenge_type, 
+                    if visible { "表示中" } else { "検出済み" }
+                ));
+                if !selector.is_empty() {
+                    text.push_str(&format!(" ({})", selector));
+                }
+                text.push('\n');
+            }
+            text.push_str("\n※ 人間による操作が必要な場合があります\n");
+        }
+    }
 
     
     // 5. Take screenshot (save to file, return URL)
