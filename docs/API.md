@@ -1,6 +1,6 @@
 # WebView Bridge API ドキュメント
 
-> 最終更新: 2026-02-05
+> 最終更新: 2026-02-07
 
 ## 概要
 
@@ -9,7 +9,7 @@ WebView Bridge は、WebView2 を使用したブラウザ自動化サーバー�
 ## ベースURL
 
 ```
-http://localhost:9400
+http://localhost:3030
 ```
 
 ---
@@ -330,6 +330,8 @@ OK
 
 **GET** `/mcp/info`
 
+> 📝 **Note:** MCPツールの詳細は [MCP_TOOLS.md](./MCP_TOOLS.md) を参照してください。
+
 **レスポンス:**
 ```json
 {
@@ -423,28 +425,28 @@ OK
 import requests
 
 # セッション作成
-session = requests.post("http://localhost:9400/create", 
+session = requests.post("http://localhost:3030/create", 
     json={"profile": "default"}).json()
 sid = session["id"]
 
 # ページ遷移
-requests.post(f"http://localhost:9400/navigate/{sid}", 
+requests.post(f"http://localhost:3030/navigate/{sid}", 
     json={"url": "https://example.com"})
 
 # スクリプト実行
-result = requests.post(f"http://localhost:9400/execute/{sid}", 
+result = requests.post(f"http://localhost:3030/execute/{sid}", 
     json={"script": "return document.title"}).json()
 print(result["result"])
 
 # セッション終了
-requests.delete(f"http://localhost:9400/close/{sid}")
+requests.delete(f"http://localhost:3030/close/{sid}")
 ```
 
 ### JavaScript
 
 ```javascript
 // セッション作成
-const session = await fetch("http://localhost:9400/create", {
+const session = await fetch("http://localhost:3030/create", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ profile: "default" })
@@ -453,14 +455,14 @@ const session = await fetch("http://localhost:9400/create", {
 const sid = session.id;
 
 // ページ遷移
-await fetch(`http://localhost:9400/navigate/${sid}`, {
+await fetch(`http://localhost:3030/navigate/${sid}`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ url: "https://example.com" })
 });
 
 // スクリプト実行
-const result = await fetch(`http://localhost:9400/execute/${sid}`, {
+const result = await fetch(`http://localhost:3030/execute/${sid}`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ script: "return document.title" })
@@ -469,26 +471,26 @@ const result = await fetch(`http://localhost:9400/execute/${sid}`, {
 console.log(result.result);
 
 // セッション終了
-await fetch(`http://localhost:9400/close/${sid}`, { method: "DELETE" });
+await fetch(`http://localhost:3030/close/${sid}`, { method: "DELETE" });
 ```
 
 ### PowerShell
 
 ```powershell
 # セッション作成
-$session = Invoke-RestMethod -Uri "http://localhost:9400/create" `
+$session = Invoke-RestMethod -Uri "http://localhost:3030/create" `
     -Method Post -Body '{"profile":"default"}' -ContentType "application/json"
 $sid = $session.id
 
 # ページ遷移
-Invoke-RestMethod -Uri "http://localhost:9400/navigate/$sid" `
+Invoke-RestMethod -Uri "http://localhost:3030/navigate/$sid" `
     -Method Post -Body '{"url":"https://example.com"}' -ContentType "application/json"
 
 # スクリプト実行
-$result = Invoke-RestMethod -Uri "http://localhost:9400/execute/$sid" `
+$result = Invoke-RestMethod -Uri "http://localhost:3030/execute/$sid" `
     -Method Post -Body '{"script":"return document.title"}' -ContentType "application/json"
 Write-Host $result.result
 
 # セッション終了
-Invoke-RestMethod -Uri "http://localhost:9400/close/$sid" -Method Delete
+Invoke-RestMethod -Uri "http://localhost:3030/close/$sid" -Method Delete
 ```
