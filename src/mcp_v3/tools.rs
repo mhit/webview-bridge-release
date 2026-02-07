@@ -1685,7 +1685,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "capture",
-            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page.",
+            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page. NEW: summarize=true uses AI to generate a concise summary of the page content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
