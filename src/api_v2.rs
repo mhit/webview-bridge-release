@@ -204,11 +204,9 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/jobs", get(job_list))
         // Batch API
         .route("/batch", post(batch_execute))
-        // MCP API (Model Context Protocol - HTTP transport)
-        .route("/mcp", post(mcp_handler))
-        // MCP v3 API (consolidated 8 tools with robustness)
-        .route("/mcp/v3", post(mcp_v3_handler))
-        .route("/mcp/v3/tools", get(mcp_v3_tools_list))
+        // MCP API (Model Context Protocol - v3 consolidated 8 tools)
+        .route("/mcp", post(mcp_v3_handler))
+        .route("/mcp/tools", get(mcp_v3_tools_list))
         .with_state(state)
 }
 
