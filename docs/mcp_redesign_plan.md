@@ -194,9 +194,15 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 
 ### 3. `capture` - 状態取得（Direct）
 
-ページ情報を一括取得。**デフォルトで主要情報を全て返す**。
+ページの状態を取得。**MCPコンテンツタイプでメディア分離**。
 
-**基本（パラメータなしで全取得）**:
+#### 設計原則: コンテキストドレイン防止
+
+MCPプロトコルの`content`配列を活用し、テキストと画像を分離:
+- `type: "text"` → AIのテキストコンテキストへ
+- `type: "image"` → AIのビジョン処理へ（テキストコンテキスト消費なし）
+
+#### 基本リクエスト
 ```json
 {
   "tool": "capture",
@@ -204,41 +210,54 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
 }
 ```
 
-**レスポンス（デフォルト）**:
+#### MCPレスポンス
 ```json
 {
-  "url": "https://example.com/page",
-  "title": "Page Title",
-  "screenshot": "base64...",
-  "text": "ページテキスト..."
+  "content": [
+    {
+      "type": "text",
+      "text": "URL: https://example.com/login\nTitle: ログイン - Example\n\n【状態】\nログインページ。メールとパスワードの入力欄あり。\n\n【操作可能要素】\n- input#email (空)\n- input#password (空)\n- button#login-btn 「ログイン」\n- a.forgot 「パスワードを忘れた方」"
+    },
+    {
+      "type": "image",
+      "data": "iVBORw0KGgo...",
+      "mimeType": "image/png"
+    }
+  ]
 }
 ```
 
-**オプション: 項目を絞る場合のみ `only` を指定**:
-```json
-{
-  "tool": "capture",
-  "session": "my-session",
-  "only": ["screenshot"],
-  "selector": "main",
-  "full_page": true
-}
-```
+#### テキスト部分の最適化
 
-**追加項目を含める場合は `include`**:
+AIが判断に必要な情報のみ含める:
+
+| 含める | 含めない |
+|--------|----------|
+| URL、タイトル | 全ページHTML |
+| 状態要約（1-2文） | 全テキスト内容 |
+| 操作可能要素リスト | 装飾要素 |
+| エラーメッセージ | Cookie詳細 |
+| フォーム状態 | 隠し要素 |
+
+**テキスト部分の目安サイズ: 500-2000文字**
+
+#### オプション
+
 ```json
 {
   "tool": "capture",
-  "include": ["cookies", "html", "images"],
-  "image_filter": {"min_width": 100, "min_height": 100}
+  "include": ["cookies", "full_text"],
+  "screenshot": false,
+  "text_max_chars": 5000,
+  "selector": "#main"
 }
 ```
 
 | パラメータ | 説明 |
 |-----------|------|
-| (なし) | url, title, screenshot, text を返す |
-| `only` | 指定項目のみ返す |
-| `include` | デフォルト＋追加項目 |
+| `screenshot` | スクリーンショット含める（default: true） |
+| `include` | 追加項目: cookies, full_text, html, images |
+| `text_max_chars` | full_text時の最大文字数 |
 | `selector` | 特定領域のみ |
 | `full_page` | フルページスクリーンショット |
 
