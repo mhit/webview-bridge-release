@@ -93,8 +93,10 @@ pub fn generate_scroll_and_click_script(selector: &str) -> String {
 "#, selector.replace('"', "\\\""))
 }
 
-
-/* REMOVED: generate_human_mouse_move_script
+/// Simulate human-like mouse movement to element with natural curve and jitter
+    format!(r#"
+(async function() {{
+    const el = document.querySelector("{}");
     if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
     
     const rect = el.getBoundingClientRect();
@@ -187,15 +189,15 @@ pub fn generate_scroll_and_click_script(selector: &str) -> String {
     return JSON.stringify({{ success: true, moved: true, steps: {}, target: "{}" }});
 }})();
 "#, selector.replace('"', "\\\""), "steps", selector.replace('"', "\\\""))
-*/
+}
 
 /// Type text with input event simulation
-
+pub fn generate_type_with_events_script(selector: &str, text: &str, clear: bool) -> String {
+    generate_type_with_events_script_ex(selector, text, clear, false)
+}
 
 /// Extended type script with instant mode for autocomplete-heavy inputs (like Amazon)
-pub fn generate_type_with_events_script_ex(_selector: &str, _text: &str, _clear: bool, _instant: bool) -> String {
-    String::new()
-} /*
+pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bool, instant: bool) -> String {
     let clear_code = if clear {
         "el.value = ''; el.dispatchEvent(new Event('input', {bubbles: true}));"
     } else {
@@ -397,7 +399,7 @@ pub fn generate_type_with_events_script_ex(_selector: &str, _text: &str, _clear:
 }})();
 "#, selector.replace('"', "\\\""), clear_code, text.replace('"', "\\\"").replace('\n', "\\n"))
     }
-*/
+}
 
 /// Wait for DOM stability (no mutations for specified duration)
 pub fn generate_wait_for_stable_script(stable_duration_ms: u64, timeout_ms: u64) -> String {
@@ -531,7 +533,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
                 visible: rect.width > 0 && rect.height > 0,
                 position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
                 is_solved: isChecked,
-                // AI strategy: Try clicking checkbox, if image challenge appears → needs vision
+                // AI strategy: Try clicking checkbox, if image challenge appears ↁEneeds vision
                 auto_strategy: isChecked 
                     ? { action: 'proceed', message: 'Already solved' }
                     : { action: 'click_checkbox', selector: '.recaptcha-checkbox', fallback: 'vision_required' }
@@ -643,21 +645,21 @@ pub fn generate_extract_interactive_elements_script() -> String {
         return path;
     };
 
-    // ========== 視覚プロパティ抽出 ==========
+    // ========== 視覚�Eロパティ抽出 ==========
     const extractVisualProperties = (el) => {
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
         
-        // ホバー効果の推定（transition/animationの存在で判断）
+        // ホバー効果�E推定！Eransition/animationの存在で判断�E�E
         const hasTransition = style.transition !== 'none' && 
                               style.transition !== 'all 0s ease 0s' &&
                               style.transitionProperty !== 'none';
         
-        // アイコンの存在チェック
+        // アイコンの存在チェチE��
         const hasIcon = el.querySelector('svg, i[class*="icon"], span[class*="icon"]') !== null ||
                         (style.backgroundImage !== 'none' && style.backgroundImage.includes('url'));
         
-        // 画像の存在チェック
+        // 画像�E存在チェチE��
         const img = el.querySelector('img');
         const hasImage = img !== null;
         const imageAlt = img ? img.alt : null;
@@ -667,7 +669,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
             width: Math.round(rect.width),
             height: Math.round(rect.height),
             
-            // ボタンらしさの指標
+            // ボタンらしさ�E持E��E
             cursor: style.cursor,
             hasOnClick: el.hasAttribute('onclick') || el.onclick !== null,
             
@@ -677,14 +679,14 @@ pub fn generate_extract_interactive_elements_script() -> String {
             border: style.borderWidth !== '0px' ? style.border : 'none',
             boxShadow: style.boxShadow !== 'none' ? style.boxShadow : null,
             
-            // テキストスタイル
+            // チE��ストスタイル
             fontWeight: style.fontWeight,
             color: style.color,
             
-            // ホバー効果の示唆
+            // ホバー効果�E示唁E
             hasTransition: hasTransition,
             
-            // アイコン・画像
+            // アイコン・画僁E
             hasIcon: hasIcon,
             hasImage: hasImage,
             imageAlt: imageAlt,
@@ -695,43 +697,43 @@ pub fn generate_extract_interactive_elements_script() -> String {
             tabIndex: el.tabIndex,
             isDisabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
             
-            // 追加: フォーム文脈
+            // 追加: フォーム斁E��
             isInForm: el.closest('form') !== null,
             inputType: el.type || null,
             tagName: el.tagName.toLowerCase()
         };
     };
 
-    // ========== ルールベース事前スコアリング ==========
+    // ========== ルールベ�Eス事前スコアリング ==========
     const preScore = (props, label, el, rect) => {
         let score = 0;
         const reasons = [];
         
-        // cursor: pointer は強力な指標 (+0.3)
+        // cursor: pointer は強力な持E��E(+0.3)
         if (props.cursor === 'pointer') {
             score += 0.3;
             reasons.push('cursor:pointer');
         }
         
-        // 角丸がある (+0.1)
+        // 角丸があめE(+0.1)
         if (props.borderRadius && parseFloat(props.borderRadius) > 0) {
             score += 0.1;
             reasons.push('角丸');
         }
         
-        // 影がある (+0.1)
+        // 影があめE(+0.1)
         if (props.boxShadow && props.boxShadow !== 'none') {
             score += 0.1;
             reasons.push('影');
         }
         
-        // トランジション/アニメーションがある (+0.15)
+        // トランジション/アニメーションがあめE(+0.15)
         if (props.hasTransition) {
             score += 0.15;
-            reasons.push('hover効果');
+            reasons.push('hover効极E);
         }
         
-        // 背景色がある（透明でない）(+0.1)
+        // 背景色がある（透�EでなぁE��E+0.1)
         if (props.backgroundColor && 
             !props.backgroundColor.includes('transparent') && 
             !props.backgroundColor.includes('rgba(0, 0, 0, 0)')) {
@@ -739,13 +741,13 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('背景色');
         }
         
-        // CTAテキスト (+0.15)
-        const ctaWords = ['購入', '申込', '登録', '送信', 'ログイン', 'サインイン', 'カート', '検索',
+        // CTAチE��スチE(+0.15)
+        const ctaWords = ['購入', '申込', '登録', '送信', 'ログイン', 'サインイン', 'カーチE, '検索',
                           'submit', 'buy', 'add', 'cart', 'login', 'sign', 'register', 'checkout', 'search'];
         const labelLower = (label || '').toLowerCase();
         if (ctaWords.some(w => labelLower.includes(w))) {
             score += 0.15;
-            reasons.push('CTAテキスト');
+            reasons.push('CTAチE��スチE);
         }
         
         // onclick属性 (+0.2)
@@ -766,43 +768,43 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('role=' + props.role);
         }
         
-        // aria-expandedがある（展開可能要素）(+0.1)
+        // aria-expandedがある（展開可能要素�E�E+0.1)
         if (props.ariaExpanded !== null) {
             score += 0.1;
             reasons.push('展開可能');
         }
         
-        // 太字 (+0.05)
+        // 太孁E(+0.05)
         if (props.fontWeight && parseInt(props.fontWeight) >= 600) {
             score += 0.05;
-            reasons.push('太字');
+            reasons.push('太孁E);
         }
         
-        // アイコンボタン（テキストなしでアイコンあり）(+0.1)
+        // アイコンボタン�E�テキストなしでアイコンあり�E�E+0.1)
         if (props.hasIcon && (!label || label.trim() === '')) {
             score += 0.1;
             reasons.push('アイコンボタン');
         }
         
-        // disabled要素は大幅減点 (-0.5)
+        // disabled要素は大幁E��点 (-0.5)
         if (props.isDisabled) {
             score = Math.max(0, score - 0.5);
             reasons.push('disabled');
         }
         
-        // tabIndex > 0 は明示的なインタラクティブ指定 (+0.1)
+        // tabIndex > 0 は明示皁E��インタラクチE��ブ指宁E(+0.1)
         if (props.tabIndex > 0) {
             score += 0.1;
             reasons.push('tabIndex');
         }
         
-        // フォーム内の要素はインタラクティブの可能性高い (+0.05)
+        // フォーム冁E�E要素はインタラクチE��ブ�E可能性高い (+0.05)
         if (props.isInForm) {
             score += 0.05;
-            reasons.push('form内');
+            reasons.push('form冁E);
         }
         
-        // input要素はタイプ別にボーナス
+        // input要素はタイプ別にボ�Eナス
         const interactiveInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number', 'range', 'date', 'datetime-local', 'time', 'color', 'file'];
         if (interactiveInputTypes.includes(props.inputType)) {
             score += 0.2;  // inputはcursor:textなので補正
@@ -827,27 +829,27 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('textarea要素');
         }
         
-        // 画像リンク（商品ページ等で重要）(+0.1)
+        // 画像リンク�E�商品�Eージ等で重要E��E+0.1)
         if (props.hasImage) {
             score += 0.1;
             reasons.push('画像リンク');
         }
         
-        // ========== 位置ボーナス（UI法則） ==========
+        // ========== 位置ボ�Eナス�E�EI法則�E�E==========
         
-        // viewport内（見えている）(+0.1)
+        // viewport冁E��見えてぁE���E�E+0.1)
         if (rect && rect.top < window.innerHeight && rect.bottom > 0) {
             score += 0.1;
-            reasons.push('viewport内');
+            reasons.push('viewport冁E);
         }
         
-        // F-pattern: 画面上部は重要 (+0.1 if y < 200)
+        // F-pattern: 画面上部は重要E(+0.1 if y < 200)
         if (rect && rect.top < 200) {
             score += 0.1;
             reasons.push('上部');
         }
         
-        // 画面中央付近（視線集中エリア）(+0.05)
+        // 画面中央付近（視線集中エリア�E�E+0.05)
         if (rect) {
             const centerX = window.innerWidth / 2;
             const centerY = window.innerHeight / 2;
@@ -869,21 +871,21 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('大要素');
         }
         
-        // セマンティックエリア (排他的)
+        // セマンチE��チE��エリア (排他的)
         if (el) {
-            // main/article内は主要コンテンツ (+0.1)
+            // main/article冁E�E主要コンチE��チE(+0.1)
             if (el.closest('main, article, [role="main"]')) {
                 score += 0.1;
-                reasons.push('main内');
+                reasons.push('main冁E);
             }
-            // footer/aside内は補助的 (-0.1) - mainと排他
+            // footer/aside冁E�E補助皁E(-0.1) - mainと排仁E
             else if (el.closest('footer, aside, [role="contentinfo"], [role="complementary"]')) {
                 score = Math.max(0.1, score - 0.1);
                 reasons.push('補助エリア');
             }
         }
         
-        // 画像リンクでaltなしの場合はフラグ
+        // 画像リンクでaltなし�E場合�Eフラグ
         const needsVisionAnalysis = props.hasImage && (!props.imageAlt || props.imageAlt.trim() === '');
         
         return {
@@ -903,9 +905,9 @@ pub fn generate_extract_interactive_elements_script() -> String {
         // リンク
         if (tag === 'a' && href) {
             if (href.startsWith('#')) {
-                actions.push({ action: 'click_anchor', purpose: 'ページ内移動' });
+                actions.push({ action: 'click_anchor', purpose: 'ペ�Eジ冁E��勁E });
             } else {
-                actions.push({ action: 'click_navigate', purpose: 'ページ遷移' });
+                actions.push({ action: 'click_navigate', purpose: 'ペ�Eジ遷移' });
             }
         }
         
@@ -915,44 +917,44 @@ pub fn generate_extract_interactive_elements_script() -> String {
             actions.push({ action: 'click_submit', purpose: 'フォーム送信' });
         }
         
-        // 通常ボタン（typeがない場合も含む）
+        // 通常ボタン�E�EypeがなぁE��合も含む�E�E
         if (tag === 'button' && type !== 'submit') {
-            actions.push({ action: 'click_action', purpose: 'アクション実行' });
+            actions.push({ action: 'click_action', purpose: 'アクション実衁E });
         }
         
-        // チェックボックス・ラジオ
+        // チェチE��ボックス・ラジオ
         if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
-            actions.push({ action: 'click_toggle', purpose: '選択切替' });
+            actions.push({ action: 'click_toggle', purpose: '選択�E替' });
         }
         
-        // テキスト入力
+        // チE��スト�E劁E
         if (tag === 'input' && ['text', 'email', 'password', 'search', 'tel', 'url'].includes(type)) {
-            actions.push({ action: 'type_input', purpose: 'テキスト入力' });
+            actions.push({ action: 'type_input', purpose: 'チE��スト�E劁E });
         }
         if (tag === 'textarea') {
-            actions.push({ action: 'type_input', purpose: '複数行入力' });
+            actions.push({ action: 'type_input', purpose: '褁E��行�E劁E });
         }
         
-        // セレクト
+        // セレクチE
         if (tag === 'select') {
-            actions.push({ action: 'click_select', purpose: 'オプション選択' });
+            actions.push({ action: 'click_select', purpose: 'オプション選抁E });
         }
         
-        // ドロップダウンの推定
+        // ドロチE�Eダウンの推宁E
         const labelLower = (label || '').toLowerCase();
         if (labelLower.includes('▼') || labelLower.includes('▾') || 
             labelLower.includes('dropdown') || labelLower.includes('menu')) {
             actions.push({ action: 'click_expand', purpose: 'メニュー展開' });
         }
         
-        // hover効果がある場合
+        // hover効果がある場吁E
         if (props.hasTransition && actions.length === 0) {
-            actions.push({ action: 'hover_reveal', purpose: '情報表示' });
+            actions.push({ action: 'hover_reveal', purpose: '惁E��表示' });
         }
         
-        // デフォルト
+        // チE��ォルチE
         if (actions.length === 0 && props.cursor === 'pointer') {
-            actions.push({ action: 'click_action', purpose: '不明なアクション' });
+            actions.push({ action: 'click_action', purpose: '不�Eなアクション' });
         }
         
         return actions;
@@ -994,7 +996,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
                 placeholder: el.placeholder || null,
                 inViewport: rect.top < window.innerHeight && rect.bottom > 0,
                 
-                // 視覚プロパティ
+                // 視覚�Eロパティ
                 visual: {
                     cursor: visualProps.cursor,
                     backgroundColor: visualProps.backgroundColor,
@@ -1007,7 +1009,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
                     size: { width: visualProps.width, height: visualProps.height }
                 },
                 
-                // インタラクティビティ分析
+                // インタラクチE��ビティ刁E��
                 interactivity: {
                     score: scoreResult.score,
                     reasons: scoreResult.reasons,
@@ -1017,7 +1019,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
                 }
             };
         })
-        // スコア順にソート
+        // スコア頁E��ソーチE
         .sort((a, b) => b.interactivity.score - a.interactivity.score);
 
     return JSON.stringify({

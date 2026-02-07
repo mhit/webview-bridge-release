@@ -81,6 +81,64 @@ pub enum AppCommand {
         visible: bool,
         resp_tx: oneshot::Sender<Result<bool, String>>,
     },
+    // Device simulation commands
+    SimulateDevice {
+        id: String,
+        device_name: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    SetViewport {
+        id: String,
+        width: u32,
+        height: u32,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    SetUserAgent {
+        id: String,
+        user_agent: String,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    // CDP screenshot (supports full page)
+    ScreenshotCdp {
+        id: String,
+        full_page: bool,
+        format: String,
+        quality: Option<u32>,
+        resp_tx: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
+    // Reset device emulation
+    ResetDeviceEmulation {
+        id: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // Set viewport via CDP (with device metrics)
+    SetViewportCdp {
+        id: String,
+        width: u32,
+        height: u32,
+        device_scale_factor: f64,
+        is_mobile: bool,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // CDP Input commands (for bot detection evasion)
+    ClickCdp {
+        id: String,
+        selector: String,
+        human_mode: bool,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    TypeCdp {
+        id: String,
+        text: String,
+        char_delay_ms: u64,
+        human_mode: bool,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    PressKeyCdp {
+        id: String,
+        key: String,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// Session thread command enum
@@ -136,6 +194,55 @@ pub enum SessionCommand {
     },
     /// Bring window to front for user interaction
     BringToFront {
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    // Device simulation commands
+    SimulateDevice {
+        device_name: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    SetViewport {
+        width: u32,
+        height: u32,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    SetUserAgent {
+        user_agent: String,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    // CDP Screenshot with full page support
+    ScreenshotCdp {
+        full_page: bool,
+        format: String,
+        quality: Option<u32>,
+        resp_tx: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
+    // Reset device emulation
+    ResetDeviceEmulation {
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // Set viewport via CDP
+    SetViewportCdp {
+        width: u32,
+        height: u32,
+        device_scale_factor: f64,
+        is_mobile: bool,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // CDP Input commands (for bot detection evasion)
+    ClickCdp {
+        selector: String,
+        human_mode: bool,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    TypeCdp {
+        text: String,
+        char_delay_ms: u64,
+        human_mode: bool,
+        resp_tx: oneshot::Sender<Result<(), String>>,
+    },
+    PressKeyCdp {
+        key: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
     },
 }
@@ -677,6 +784,92 @@ impl SessionManager {
                             webview.bring_to_front();
                             let _ = resp_tx.send(Ok(()));
                         }
+                        SessionCommand::SimulateDevice { device_name, resp_tx } => {
+                            tracing::debug!("[Session:{}] SimulateDevice: {}", id, device_name);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.simulate_device(&device_name)
+                                .map_err(|e| format!("Device simulation failed: {:?}", e));
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::SetViewport { width, height, resp_tx } => {
+                            tracing::debug!("[Session:{}] SetViewport: {}x{}", id, width, height);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.set_viewport(width, height)
+                                .map_err(|e| format!("Set viewport failed: {:?}", e));
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::SetUserAgent { user_agent, resp_tx } => {
+                            tracing::debug!("[Session:{}] SetUserAgent", id);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.set_user_agent(&user_agent)
+                                .map_err(|e| format!("Set user agent failed: {:?}", e));
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::ScreenshotCdp { full_page, format, quality, resp_tx } => {
+                            tracing::debug!("[Session:{}] ScreenshotCdp: full_page={}", id, full_page);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.capture_screenshot_cdp(full_page, &format, quality);
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::ResetDeviceEmulation { resp_tx } => {
+                            tracing::debug!("[Session:{}] ResetDeviceEmulation", id);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.reset_device_emulation()
+                                .map_err(|e| format!("Reset device emulation failed: {:?}", e));
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::SetViewportCdp { width, height, device_scale_factor, is_mobile, resp_tx } => {
+                            tracing::debug!("[Session:{}] SetViewportCdp: {}x{}", id, width, height);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.set_viewport_cdp(width, height, device_scale_factor, is_mobile)
+                                .map_err(|e| format!("Set viewport CDP failed: {:?}", e));
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::ClickCdp { selector, human_mode, resp_tx } => {
+                            tracing::debug!("[Session:{}] ClickCdp: {}, human={}", id, selector, human_mode);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.click_selector_cdp(&selector, human_mode);
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::TypeCdp { text, char_delay_ms, human_mode, resp_tx } => {
+                            tracing::debug!("[Session:{}] TypeCdp: {} chars, human={}", id, text.len(), human_mode);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.type_cdp(&text, char_delay_ms, human_mode);
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::PressKeyCdp { key, resp_tx } => {
+                            tracing::debug!("[Session:{}] PressKeyCdp: {}", id, key);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.press_key_cdp(&key);
+                            let _ = resp_tx.send(result);
+                        }
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
@@ -955,6 +1148,203 @@ impl SessionManager {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => Err("BringToFront response channel closed".to_string()),
+        }
+    }
+
+    /// Simulate a device (set viewport and user agent based on preset)
+    pub async fn simulate_device(&self, id: &str, device_name: String) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::SimulateDevice { device_name, resp_tx: tx })?;
+
+        match rx.await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("SimulateDevice response channel closed".to_string()),
+        }
+    }
+
+    /// Set viewport dimensions
+    pub async fn set_viewport(&self, id: &str, width: u32, height: u32) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::SetViewport { width, height, resp_tx: tx })?;
+
+        match rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("SetViewport response channel closed".to_string()),
+        }
+    }
+
+    /// Set user agent
+    pub async fn set_user_agent(&self, id: &str, user_agent: String) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::SetUserAgent { user_agent, resp_tx: tx })?;
+
+        match rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("SetUserAgent response channel closed".to_string()),
+        }
+    }
+
+    /// CDP screenshot with full page support
+    pub async fn screenshot_cdp(&self, id: &str, full_page: bool, format: &str, quality: Option<u32>) -> Result<Vec<u8>, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::ScreenshotCdp { 
+            full_page,
+            format: format.to_string(),
+            quality,
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("ScreenshotCdp response channel closed".to_string()),
+        }
+    }
+
+    /// Reset device emulation
+    pub async fn reset_device_emulation(&self, id: &str) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::ResetDeviceEmulation { resp_tx: tx })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("ResetDeviceEmulation response channel closed".to_string()),
+        }
+    }
+
+    /// Set viewport via CDP
+    pub async fn set_viewport_cdp(&self, id: &str, width: u32, height: u32, device_scale_factor: f64, is_mobile: bool) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::SetViewportCdp { 
+            width, 
+            height, 
+            device_scale_factor, 
+            is_mobile,
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("SetViewportCdp response channel closed".to_string()),
+        }
+    }
+
+    /// Click element using CDP Input.dispatchMouseEvent (bot detection evasion)
+    pub async fn click_cdp(&self, id: &str, selector: String, human_mode: bool) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::ClickCdp { 
+            selector,
+            human_mode,
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("ClickCdp response channel closed".to_string()),
+        }
+    }
+
+    /// Type text using CDP Input.dispatchKeyEvent (bot detection evasion)
+    pub async fn type_cdp(&self, id: &str, text: String, char_delay_ms: u64, human_mode: bool) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::TypeCdp { 
+            text, 
+            char_delay_ms,
+            human_mode,
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("TypeCdp response channel closed".to_string()),
+        }
+    }
+
+    /// Press special key using CDP Input.dispatchKeyEvent (bot detection evasion)
+    pub async fn press_key_cdp(&self, id: &str, key: String) -> Result<(), String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::PressKeyCdp { 
+            key, 
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("PressKeyCdp response channel closed".to_string()),
         }
     }
 

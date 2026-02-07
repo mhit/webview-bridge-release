@@ -104,7 +104,7 @@ pub struct InteractOptions {
     pub screenshot_on_error: bool,
     #[serde(default)]
     pub slow_mode_ms: u64,
-    /// Enable human-like behavior: random delays, slight mouse jitter, natural scrolling
+    /// Enable human-like behavior: random delays
     #[serde(default)]
     pub human_mode: bool,
 }
@@ -208,6 +208,9 @@ pub struct CaptureRequest {
     /// Analyze images without alt text using Vision LLM (Phase 3)
     #[serde(default)]
     pub analyze_vision: bool,
+    /// Use CDP for screenshot (better full-page support)
+    #[serde(default = "default_true")]
+    pub use_cdp: bool,
 }
 
 
@@ -253,6 +256,8 @@ fn default_scroll_max() -> usize { 5 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionRequest {
     #[serde(default)]
+    pub session: Option<String>,  // Target session name for device switch etc.
+    #[serde(default)]
     pub acquire: Option<String>,
     #[serde(default)]
     pub release: Option<String>,
@@ -277,6 +282,15 @@ pub struct SessionRequest {
     pub ai_models: bool,
     #[serde(default)]
     pub ai_config: Option<AiConfigUpdate>,
+    // Device simulation / Viewport
+    #[serde(default)]
+    pub device: Option<String>,  // Device preset name (e.g., "iPhone 14", "Pixel 7")
+    #[serde(default)]
+    pub viewport_width: Option<u32>,
+    #[serde(default)]
+    pub viewport_height: Option<u32>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

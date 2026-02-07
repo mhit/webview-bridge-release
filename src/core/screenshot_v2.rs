@@ -156,7 +156,20 @@ pub struct DevicePreset {
 /// Get built-in device presets
 pub fn get_device_presets() -> Vec<DevicePreset> {
     vec![
-        // Mobile devices
+        // ============================================================================
+        // iPhones
+        // ============================================================================
+        DevicePreset {
+            name: "iphone_se".to_string(),
+            viewport: Viewport {
+                width: 375,
+                height: 667,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
         DevicePreset {
             name: "iphone_14".to_string(),
             viewport: Viewport {
@@ -166,7 +179,29 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: true,
                 has_touch: true,
             },
-            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1".to_string(),
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_14_plus".to_string(),
+            viewport: Viewport {
+                width: 428,
+                height: 926,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_14_pro".to_string(),
+            viewport: Viewport {
+                width: 393,
+                height: 852,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
         },
         DevicePreset {
             name: "iphone_14_pro_max".to_string(),
@@ -177,8 +212,100 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: true,
                 has_touch: true,
             },
-            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1".to_string(),
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
         },
+        DevicePreset {
+            name: "iphone_15".to_string(),
+            viewport: Viewport {
+                width: 393,
+                height: 852,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_15_plus".to_string(),
+            viewport: Viewport {
+                width: 430,
+                height: 932,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_15_pro".to_string(),
+            viewport: Viewport {
+                width: 393,
+                height: 852,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_15_pro_max".to_string(),
+            viewport: Viewport {
+                width: 430,
+                height: 932,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_16".to_string(),
+            viewport: Viewport {
+                width: 393,
+                height: 852,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_16_plus".to_string(),
+            viewport: Viewport {
+                width: 430,
+                height: 932,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_16_pro".to_string(),
+            viewport: Viewport {
+                width: 402,
+                height: 874,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "iphone_16_pro_max".to_string(),
+            viewport: Viewport {
+                width: 440,
+                height: 956,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        
+        // ============================================================================
+        // Google Pixel
+        // ============================================================================
         DevicePreset {
             name: "pixel_7".to_string(),
             viewport: Viewport {
@@ -188,8 +315,78 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: true,
                 has_touch: true,
             },
-            user_agent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
         },
+        DevicePreset {
+            name: "pixel_7_pro".to_string(),
+            viewport: Viewport {
+                width: 412,
+                height: 892,
+                device_scale_factor: 3.5,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_8".to_string(),
+            viewport: Viewport {
+                width: 412,
+                height: 915,
+                device_scale_factor: 2.625,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_8_pro".to_string(),
+            viewport: Viewport {
+                width: 448,
+                height: 998,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_9".to_string(),
+            viewport: Viewport {
+                width: 412,
+                height: 915,
+                device_scale_factor: 2.75,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_9_pro".to_string(),
+            viewport: Viewport {
+                width: 412,
+                height: 915,
+                device_scale_factor: 2.75,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_9_pro_xl".to_string(),
+            viewport: Viewport {
+                width: 448,
+                height: 998,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        
+        // ============================================================================
+        // Samsung Galaxy
+        // ============================================================================
         DevicePreset {
             name: "galaxy_s23".to_string(),
             viewport: Viewport {
@@ -199,9 +396,100 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: true,
                 has_touch: true,
             },
-            user_agent: "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
         },
-        // Tablets
+        DevicePreset {
+            name: "galaxy_s23_ultra".to_string(),
+            viewport: Viewport {
+                width: 384,
+                height: 824,
+                device_scale_factor: 3.75,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "galaxy_s24".to_string(),
+            viewport: Viewport {
+                width: 360,
+                height: 780,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "galaxy_s24_ultra".to_string(),
+            viewport: Viewport {
+                width: 384,
+                height: 824,
+                device_scale_factor: 3.75,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "galaxy_fold_5".to_string(),
+            viewport: Viewport {
+                width: 373,
+                height: 839,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
+        },
+        
+        // ============================================================================
+        // Tablets - iPad
+        // ============================================================================
+        DevicePreset {
+            name: "ipad".to_string(),
+            viewport: Viewport {
+                width: 768,
+                height: 1024,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "ipad_mini".to_string(),
+            viewport: Viewport {
+                width: 768,
+                height: 1024,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "ipad_air".to_string(),
+            viewport: Viewport {
+                width: 820,
+                height: 1180,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "ipad_pro_11".to_string(),
+            viewport: Viewport {
+                width: 834,
+                height: 1194,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
         DevicePreset {
             name: "ipad_pro_12".to_string(),
             viewport: Viewport {
@@ -211,9 +499,49 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: true,
                 has_touch: true,
             },
-            user_agent: "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1".to_string(),
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
         },
-        // Desktop
+        
+        // ============================================================================
+        // Tablets - Android
+        // ============================================================================
+        DevicePreset {
+            name: "galaxy_tab_s9".to_string(),
+            viewport: Viewport {
+                width: 753,
+                height: 1205,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "pixel_tablet".to_string(),
+            viewport: Viewport {
+                width: 800,
+                height: 1280,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
+        
+        // ============================================================================
+        // Desktop - Common Resolutions
+        // ============================================================================
+        DevicePreset {
+            name: "desktop_1366x768".to_string(),
+            viewport: Viewport {
+                width: 1366,
+                height: 768,
+                device_scale_factor: 1.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
         DevicePreset {
             name: "desktop_1080p".to_string(),
             viewport: Viewport {
@@ -223,7 +551,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: false,
                 has_touch: false,
             },
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
         },
         DevicePreset {
             name: "desktop_1440p".to_string(),
@@ -234,7 +562,33 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: false,
                 has_touch: false,
             },
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "desktop_4k".to_string(),
+            viewport: Viewport {
+                width: 3840,
+                height: 2160,
+                device_scale_factor: 1.5,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
+        
+        // ============================================================================
+        // Desktop - Mac
+        // ============================================================================
+        DevicePreset {
+            name: "macbook_air_13".to_string(),
+            viewport: Viewport {
+                width: 1280,
+                height: 800,
+                device_scale_factor: 2.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15".to_string(),
         },
         DevicePreset {
             name: "macbook_pro_14".to_string(),
@@ -245,7 +599,99 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
                 is_mobile: false,
                 has_touch: false,
             },
-            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15".to_string(),
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15".to_string(),
+        },
+        DevicePreset {
+            name: "macbook_pro_16".to_string(),
+            viewport: Viewport {
+                width: 1728,
+                height: 1117,
+                device_scale_factor: 2.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15".to_string(),
+        },
+        DevicePreset {
+            name: "imac_24".to_string(),
+            viewport: Viewport {
+                width: 2240,
+                height: 1260,
+                device_scale_factor: 2.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15".to_string(),
+        },
+        
+        // ============================================================================
+        // Special / Common Breakpoints
+        // ============================================================================
+        DevicePreset {
+            name: "mobile_small".to_string(),
+            viewport: Viewport {
+                width: 320,
+                height: 568,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "mobile_medium".to_string(),
+            viewport: Viewport {
+                width: 375,
+                height: 812,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "mobile_large".to_string(),
+            viewport: Viewport {
+                width: 414,
+                height: 896,
+                device_scale_factor: 3.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "tablet".to_string(),
+            viewport: Viewport {
+                width: 768,
+                height: 1024,
+                device_scale_factor: 2.0,
+                is_mobile: true,
+                has_touch: true,
+            },
+            user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
+        },
+        DevicePreset {
+            name: "laptop".to_string(),
+            viewport: Viewport {
+                width: 1366,
+                height: 768,
+                device_scale_factor: 1.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        },
+        DevicePreset {
+            name: "desktop".to_string(),
+            viewport: Viewport {
+                width: 1920,
+                height: 1080,
+                device_scale_factor: 1.0,
+                is_mobile: false,
+                has_touch: false,
+            },
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
         },
     ]
 }

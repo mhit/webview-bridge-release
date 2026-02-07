@@ -100,6 +100,32 @@ async fn execute_script(session: &str, script: String, state: &V2AppState, timeo
 }
 
 // ============================================================================
+// Helper: Get Cookies (CDP via AppCommand)
+// ============================================================================
+
+async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, String> {
+    let manager = get_session_manager_v2();
+    
+    let handle = manager.get_handle(session)
+        .ok_or_else(|| format!("Session '{}' not found", session))?;
+    
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::GetCookies {
+        id: handle.id.clone(),
+        resp_tx: tx,
+    };
+    
+    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+    
+    match tokio::time::timeout(Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(result))) => Ok(result),
+        Ok(Ok(Err(e))) => Err(e),
+        Ok(Err(_)) => Err("Channel closed".to_string()),
+        Err(_) => Err("GetCookies timed out".to_string()),
+    }
+}
+
+// ============================================================================
 // 1. Navigate
 // ============================================================================
 
@@ -271,37 +297,52 @@ async fn execute_action(
 ) -> Result<Option<String>, String> {
     match action {
         Action::Click { target, wait_after_ms } => {
-            // Wait for element to be clickable
-            let wait_script = generate_wait_for_clickable_script(target, timeout_ms);
-            let wait_result = execute_script(session, wait_script, state, timeout_ms).await?;
+            // Quick element check (sync, no polling loop)
+            let check_script = format!(r#"
+                (function() {{
+                    const el = document.querySelector("{}");
+                    if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return JSON.stringify({{ success: false, error: "Element hidden" }});
+                    return JSON.stringify({{ success: true }});
+                }})()
+            "#, target.replace('"', "\\\""));
+            let check_result = execute_script(session, check_script, state, 5000).await?;
             
-            let parsed: serde_json::Value = serde_json::from_str(&wait_result)
-                .map_err(|e| format!("Failed to parse wait result: {}", e))?;
+            let parsed: serde_json::Value = serde_json::from_str(&check_result)
+                .map_err(|e| format!("Failed to parse check result: {}", e))?;
             
             if !parsed["success"].as_bool().unwrap_or(false) {
                 return Err(parsed["error"].as_str().unwrap_or("Element not clickable").to_string());
             }
             
-            // Human mode: simulate mouse movement to element with natural curve
+            // Human mode: add delay before click
             if human_mode {
-                tracing::info!("[human_mode] Simulating mouse movement to: {}", target);
-                let mouse_move_script = generate_human_mouse_move_script(target);
-                let _ = execute_script(session, mouse_move_script, state, timeout_ms).await;
-                // Small delay after mouse movement
                 let delay = 50 + (rand::random::<u64>() % 100);
-                tracing::info!("[human_mode] Mouse settle delay: {}ms", delay);
+                tracing::info!("[human_mode] Pre-click delay: {}ms", delay);
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             
-            // Scroll and click
-            let click_script = generate_scroll_and_click_script(target);
-            let result = execute_script(session, click_script, state, timeout_ms).await?;
-            
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .map_err(|e| format!("Failed to parse click result: {}", e))?;
-            
-            if !parsed["success"].as_bool().unwrap_or(false) {
-                return Err(parsed["error"].as_str().unwrap_or("Click failed").to_string());
+            // CDP click
+            tracing::info!("[cdp] Using CDP Input.dispatchMouseEvent for click: {}, human={}", target, human_mode);
+            let manager = get_session_manager_v2();
+            if let Some(handle) = manager.get_handle(session) {
+                let (tx, rx) = oneshot::channel();
+                let cmd = crate::core::AppCommand::ClickCdp {
+                    id: handle.id.clone(),
+                    selector: target.clone(),
+                    human_mode,
+                    resp_tx: tx,
+                };
+                state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+                match tokio::time::timeout(Duration::from_secs(10), rx).await {
+                    Ok(Ok(Ok(()))) => tracing::info!("[cdp] Click succeeded"),
+                    Ok(Ok(Err(e))) => return Err(format!("CDP click failed: {}", e)),
+                    Ok(Err(_)) => return Err("Channel closed".to_string()),
+                    Err(_) => return Err("CDP click timed out".to_string()),
+                }
+            } else {
+                return Err(format!("Session '{}' not found", session));
             }
             
             // Wait after click
@@ -313,72 +354,73 @@ async fn execute_action(
         }
         
         Action::Type { target, value, clear, instant } => {
-            // Wait for element
-            let wait_script = generate_wait_for_clickable_script(target, timeout_ms);
-            execute_script(session, wait_script, state, timeout_ms).await?;
+            // Quick element check
+            let check_script = format!(r#"
+                (function() {{
+                    const el = document.querySelector("{}");
+                    if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
+                    return JSON.stringify({{ success: true }});
+                }})()
+            "#, target.replace('"', "\\\""));
+            let _ = execute_script(session, check_script, state, 5000).await?;
             
-            // Type with events - extend timeout based on text length and mode
-            // Instant mode: fast direct set
-            // Normal mode: ~20ms per char  
-            // Human mode: ~150ms per char + typo corrections + thinking pauses
-            let type_timeout = if *instant {
-                timeout_ms.max(5000)
-            } else if human_mode {
-                // Human-like typing: base 50ms + variance + 3% typos with correction + 2% pauses
-                // Conservative estimate: 150ms per char + 2 seconds buffer for pauses/typos
-                timeout_ms.max(5000 + (value.len() as u64 * 150) + 3000)
+            // CDP type (instant=true uses 0 delay, normal uses 20ms, human_mode uses random)
+            let char_delay = if *instant { 0 } else if human_mode { 50 + (rand::random::<u64>() % 100) } else { 20 };
+            tracing::info!("[cdp] Type via CDP: {} chars, delay={}ms, instant={}", value.len(), char_delay, instant);
+            
+            let manager = get_session_manager_v2();
+            if let Some(handle) = manager.get_handle(session) {
+                // Click to focus
+                let (click_tx, click_rx) = oneshot::channel();
+                let click_cmd = crate::core::AppCommand::ClickCdp {
+                    id: handle.id.clone(),
+                    selector: target.clone(),
+                    human_mode: false, // Focus click doesn't need human movements
+                    resp_tx: click_tx,
+                };
+                state.cmd_tx.send(click_cmd).map_err(|_| "Failed to send command")?;
+                match tokio::time::timeout(Duration::from_secs(10), click_rx).await {
+                    Ok(Ok(Ok(()))) => tracing::info!("[cdp] Focus click succeeded"),
+                    Ok(Ok(Err(e))) => return Err(format!("CDP focus click failed: {}", e)),
+                    Ok(Err(_)) => return Err("Channel closed".to_string()),
+                    Err(_) => return Err("CDP focus click timed out".to_string()),
+                }
+                
+                if !*instant {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                
+                // Clear if requested
+                if *clear {
+                    let clear_script = format!(r#"
+                        (function() {{
+                            const el = document.querySelector("{}");
+                            if (el) {{ el.value = ""; el.dispatchEvent(new Event('input', {{bubbles: true}})); }}
+                        }})()
+                    "#, target.replace('"', "\\\""));
+                    let _ = execute_script(session, clear_script, state, 2000).await;
+                }
+                
+                // Type via CDP
+                let (type_tx, type_rx) = oneshot::channel();
+                let type_cmd = crate::core::AppCommand::TypeCdp {
+                    id: handle.id.clone(),
+                    text: value.clone(),
+                    char_delay_ms: char_delay,
+                    human_mode,
+                    resp_tx: type_tx,
+                };
+                state.cmd_tx.send(type_cmd).map_err(|_| "Failed to send command")?;
+                
+                let type_timeout_secs = if *instant { 10 } else { (value.len() as u64 * char_delay / 1000) + 10 };
+                match tokio::time::timeout(Duration::from_secs(type_timeout_secs), type_rx).await {
+                    Ok(Ok(Ok(()))) => tracing::info!("[cdp] Type succeeded: {} chars", value.len()),
+                    Ok(Ok(Err(e))) => return Err(format!("CDP type failed: {}", e)),
+                    Ok(Err(_)) => return Err("Channel closed".to_string()),
+                    Err(_) => return Err("CDP type timed out".to_string()),
+                }
             } else {
-                timeout_ms.max(5000 + (value.len() as u64 * 20))
-            };
-            
-            tracing::info!("[type] Input length: {}, instant: {}, human_mode: {}, timeout: {}ms", 
-                value.len(), instant, human_mode, type_timeout);
-            
-            let type_script = generate_type_with_events_script_ex(target, value, *clear, *instant);
-            let result = execute_script(session, type_script, state, type_timeout).await;
-            
-            match result {
-                Ok(res) => {
-                    let parsed: serde_json::Value = serde_json::from_str(&res)
-                        .map_err(|e| format!("Failed to parse type result: {}", e))?;
-                    
-                    if !parsed["success"].as_bool().unwrap_or(false) {
-                        return Err(parsed["error"].as_str().unwrap_or("Type failed").to_string());
-                    }
-                    
-                    tracing::info!("[type] Success: typed {} chars, instant: {}, final value: {}", 
-                        parsed["length"].as_u64().unwrap_or(0),
-                        parsed["instant"].as_bool().unwrap_or(false),
-                        parsed["value"].as_str().unwrap_or("?"));
-                }
-                Err(e) => {
-                    // Lenient mode: if typing failed but it's instant mode, 
-                    // check if value was actually set before failing
-                    if *instant {
-                        tracing::warn!("[type] Instant mode failed: {}, checking if value was set anyway...", e);
-                        
-                        let verify_script = format!(r#"
-                            (function() {{
-                                const el = document.querySelector("{}");
-                                if (el && el.value) {{
-                                    return JSON.stringify({{ success: true, value: el.value }});
-                                }}
-                                return JSON.stringify({{ success: false }});
-                            }})();
-                        "#, target.replace('"', "\\\""));
-                        
-                        if let Ok(verify_result) = execute_script(session, verify_script, state, 2000).await {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&verify_result) {
-                                if v["success"].as_bool().unwrap_or(false) {
-                                    tracing::info!("[type] Lenient success: value was set to: {}", 
-                                        v["value"].as_str().unwrap_or("?"));
-                                    return Ok(None); // Success despite the error!
-                                }
-                            }
-                        }
-                    }
-                    return Err(e);
-                }
+                return Err(format!("Session '{}' not found", session));
             }
             
             Ok(None)
@@ -536,19 +578,45 @@ async fn execute_action(
 }
 
 async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, String> {
-    // For now, return a placeholder path
-    // TODO: Implement actual screenshot with file saving
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let path = format!("sessions/{}/captures/cap_{}.png", session, timestamp);
     
-    // Take screenshot via V2 API
-    let screenshot_script = r#"
-        JSON.stringify({ captured: true, timestamp: Date.now() });
-    "#;
+    // Create screenshot directory
+    let screenshot_dir = dirs::home_dir()
+        .map(|h| h.join(".webview-bridge").join("profiles").join(session).join("screenshots"))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&screenshot_dir);
     
-    execute_script(session, screenshot_script.to_string(), state, 5000).await?;
+    let filename = format!("cap_{}.png", timestamp);
+    let screenshot_path = screenshot_dir.join(&filename);
     
-    Ok(path)
+    // Take screenshot via CDP
+    let manager = get_session_manager_v2();
+    let handle = manager.get_handle(session)
+        .ok_or_else(|| format!("Session '{}' not found", session))?;
+    
+    let (tx, rx) = oneshot::channel();
+    let cdp_cmd = crate::core::AppCommand::ScreenshotCdp {
+        id: handle.id.clone(),
+        full_page: false,
+        format: "png".to_string(),
+        quality: None,
+        resp_tx: tx,
+    };
+    
+    state.cmd_tx.send(cdp_cmd).map_err(|_| "Failed to send command")?;
+    
+    match tokio::time::timeout(Duration::from_secs(30), rx).await {
+        Ok(Ok(Ok(bytes))) => {
+            // Save to file
+            std::fs::write(&screenshot_path, &bytes)
+                .map_err(|e| format!("Failed to save screenshot: {}", e))?;
+            tracing::info!("[take_screenshot] Saved {} bytes to {:?}", bytes.len(), screenshot_path);
+            Ok(screenshot_path.to_string_lossy().to_string())
+        }
+        Ok(Ok(Err(e))) => Err(format!("Screenshot failed: {}", e)),
+        Ok(Err(_)) => Err("Channel closed".to_string()),
+        Err(_) => Err("Screenshot timed out".to_string()),
+    }
 }
 
 // ============================================================================
@@ -871,80 +939,110 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     // 5. Take screenshot (save to file, return URL)
     if req.screenshot {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let _filename = format!("cap_{}.png", timestamp);
+        let filename = format!("cap_{}.png", timestamp);
         
-        // Use html2canvas-like approach via JavaScript
-        let screenshot_script = r#"
-            (async function() {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
+        // Get screenshot output directory (inside session profile folder)
+        let screenshot_dir = dirs::home_dir()
+            .map(|h| h.join(".webview-bridge").join("profiles").join(&req.session).join("screenshots"))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&screenshot_dir);
+        let screenshot_path = screenshot_dir.join(&filename);
+        
+        // Use CDP screenshot for full_page or when explicitly requested
+        if req.use_cdp || req.full_page {
+            // Get session manager
+            let manager = get_session_manager_v2();
+            if let Some(handle) = manager.get_handle(&req.session) {
+                let (tx, rx) = oneshot::channel();
+                let cdp_cmd = crate::core::AppCommand::ScreenshotCdp {
+                    id: handle.id.clone(),
+                    full_page: req.full_page,
+                    format: "png".to_string(),
+                    quality: None,
+                    resp_tx: tx,
+                };
                 
-                // Simple approach: capture visible viewport as data URL
-                // Note: This is limited but works without external libraries
-                try {
-                    // Return page dimensions for now
-                    return JSON.stringify({
-                        success: true,
-                        width: window.innerWidth,
-                        height: window.innerHeight,
-                        scroll: { x: window.scrollX, y: window.scrollY }
-                    });
-                } catch(e) {
-                    return JSON.stringify({ success: false, error: e.message });
+                if state.cmd_tx.send(cdp_cmd).is_ok() {
+                    match tokio::time::timeout(Duration::from_secs(30), rx).await {
+                        Ok(Ok(Ok(bytes))) => {
+                            // Save to file
+                            match std::fs::write(&screenshot_path, &bytes) {
+                                Ok(_) => {
+                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n保存先: {}\nサイズ: {} bytes", 
+                                        screenshot_path.display(), bytes.len()));
+                                }
+                                Err(e) => {
+                                    text.push_str(&format!("\n【スクリーンショット保存失敗】{}", e));
+                                }
+                            }
+                        }
+                        Ok(Ok(Err(e))) => {
+                            text.push_str(&format!("\n【CDPスクリーンショット失敗】{}", e));
+                        }
+                        _ => {
+                            text.push_str("\n【CDPスクリーンショットタイムアウト】");
+                        }
+                    }
+                } else {
+                    text.push_str("\n【コマンド送信失敗】");
                 }
-            })();
-        "#;
-        
-        match execute_script(&req.session, screenshot_script.to_string(), state, 5000).await {
-            Ok(result) => {
-                // For now, just report dimensions
-                text.push_str(&format!("\n【ページ情報】\n{}", result));
+            } else {
+                text.push_str(&format!("\n【セッション未検出】{}", req.session));
             }
-            Err(e) => {
-                text.push_str(&format!("\n【スクリーンショット失敗】{}", e));
+        } else {
+            // Fallback: just report page dimensions (existing behavior)
+            let screenshot_script = r#"
+                (async function() {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                    
+                    try {
+                        return JSON.stringify({
+                            success: true,
+                            width: window.innerWidth,
+                            height: window.innerHeight,
+                            scroll: { x: window.scrollX, y: window.scrollY }
+                        });
+                    } catch(e) {
+                        return JSON.stringify({ success: false, error: e.message });
+                    }
+                })();
+            "#;
+            
+            match execute_script(&req.session, screenshot_script.to_string(), state, 5000).await {
+                Ok(result) => {
+                    text.push_str(&format!("\n【ページ情報】\n{}", result));
+                }
+                Err(e) => {
+                    text.push_str(&format!("\n【スクリーンショット失敗】{}", e));
+                }
             }
         }
     }
     
     // Handle additional includes
     if req.include.contains(&CaptureInclude::Cookies) {
-        let cookie_script = r#"
-            (function() {
-                const cookies = document.cookie.split(';').map(c => {
-                    const [name, ...valueParts] = c.trim().split('=');
-                    return {
-                        name: name,
-                        value: valueParts.join('='),
-                        domain: window.location.hostname
-                    };
-                }).filter(c => c.name);
-                return JSON.stringify({
-                    success: true,
-                    count: cookies.length,
-                    cookies: cookies
-                });
-            })();
-        "#;
-        
-        match execute_script(&req.session, cookie_script.to_string(), state, 5000).await {
-            Ok(result) => {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
-                    if let Some(cookies) = parsed["cookies"].as_array() {
-                        text.push_str(&format!("\n\n【Cookies】({}件)\n", cookies.len()));
-                        for cookie in cookies.iter().take(20) {
-                            let name = cookie["name"].as_str().unwrap_or("?");
-                            let value = cookie["value"].as_str().unwrap_or("").chars().take(30).collect::<String>();
-                            text.push_str(&format!("- {}={}\n", name, value));
-                        }
-                        if cookies.len() > 20 {
-                            text.push_str(&format!("... 他{}件\n", cookies.len() - 20));
-                        }
+        // Use CDP Network.getCookies for HttpOnly cookies
+        match get_cookies_cdp(&req.session, state).await {
+            Ok(cookies_json) => {
+                if let Ok(cookies) = serde_json::from_str::<Vec<serde_json::Value>>(&cookies_json) {
+                    text.push_str(&format!("\n\n【Cookies】({}件)\n", cookies.len()));
+                    for cookie in cookies.iter().take(20) {
+                        let name = cookie["name"].as_str().unwrap_or("?");
+                        let value = cookie["value"].as_str().unwrap_or("").chars().take(30).collect::<String>();
+                        let http_only = cookie["httpOnly"].as_bool().unwrap_or(false);
+                        let suffix = if http_only { " [HttpOnly]" } else { "" };
+                        text.push_str(&format!("- {}={}{}\n", name, value, suffix));
+                    }
+                    if cookies.len() > 20 {
+                        text.push_str(&format!("... 他{}件\n", cookies.len() - 20));
                     }
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                tracing::warn!("[capture] CDP cookie fetch failed: {}", e);
                 text.push_str("\n\n【Cookies】取得失敗");
             }
         }
@@ -1244,13 +1342,69 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     }
                                 }
                                 
+                                // Apply device simulation if requested
+                                let mut device_info: Option<String> = None;
+                                
+                                // Option 1: Device preset (e.g., "iPhone 14")
+                                if let Some(device_name) = &req.device {
+                                    let (dev_tx, dev_rx) = oneshot::channel();
+                                    let dev_cmd = crate::core::AppCommand::SimulateDevice {
+                                        id: handle.id.clone(),
+                                        device_name: device_name.clone(),
+                                        resp_tx: dev_tx,
+                                    };
+                                    if state.cmd_tx.send(dev_cmd).is_ok() {
+                                        match tokio::time::timeout(Duration::from_millis(2000), dev_rx).await {
+                                            Ok(Ok(Ok(msg))) => {
+                                                device_info = Some(msg);
+                                            }
+                                            Ok(Ok(Err(e))) => {
+                                                tracing::warn!("Device simulation failed: {}", e);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                // Option 2: Custom viewport dimensions
+                                else if let (Some(w), Some(h)) = (req.viewport_width, req.viewport_height) {
+                                    let (vp_tx, vp_rx) = oneshot::channel();
+                                    let vp_cmd = crate::core::AppCommand::SetViewport {
+                                        id: handle.id.clone(),
+                                        width: w,
+                                        height: h,
+                                        resp_tx: vp_tx,
+                                    };
+                                    if state.cmd_tx.send(vp_cmd).is_ok() {
+                                        match tokio::time::timeout(Duration::from_millis(2000), vp_rx).await {
+                                            Ok(Ok(Ok(_))) => {
+                                                device_info = Some(format!("Viewport set to {}x{}", w, h));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                
+                                // Option 3: Custom user agent
+                                if let Some(ua) = &req.user_agent {
+                                    let (ua_tx, ua_rx) = oneshot::channel();
+                                    let ua_cmd = crate::core::AppCommand::SetUserAgent {
+                                        id: handle.id.clone(),
+                                        user_agent: ua.clone(),
+                                        resp_tx: ua_tx,
+                                    };
+                                    if state.cmd_tx.send(ua_cmd).is_ok() {
+                                        let _ = tokio::time::timeout(Duration::from_millis(1000), ua_rx).await;
+                                    }
+                                }
+                                
                                 return McpToolResponse::success_json(serde_json::json!({
                                     "session": response.session,
                                     "is_new": response.is_new,
                                     "profile": response.profile,
                                     "wait_ms": waited_ms,
                                     "status": "ready",
-                                    "visible": !req.headless
+                                    "visible": !req.headless,
+                                    "device": device_info
                                 }));
                             }
                             
@@ -1376,6 +1530,88 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             Err(e) => {
                 return McpToolResponse::error("CONFIG_SAVE_FAILED", &e);
             }
+        }
+    }
+    
+    // Device switch on existing session (no acquire needed)
+    // This allows switching devices on an already active session
+    if req.device.is_some() || req.viewport_width.is_some() || req.user_agent.is_some() {
+        // Get session name from 'session' or 'acquire' field, or default
+        let session_name = req.session.as_deref()
+            .or(req.acquire.as_deref())
+            .unwrap_or("default");
+        
+        // Check if session exists
+        if let Some(handle) = manager.get_handle(session_name) {
+            let mut device_result: Option<String> = None;
+            let mut viewport_result: Option<String> = None;
+            let mut ua_result: Option<String> = None;
+            
+            // Apply device preset
+            if let Some(device_name) = &req.device {
+                let (dev_tx, dev_rx) = oneshot::channel();
+                let dev_cmd = crate::core::AppCommand::SimulateDevice {
+                    id: handle.id.clone(),
+                    device_name: device_name.clone(),
+                    resp_tx: dev_tx,
+                };
+                if state.cmd_tx.send(dev_cmd).is_ok() {
+                    match tokio::time::timeout(Duration::from_millis(3000), dev_rx).await {
+                        Ok(Ok(Ok(msg))) => {
+                            device_result = Some(msg);
+                        }
+                        Ok(Ok(Err(e))) => {
+                            return McpToolResponse::error("DEVICE_SIMULATION_FAILED", &e);
+                        }
+                        _ => {
+                            return McpToolResponse::error("DEVICE_SIMULATION_TIMEOUT", "Device simulation timed out");
+                        }
+                    }
+                }
+            }
+            // Or apply custom viewport
+            else if let (Some(w), Some(h)) = (req.viewport_width, req.viewport_height) {
+                let (vp_tx, vp_rx) = oneshot::channel();
+                let vp_cmd = crate::core::AppCommand::SetViewport {
+                    id: handle.id.clone(),
+                    width: w,
+                    height: h,
+                    resp_tx: vp_tx,
+                };
+                if state.cmd_tx.send(vp_cmd).is_ok() {
+                    match tokio::time::timeout(Duration::from_millis(2000), vp_rx).await {
+                        Ok(Ok(Ok(_))) => {
+                            viewport_result = Some(format!("{}x{}", w, h));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            
+            // Apply custom user agent
+            if let Some(ua) = &req.user_agent {
+                let (ua_tx, ua_rx) = oneshot::channel();
+                let ua_cmd = crate::core::AppCommand::SetUserAgent {
+                    id: handle.id.clone(),
+                    user_agent: ua.clone(),
+                    resp_tx: ua_tx,
+                };
+                if state.cmd_tx.send(ua_cmd).is_ok() {
+                    if tokio::time::timeout(Duration::from_millis(1000), ua_rx).await.is_ok() {
+                        ua_result = Some("User agent updated".to_string());
+                    }
+                }
+            }
+            
+            return McpToolResponse::success_json(serde_json::json!({
+                "session": session_name,
+                "status": "device_switched",
+                "device": device_result,
+                "viewport": viewport_result,
+                "user_agent": ua_result
+            }));
+        } else {
+            return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found. Use acquire to create it first.", session_name));
         }
     }
     
@@ -2104,7 +2340,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "full_page": { "type": "boolean", "description": "Capture entire scrollable page, not just viewport" },
                     "text_max_chars": { "type": "integer", "description": "Max chars for text content" },
                     "summarize": { "type": "boolean", "description": "Use AI to summarize page content" },
-                    "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to analyze images without alt text" }
+                    "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to analyze images without alt text" },
+                    "use_cdp": { "type": "boolean", "default": true, "description": "Use CDP for screenshot (better quality, supports full_page)" }
                 }
             }
         },
@@ -2131,6 +2368,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "session": { "type": "string", "default": "default", "description": "Target session name for device switch. Use with device/viewport_width/viewport_height to switch device on existing session." },
                     "acquire": { "type": "string", "description": "Acquire session by name. Creates WebView if needed, reuses existing cookies." },
                     "release": { "type": "string", "description": "Release session (keeps cookies and WebView alive for reuse)" },
                     "list": { "type": "boolean", "description": "List all sessions with status" },
@@ -2138,7 +2376,11 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "headless": { "type": "boolean", "description": "false=visible window (recommended for bot-protected sites), true=hidden window. Default: false" },
                     "restore": { "type": "boolean", "default": true, "description": "Restore last URL on session resume" },
                     "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"], "description": "Browser to import cookies from" },
-                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import (e.g. ['amazon.co.jp'])" }
+                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import (e.g. ['amazon.co.jp'])" },
+                    "device": { "type": "string", "description": "Device preset name (e.g., 'iPhone 14', 'Pixel 7'). Sets viewport, user-agent, and enables touch simulation." },
+                    "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels" },
+                    "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels" },
+                    "user_agent": { "type": "string", "description": "Custom user agent string to override" }
                 }
             }
         },

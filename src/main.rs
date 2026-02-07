@@ -248,5 +248,41 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.set_visibility(&id, visible).await;
             let _ = resp_tx.send(result);
         }
+        AppCommand::SimulateDevice { id, device_name, resp_tx } => {
+            let result = manager.simulate_device(&id, device_name).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::SetViewport { id, width, height, resp_tx } => {
+            let result = manager.set_viewport(&id, width, height).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::SetUserAgent { id, user_agent, resp_tx } => {
+            let result = manager.set_user_agent(&id, user_agent).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::ScreenshotCdp { id, full_page, format, quality, resp_tx } => {
+            let result = manager.screenshot_cdp(&id, full_page, &format, quality).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::ResetDeviceEmulation { id, resp_tx } => {
+            let result = manager.reset_device_emulation(&id).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::SetViewportCdp { id, width, height, device_scale_factor, is_mobile, resp_tx } => {
+            let result = manager.set_viewport_cdp(&id, width, height, device_scale_factor, is_mobile).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::ClickCdp { id, selector, human_mode, resp_tx } => {
+            let result = manager.click_cdp(&id, selector, human_mode).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::TypeCdp { id, text, char_delay_ms, human_mode, resp_tx } => {
+            let result = manager.type_cdp(&id, text, char_delay_ms, human_mode).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::PressKeyCdp { id, key, resp_tx } => {
+            let result = manager.press_key_cdp(&id, key).await;
+            let _ = resp_tx.send(result);
+        }
     }
 }
