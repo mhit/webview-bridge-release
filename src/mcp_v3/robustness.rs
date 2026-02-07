@@ -101,18 +101,28 @@ pub fn generate_human_mouse_move_script(selector: &str) -> String {
     if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
     
     const rect = el.getBoundingClientRect();
-    const targetX = rect.left + rect.width / 2 + (Math.random() - 0.5) * 10;
-    const targetY = rect.top + rect.height / 2 + (Math.random() - 0.5) * 10;
+    // Target with slight random offset (humans don't click exact center)
+    const targetX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+    const targetY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
     
     // Get current mouse position (or start from random edge position)
     let startX = Math.random() * window.innerWidth;
     let startY = Math.random() * 100; // Start from top area
     
-    // Generate bezier curve control points for natural movement
-    const cp1x = startX + (targetX - startX) * 0.3 + (Math.random() - 0.5) * 100;
-    const cp1y = startY + (targetY - startY) * 0.2 + (Math.random() - 0.5) * 50;
-    const cp2x = startX + (targetX - startX) * 0.7 + (Math.random() - 0.5) * 50;
-    const cp2y = startY + (targetY - startY) * 0.8 + (Math.random() - 0.5) * 30;
+    // Generate bezier curve control points - more organic curves
+    const distance = Math.sqrt(Math.pow(targetX - startX, 2) + Math.pow(targetY - startY, 2));
+    const curviness = 0.2 + Math.random() * 0.3; // How curved the path is
+    
+    // Control points with perpendicular offset for natural arc
+    const midX = (startX + targetX) / 2;
+    const midY = (startY + targetY) / 2;
+    const perpX = -(targetY - startY) / distance * curviness * distance;
+    const perpY = (targetX - startX) / distance * curviness * distance;
+    
+    const cp1x = midX + perpX * (0.3 + Math.random() * 0.4);
+    const cp1y = midY + perpY * (0.3 + Math.random() * 0.4);
+    const cp2x = midX + perpX * (0.6 + Math.random() * 0.4);
+    const cp2y = midY + perpY * (0.6 + Math.random() * 0.4);
     
     // Cubic bezier interpolation
     const bezier = (t, p0, p1, p2, p3) => {{
@@ -120,18 +130,29 @@ pub fn generate_human_mouse_move_script(selector: &str) -> String {
         return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3;
     }};
     
-    // Number of steps varies slightly for human-like variation
-    const steps = 15 + Math.floor(Math.random() * 10);
-    const baseDelay = 8 + Math.random() * 4; // 8-12ms between moves
+    // Easing function: ease-in-out (slow start, fast middle, slow end)
+    const easeInOut = (t) => {{
+        return t < 0.5 
+            ? 4 * t * t * t 
+            : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }};
     
+    // Number of steps varies based on distance
+    const steps = Math.max(20, Math.min(60, Math.floor(distance / 15))) + Math.floor(Math.random() * 10);
+    const totalTime = 200 + distance * 0.8 + Math.random() * 150; // Total movement time in ms
+    
+    let lastTime = performance.now();
     for (let i = 0; i <= steps; i++) {{
-        const t = i / steps;
+        const linearT = i / steps;
+        const t = easeInOut(linearT); // Apply easing
+        
         const x = bezier(t, startX, cp1x, cp2x, targetX);
         const y = bezier(t, startY, cp1y, cp2y, targetY);
         
-        // Add micro-jitter to simulate hand tremor
-        const jitterX = (Math.random() - 0.5) * 2;
-        const jitterY = (Math.random() - 0.5) * 2;
+        // Add micro-jitter (decreases as we approach target - steadier hand near goal)
+        const jitterScale = 3 * (1 - linearT * 0.7);
+        const jitterX = (Math.random() - 0.5) * jitterScale;
+        const jitterY = (Math.random() - 0.5) * jitterScale;
         
         // Dispatch mouse move event
         const event = new MouseEvent('mousemove', {{
@@ -143,18 +164,32 @@ pub fn generate_human_mouse_move_script(selector: &str) -> String {
         }});
         document.elementFromPoint(x + jitterX, y + jitterY)?.dispatchEvent(event);
         
-        // Variable delay between moves
-        const delay = baseDelay * (0.5 + Math.random());
+        // Variable delay: faster in middle, slower at start/end
+        const speedFactor = 0.5 + Math.sin(linearT * Math.PI) * 0.5; // 0.5 at edges, 1.0 at middle
+        const baseDelay = totalTime / steps;
+        const delay = (baseDelay / speedFactor) * (0.7 + Math.random() * 0.6);
         await new Promise(r => setTimeout(r, delay));
+    }}
+    
+    // Occasional small overshoot and correction (10% chance)
+    if (Math.random() < 0.1) {{
+        const overshootX = targetX + (Math.random() - 0.5) * 20;
+        const overshootY = targetY + (Math.random() - 0.5) * 15;
+        document.elementFromPoint(overshootX, overshootY)?.dispatchEvent(
+            new MouseEvent('mousemove', {{ bubbles: true, view: window, clientX: overshootX, clientY: overshootY }})
+        );
+        await new Promise(r => setTimeout(r, 30 + Math.random() * 50));
+        // Correct back
+        el.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, view: window, clientX: targetX, clientY: targetY }}));
     }}
     
     // Dispatch final hover event on target
     el.dispatchEvent(new MouseEvent('mouseenter', {{ bubbles: true, view: window }}));
     el.dispatchEvent(new MouseEvent('mouseover', {{ bubbles: true, view: window }}));
     
-    return JSON.stringify({{ success: true, moved: true, target: "{}" }});
+    return JSON.stringify({{ success: true, moved: true, steps: {}, target: "{}" }});
 }})();
-"#, selector.replace('"', "\\\""), selector.replace('"', "\\\""))
+"#, selector.replace('"', "\\\""), "steps", selector.replace('"', "\\\""))
 }
 
 /// Type text with input event simulation
@@ -208,7 +243,7 @@ pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bo
 }})();
 "#, selector.replace('"', "\\\""), clear_code, text.replace('"', "\\\"").replace('\n', "\\n"))
     } else {
-        // Character-by-character mode for reactive forms
+        // Character-by-character mode with human-like timing
         format!(r#"
 (async function() {{
     const el = document.querySelector("{}");
@@ -220,12 +255,89 @@ pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bo
     el.focus();
     {}
 
-    // Type character by character for reactive forms
+    // Human typing characteristics
     const text = "{}";
-    for (const char of text) {{
+    const baseDelay = 50; // Base typing speed ~20 WPM for careful typing
+    
+    // Adjacent keys for typo simulation
+    const adjacentKeys = {{
+        'a': ['s', 'q', 'w', 'z'], 'b': ['v', 'n', 'g', 'h'], 'c': ['x', 'v', 'd', 'f'],
+        'd': ['s', 'f', 'e', 'r', 'c', 'x'], 'e': ['w', 'r', 'd', 's'], 'f': ['d', 'g', 'r', 't', 'v', 'c'],
+        'g': ['f', 'h', 't', 'y', 'b', 'v'], 'h': ['g', 'j', 'y', 'u', 'n', 'b'], 'i': ['u', 'o', 'k', 'j'],
+        'j': ['h', 'k', 'u', 'i', 'm', 'n'], 'k': ['j', 'l', 'i', 'o', 'm'], 'l': ['k', 'o', 'p'],
+        'm': ['n', 'j', 'k'], 'n': ['b', 'm', 'h', 'j'], 'o': ['i', 'p', 'k', 'l'],
+        'p': ['o', 'l'], 'q': ['w', 'a'], 'r': ['e', 't', 'd', 'f'],
+        's': ['a', 'd', 'w', 'e', 'x', 'z'], 't': ['r', 'y', 'f', 'g'], 'u': ['y', 'i', 'h', 'j'],
+        'v': ['c', 'b', 'f', 'g'], 'w': ['q', 'e', 'a', 's'], 'x': ['z', 'c', 's', 'd'],
+        'y': ['t', 'u', 'g', 'h'], 'z': ['a', 's', 'x']
+    }};
+    
+    let typedChars = 0;
+    let typoCount = 0;
+    
+    for (let i = 0; i < text.length; i++) {{
+        const char = text[i];
+        
+        // Simulate typo (3% chance, more likely for fast typing)
+        if (Math.random() < 0.03 && adjacentKeys[char.toLowerCase()]) {{
+            const typoChars = adjacentKeys[char.toLowerCase()];
+            const typoChar = typoChars[Math.floor(Math.random() * typoChars.length)];
+            
+            // Type wrong character
+            el.value += typoChar;
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            await new Promise(r => setTimeout(r, 80 + Math.random() * 60));
+            
+            // Pause (realize mistake)
+            await new Promise(r => setTimeout(r, 150 + Math.random() * 200));
+            
+            // Delete wrong character
+            el.value = el.value.slice(0, -1);
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            await new Promise(r => setTimeout(r, 40 + Math.random() * 30));
+            
+            typoCount++;
+        }}
+        
+        // Type correct character
         el.value += char;
         el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-        await new Promise(r => setTimeout(r, 10));
+        typedChars++;
+        
+        // Variable delay based on character type
+        let delay = baseDelay;
+        
+        // Punctuation = longer pause (thinking)
+        if (['.', ',', '!', '?', ':', ';'].includes(char)) {{
+            delay = 150 + Math.random() * 200;
+        }}
+        // Space after word = brief pause
+        else if (char === ' ') {{
+            delay = 80 + Math.random() * 100;
+        }}
+        // Numbers = slightly more careful
+        else if (/[0-9]/.test(char)) {{
+            delay = 70 + Math.random() * 60;
+        }}
+        // Regular letters = natural variance
+        else {{
+            // Faster for common letter combos (rolling fingers)
+            const prevChar = i > 0 ? text[i-1].toLowerCase() : '';
+            const currChar = char.toLowerCase();
+            const fastCombos = ['th', 'he', 'in', 'er', 'an', 're', 'on', 'at', 'en', 'nd'];
+            if (fastCombos.includes(prevChar + currChar)) {{
+                delay = 30 + Math.random() * 30;
+            }} else {{
+                delay = baseDelay * (0.6 + Math.random() * 0.8);
+            }}
+        }}
+        
+        // Occasional longer pause (thinking, distraction) - 2% chance
+        if (Math.random() < 0.02) {{
+            delay += 300 + Math.random() * 500;
+        }}
+        
+        await new Promise(r => setTimeout(r, delay));
     }}
 
     // Trigger change and blur
@@ -237,6 +349,8 @@ pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bo
         typed: true,
         instant: false,
         length: text.length,
+        typedChars: typedChars,
+        typos: typoCount,
         value: el.value
     }});
 }})();

@@ -268,7 +268,7 @@ async fn execute_action(
     action: &Action,
     timeout_ms: u64,
     state: &V2AppState,
-    _human_mode: bool, // For future: mouse jitter, natural scrolling
+    human_mode: bool,
 ) -> Result<Option<String>, String> {
     match action {
         Action::Click { target, wait_after_ms } => {
@@ -284,7 +284,7 @@ async fn execute_action(
             }
             
             // Human mode: simulate mouse movement to element with natural curve
-            if _human_mode {
+            if human_mode {
                 tracing::info!("[human_mode] Simulating mouse movement to: {}", target);
                 let mouse_move_script = generate_human_mouse_move_script(target);
                 let _ = execute_script(session, mouse_move_script, state, timeout_ms).await;
@@ -429,6 +429,56 @@ async fn execute_action(
                         JSON.stringify({{ success: false, error: "Element not found" }});
                     }}
                 "#, selector.replace('"', "\\\""))
+            } else if human_mode {
+                // Human-like inertia scroll: starts fast, gradually slows down
+                let (dx, dy) = match direction {
+                    ScrollDirection::Down => (0, *amount),
+                    ScrollDirection::Up => (0, -amount),
+                    ScrollDirection::Right => (*amount, 0),
+                    ScrollDirection::Left => (-amount, 0),
+                };
+                format!(r#"
+(async function() {{
+    const totalX = {};
+    const totalY = {};
+    const steps = 15 + Math.floor(Math.random() * 10); // 15-25 steps
+    
+    // Ease-out function: fast start, slow end (deceleration)
+    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    
+    let scrolledX = 0;
+    let scrolledY = 0;
+    
+    for (let i = 1; i <= steps; i++) {{
+        const progress = easeOut(i / steps);
+        const targetX = Math.round(totalX * progress);
+        const targetY = Math.round(totalY * progress);
+        
+        const stepX = targetX - scrolledX;
+        const stepY = targetY - scrolledY;
+        
+        // Add slight randomness to simulate hand wheel movement
+        const jitterX = (Math.random() - 0.5) * 3;
+        const jitterY = (Math.random() - 0.5) * 3;
+        
+        window.scrollBy(stepX + jitterX, stepY + jitterY);
+        scrolledX = targetX;
+        scrolledY = targetY;
+        
+        // Variable delay: faster at start, slower at end
+        const delay = 10 + (i / steps) * 25 + Math.random() * 10;
+        await new Promise(r => setTimeout(r, delay));
+    }}
+    
+    return JSON.stringify({{ 
+        success: true, 
+        scrollX: window.scrollX, 
+        scrollY: window.scrollY,
+        human_mode: true,
+        steps: steps
+    }});
+}})();
+"#, dx, dy)
             } else {
                 let (x, y) = match direction {
                     ScrollDirection::Down => (0, *amount),
