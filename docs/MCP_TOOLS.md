@@ -88,8 +88,8 @@ Claude/Gemini等のAIがブラウザを操作するためのMCPサーバー。
     "type": "start",
     "goal": "Amazonで「Anker モバイルバッテリー」を検索する",
     "max_steps": 10,
-    "human_mode": true,       // 人間らしい操作
-    "instant_type": true,     // サジェスト回避タイプ
+    "human_mode": true,
+    "instant_type": true,
     "system_prompt": "価格を重視して判断してください"
   }
 }
@@ -100,6 +100,57 @@ Claude/Gemini等のAIがブラウザを操作するためのMCPサーバー。
 - 次のアクションを決定（click/type/navigate）
 - 目標達成まで繰り返し
 - **内部でMCPツールを使用**（robustness層活用）
+
+### 8. **media** - メディア操作
+
+#### YouTubeダウンロード（要: yt-dlp）
+```json
+{
+  "action": {
+    "type": "youtube_download",
+    "url": "https://youtube.com/watch?v=xxx",
+    "quality": "hd",
+    "audio_only": false
+  }
+}
+```
+
+#### YouTube字幕取得（要: yt-dlp）
+```json
+{
+  "action": {
+    "type": "youtube_subtitles",
+    "url": "https://youtube.com/watch?v=xxx",
+    "language": "ja,en",
+    "format": "json3"
+  }
+}
+```
+
+#### 動画解析（要: ffprobe, ffmpeg）
+```json
+{
+  "action": {
+    "type": "video_analyze",
+    "url": "C:/path/to/video.mp4",
+    "keyframes": true,
+    "extract_audio": true
+  }
+}
+```
+
+#### ページ画像収集
+```json
+{
+  "action": {
+    "type": "collect_images",
+    "selector": ".product-image",
+    "min_width": 200,
+    "min_height": 200,
+    "max_images": 20
+  }
+}
+```
 
 ---
 

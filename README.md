@@ -28,7 +28,8 @@ Windows上で動作するWebView2ベースのブラウザ自動化MCPサーバ�
 | `interact` | クリック/タイプ/スクロール/待機 |
 | `extract` | 構造化データ抽出 |
 | `execute` | JavaScript実行 |
-| `agent` | 🆕 自律型ブラウザ操作 |
+| `media` | YouTube字幕/ダウンロード、画像収集 |
+| `agent` | 自律型ブラウザ操作（目標ベース） |
 
 ### human_mode（完全人間化）
 ```json
