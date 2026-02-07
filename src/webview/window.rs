@@ -154,16 +154,16 @@ impl WebViewWindow {
             }
             WM_SIZE => {
                 tracing::debug!("WM_SIZE received for HWND {:?}", hwnd);
-                DefWindowProcW(hwnd, msg, wparam, lparam)
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
             WM_RBUTTONUP => {
                 tracing::info!("Right click detected! Capturing window diagnostic...");
                 let mut rect = RECT::default();
-                windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect);
+                unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect) };
                 tracing::info!("Window Rect: {:?}", rect);
-                DefWindowProcW(hwnd, msg, wparam, lparam)
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
     }
 }

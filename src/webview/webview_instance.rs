@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use uuid::Uuid;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::{Error, Result as WinResult, HRESULT, HSTRING, Interface};
+use windows::core::{Error, Result as WinResult, HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_USER};
 use windows::Win32::System::Com::{IStream, StructuredStorage::CreateStreamOnHGlobal};
@@ -1354,6 +1354,7 @@ pub struct CookieInfo {
 }
 
 /// Create PNG from RGBA bitmap data
+#[allow(dead_code)]
 fn create_png(width: u32, height: u32, rgba_data: &[u8], row_stride: usize) -> Vec<u8> {
     let mut output = Vec::new();
     
@@ -1396,6 +1397,7 @@ fn create_png(width: u32, height: u32, rgba_data: &[u8], row_stride: usize) -> V
 }
 
 /// CRC32 lookup table for PNG
+#[allow(dead_code)]
 fn crc32_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     for n in 0..256 {
@@ -1413,6 +1415,7 @@ fn crc32_table() -> [u32; 256] {
 }
 
 /// Calculate CRC32 for PNG chunks
+#[allow(dead_code)]
 fn crc32(data: &[u8]) -> u32 {
     let table = crc32_table();
     let mut crc = 0xffffffff_u32;
@@ -1423,6 +1426,7 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 /// Write a PNG chunk
+#[allow(dead_code)]
 fn write_png_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
     // Length (4 bytes, big-endian)
     output.extend_from_slice(&(data.len() as u32).to_be_bytes());
@@ -1437,6 +1441,7 @@ fn write_png_chunk(output: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
 }
 
 /// Compress data using DEFLATE (zlib format)
+#[allow(dead_code)]
 fn compress_deflate(data: &[u8]) -> Vec<u8> {
     // Simple zlib wrapper with stored blocks (no compression for simplicity)
     // This creates valid but uncompressed PNG data
@@ -1477,6 +1482,7 @@ fn compress_deflate(data: &[u8]) -> Vec<u8> {
 }
 
 /// Calculate Adler-32 checksum
+#[allow(dead_code)]
 fn adler32(data: &[u8]) -> u32 {
     let mut a: u32 = 1;
     let mut b: u32 = 0;
@@ -1488,6 +1494,7 @@ fn adler32(data: &[u8]) -> u32 {
 }
 
 /// Base64 encode
+#[allow(dead_code)]
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     

@@ -8,7 +8,6 @@ use crate::api_v2::{get_session_manager_v2, V2AppState};
 use crate::core::AppCommand;
 use tokio::sync::oneshot;
 use std::time::Duration;
-use base64::Engine;
 
 // ============================================================================
 // Tool Router
@@ -700,7 +699,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                                                         el["label"] = serde_json::json!(desc.chars().take(30).collect::<String>());
                                                     }
                                                 }
-                                                if let Some(action) = item.get("action").and_then(|a| a.as_str()) {
+                                                if let Some(_action) = item.get("action").and_then(|a| a.as_str()) {
                                                     if let Some(interactivity) = el.get_mut("interactivity") {
                                                         interactivity["analyzed_by"] = serde_json::json!("vision");
                                                         interactivity["needs_vision"] = serde_json::json!(false);
@@ -872,7 +871,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     // 5. Take screenshot (save to file, return URL)
     if req.screenshot {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("cap_{}.png", timestamp);
+        let _filename = format!("cap_{}.png", timestamp);
         
         // Use html2canvas-like approach via JavaScript
         let screenshot_script = r#"
