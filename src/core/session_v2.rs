@@ -357,8 +357,14 @@ impl SessionManagerV2 {
         {
             let sessions = self.sessions.read()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            if sessions.len() >= self.max_sessions {
-                return Err(format!("Maximum sessions ({}) reached", self.max_sessions));
+            
+            // Only count active sessions (those with a running WebView handle)
+            let active_count = sessions.values()
+                .filter(|s| s.handle.is_some())
+                .count();
+                
+            if active_count >= self.max_sessions {
+                return Err(format!("Maximum active sessions ({}) reached", self.max_sessions));
             }
         }
         
