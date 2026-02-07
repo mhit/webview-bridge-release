@@ -318,16 +318,22 @@ async fn execute_action(
             let wait_script = generate_wait_for_clickable_script(target, timeout_ms);
             execute_script(session, wait_script, state, timeout_ms).await?;
             
-            // Type with events - extend timeout based on text length (if not instant)
-            // Instant mode is much faster, character mode takes ~10ms per char
+            // Type with events - extend timeout based on text length and mode
+            // Instant mode: fast direct set
+            // Normal mode: ~20ms per char  
+            // Human mode: ~150ms per char + typo corrections + thinking pauses
             let type_timeout = if *instant {
                 timeout_ms.max(5000)
+            } else if human_mode {
+                // Human-like typing: base 50ms + variance + 3% typos with correction + 2% pauses
+                // Conservative estimate: 150ms per char + 2 seconds buffer for pauses/typos
+                timeout_ms.max(5000 + (value.len() as u64 * 150) + 3000)
             } else {
                 timeout_ms.max(5000 + (value.len() as u64 * 20))
             };
             
-            tracing::info!("[type] Input length: {}, instant: {}, timeout: {}ms", 
-                value.len(), instant, type_timeout);
+            tracing::info!("[type] Input length: {}, instant: {}, human_mode: {}, timeout: {}ms", 
+                value.len(), instant, human_mode, type_timeout);
             
             let type_script = generate_type_with_events_script_ex(target, value, *clear, *instant);
             let result = execute_script(session, type_script, state, type_timeout).await;
@@ -1594,8 +1600,18 @@ Output JSON only, no explanation."#,
                         let value = ai_json["value"].as_str().unwrap_or("").to_string();
                         let should_submit = ai_json["submit"].as_bool().unwrap_or(false);
                         
-                        tracing::info!("[agent] Executing type on: {}, value: {}, submit: {}, instant: {}", 
-                            selector, value, should_submit, instant_type);
+                        // Calculate timeout based on mode and text length
+                        let type_timeout = if instant_type {
+                            10000_u64
+                        } else if human_mode {
+                            // Human mode: 150ms per char + 3s buffer for typos/pauses
+                            10000_u64.max(5000 + (value.len() as u64 * 150) + 3000)
+                        } else {
+                            10000_u64.max(5000 + (value.len() as u64 * 20))
+                        };
+                        
+                        tracing::info!("[agent] Executing type on: {}, value: {}, submit: {}, instant: {}, timeout: {}ms", 
+                            selector, value, should_submit, instant_type, type_timeout);
                         
                         // Use execute_action with instant mode for autocomplete-heavy sites
                         let type_action = Action::Type { 
@@ -1605,7 +1621,7 @@ Output JSON only, no explanation."#,
                             instant: instant_type,
                         };
                         
-                        let result = execute_action(&req.session, &type_action, 10000, state, human_mode).await;
+                        let result = execute_action(&req.session, &type_action, type_timeout, state, human_mode).await;
                         
                         // If submit requested, press Enter
                         let submit_result = if should_submit && result.is_ok() {
