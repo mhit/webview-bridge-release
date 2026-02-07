@@ -679,9 +679,10 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                         tracing::info!("[summarize] Ollama available: {}, base_url: {}", ollama.is_available(), ollama.base_url);
                         
                         // Use Ollama directly (skip AiClient fallback logic)
+                        let truncated_text: String = page_text.chars().take(4000).collect();
                         let prompt = format!(
                             "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
-                            &page_text[..page_text.len().min(4000)]
+                            truncated_text
                         );
                         
                         match ollama.call(&prompt, None) {
@@ -696,9 +697,10 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                             }
                         }
                     } else if let Some(client) = crate::core::ai::AiClient::new(&ai_config) {
+                        let truncated_text: String = page_text.chars().take(4000).collect();
                         let prompt = format!(
                             "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
-                            &page_text[..page_text.len().min(4000)]
+                            truncated_text
                         );
                         
                         match client.call(&prompt, None) {
