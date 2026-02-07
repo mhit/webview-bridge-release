@@ -51,6 +51,8 @@
 | 状態依存の表示は不明 | 現在の状態を反映 |
 
 
+## 解決策
+
 ### アプローチ：ハイブリッド分析
 
 1. **DOM/CSS分析**（基本）: テキストLLMで軽量に分析
@@ -234,6 +236,9 @@ capture(analyze_interactivity=true)
       },
       "interactivity": {
         "score": 0.95,
+        "predicted_actions": [
+          {"action": "click_submit", "purpose": "購入処理を開始"}
+        ],
         "reason": "cursor:pointer、オレンジ背景、角丸、影、太字、ホバーで変化"
       }
     },
@@ -397,8 +402,13 @@ Vision分析は重いため、最小限に抑える：
 | 画像サイズ小（< 50px） | ❌ アイコン扱い |
 
 
+## ルールベース事前スコアリング
 
-LLMを呼ぶ前に、ルールベースで事前スコアを計算して効率化：
+LLMを呼ぶ前に、ルールベースで事前スコアを計算して効率化。
+
+**重要: preScore >= 0.7 の場合、LLM呼び出しをスキップ可能**（明らかにインタラクティブ）
+
+**重要: preScore <= 0.1 の場合もスキップ可能**（明らかに非インタラクティブ）
 
 ```javascript
 function preScore(props) {
@@ -492,20 +502,129 @@ Vision LLMの場合は5-15秒かかるため、**大幅に高速化**。
 
 ### Phase 2: LLM分析
 - [ ] プロンプト設計
-- [ ] バッチ処理
+- [ ] バッチ処理（最大10要素/リクエスト）
 - [ ] レスポンスパース
+- [ ] エラーハンドリング
 
-### Phase 3: 統合
+### Phase 3: 画像分析
+- [ ] needsVisionAnalysis判定
+- [ ] Vision LLM連携（Gemini/LLaVA）
+- [ ] 画像取得・エンコード
+
+### Phase 4: 統合
 - [ ] capture APIに統合
 - [ ] agent内部で自動活用
-- [ ] キャッシュ
+- [ ] キャッシュ実装
+
+## 制限事項・エッジケース
+
+### Shadow DOM
+
+Web Components（Custom Elements）はShadow DOMで内部が隠蔽される：
+
+```javascript
+// Shadow DOM内の要素取得
+function queryShadowRoot(element) {
+  if (element.shadowRoot) {
+    return element.shadowRoot.querySelectorAll('*');
+  }
+  return [];
+}
+```
+
+**対応**: `shadowRoot`が`open`の場合のみ内部を走査可能。`closed`は取得不可。
+
+### iframe
+
+- **同一オリジン**: `contentDocument`でアクセス可能
+- **クロスオリジン**: アクセス不可（セキュリティ制限）
+
+```javascript
+function isAccessibleIframe(iframe) {
+  try {
+    return !!iframe.contentDocument;
+  } catch (e) {
+    return false;  // Cross-origin
+  }
+}
+```
+
+### Canvas / WebGL
+
+Canvas内の描画要素はDOMに存在しない。分析対象外。
+
+### バッチサイズ制限
+
+LLMのトークン制限を考慮：
+
+| モデル | 最大入力 | 推奨バッチサイズ |
+|-------|---------|----------------|
+| Gemini Flash | 1M tokens | 20要素 |
+| GPT-4o-mini | 128K tokens | 15要素 |
+| Ollama (7B) | 8K tokens | 5要素 |
+
+超過時は複数リクエストに分割。
+
+## エラーハンドリング
+
+| エラー | 対応 |
+|-------|------|
+| LLM API失敗 | preScoreのみ返却、`analyzed_by: "rule_only"` |
+| Vision画像取得失敗 | `image_analysis: null`、DOM/CSSスコアのみ |
+| タイムアウト | 部分結果を返却、未分析要素は`pending` |
+| 要素が消失 | `stale: true`フラグ付与 |
+
+```json
+{
+  "selector": "#dynamic-btn",
+  "interactivity": {
+    "score": 0.65,
+    "analyzed_by": "rule_only",
+    "error": "LLM_TIMEOUT"
+  }
+}
+```
+
+## キャッシュ戦略
+
+### キャッシュキー
+
+```
+{url}:{selector}:{hash(visual_properties)}
+```
+
+### 無効化条件
+
+| 条件 | 対応 |
+|------|------|
+| URL変更 | 全キャッシュクリア |
+| 要素のDOM変更 | 該当要素のみ無効化 |
+| スタイル変更 | hash不一致で再分析 |
+| 時間経過（5分） | TTL切れで再分析 |
+
+### MutationObserver連携
+
+```javascript
+const observer = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    // 該当要素のキャッシュを無効化
+    invalidateCache(mutation.target);
+  }
+});
+observer.observe(document.body, { 
+  childList: true, 
+  subtree: true, 
+  attributes: true 
+});
+```
 
 ## まとめ
 
 | 項目 | 内容 |
 |------|------|
 | **目的** | セレクタだけでは判断できない視覚的操作性を分析 |
-| **手法** | DOM/CSS抽出 + ルールベース + テキストLLM |
-| **Visionとの違い** | 軽量、高速、任意のLLMで動作 |
-| **出力** | スコア（0-1）、理由 |
-| **性能** | 20要素で1-3秒 |
+| **手法** | DOM/CSS抽出 + ルールベース + テキストLLM + Vision(画像のみ) |
+| **出力** | スコア（0-1）、アクション予測、理由 |
+| **性能** | 20要素で1-3秒（キャッシュ時は即座） |
+| **制限** | Shadow DOM(closed)、Cross-origin iframe、Canvas |
+
