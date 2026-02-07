@@ -206,6 +206,9 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/batch", post(batch_execute))
         // MCP API (Model Context Protocol - HTTP transport)
         .route("/mcp", post(mcp_handler))
+        // MCP v3 API (consolidated 8 tools with robustness)
+        .route("/mcp/v3", post(mcp_v3_handler))
+        .route("/mcp/v3/tools", get(mcp_v3_tools_list))
         .with_state(state)
 }
 
@@ -6595,6 +6598,160 @@ async fn mcp_read_resource(
         
         _ => Err(format!("Unknown resource: {}", uri)),
     }
+}
+
+// ============================================================================
+// MCP v3 API (Consolidated 8 Tools)
+// ============================================================================
+
+/// MCP v3 Request format
+#[derive(Debug, serde::Deserialize)]
+struct McpV3Request {
+    jsonrpc: String,
+    method: String,
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
+}
+
+/// POST /mcp/v3 - MCP v3 JSON-RPC handler with consolidated tools
+async fn mcp_v3_handler(
+    State(state): State<V2AppState>,
+    Json(request): Json<McpV3Request>,
+) -> Json<McpResponse> {
+    let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+    
+    tracing::info!("MCP v3 request: {}", request.method);
+    
+    let response = match request.method.as_str() {
+        "initialize" => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                    "resources": { "listChanged": false, "subscribe": false }
+                },
+                "serverInfo": {
+                    "name": "webview-bridge-v3",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
+            error: None,
+        },
+        
+        "initialized" | "notifications/initialized" => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({})),
+            error: None,
+        },
+        
+        "tools/list" => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({
+                "tools": crate::mcp_v3::tools::get_mcp_tools()
+            })),
+            error: None,
+        },
+        
+        "tools/call" => {
+            let params = request.params.as_ref();
+            let tool_name = params
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let arguments = params
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            
+            tracing::info!("MCP v3 tool call: {} with args: {}", tool_name, arguments);
+            
+            // Route to MCP v3 tools
+            let result = crate::mcp_v3::tools::route_tool(tool_name, arguments, &state).await;
+            
+            if result.success {
+                let content: Vec<serde_json::Value> = result.content
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| match c {
+                        crate::mcp_v3::types::McpContent::Text { text } => {
+                            serde_json::json!({"type": "text", "text": text})
+                        }
+                        crate::mcp_v3::types::McpContent::Image { data, mime_type } => {
+                            serde_json::json!({"type": "image", "data": data, "mimeType": mime_type})
+                        }
+                    })
+                    .collect();
+                
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(serde_json::json!({
+                        "content": content,
+                        "isError": false
+                    })),
+                    error: None,
+                }
+            } else {
+                let error = result.error.unwrap_or(crate::mcp_v3::types::McpError {
+                    code: "UNKNOWN".to_string(),
+                    message: "Unknown error".to_string(),
+                    details: None,
+                });
+                
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("[{}] {}", error.code, error.message)
+                        }],
+                        "isError": true
+                    })),
+                    error: None,
+                }
+            }
+        }
+        
+        "resources/list" => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({
+                "resources": mcp_get_resources()
+            })),
+            error: None,
+        },
+        
+        "ping" => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(serde_json::json!({})),
+            error: None,
+        },
+        
+        _ => McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(McpError {
+                code: -32601,
+                message: format!("Method not found: {}", request.method),
+            }),
+        },
+    };
+    
+    Json(response)
+}
+
+/// GET /mcp/v3/tools - Get MCP v3 tool list (simple REST endpoint)
+async fn mcp_v3_tools_list() -> impl IntoResponse {
+    Json(crate::mcp_v3::tools::get_mcp_tools())
 }
 
 #[cfg(test)]

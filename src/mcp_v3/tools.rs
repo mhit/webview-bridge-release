@@ -2,8 +2,8 @@
 //!
 //! Robust implementations wrapping V2 API
 
-use crate::mcp_v3::types::*;
-use crate::mcp_v3::robustness::*;
+use super::types::*;
+use super::robustness::*;
 use crate::api_v2::{get_session_manager_v2, V2AppState};
 use crate::core::AppCommand;
 use tokio::sync::oneshot;
