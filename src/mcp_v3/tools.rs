@@ -861,21 +861,115 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
 async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse {
     match req.action {
         MediaAction::YoutubeDownload { url, quality, audio_only, output_dir } => {
-            // TODO: Call existing YouTube download implementation
-            McpToolResponse::success_text(format!(
-                "YouTube download started: {}\nQuality: {:?}\nAudio only: {}",
-                url, quality, audio_only
-            ))
+            // Generate output directory
+            let output_path = output_dir.unwrap_or_else(|| {
+                crate::core::config::AppConfig::data_dir()
+                    .join("downloads")
+                    .to_string_lossy()
+                    .to_string()
+            });
+            
+            // Create output directory
+            if let Err(e) = std::fs::create_dir_all(&output_path) {
+                return McpToolResponse::error("DIR_CREATE_FAILED", &e.to_string());
+            }
+            
+            // Build yt-dlp command
+            let quality_str = quality.as_deref().unwrap_or("best");
+            let format_arg = match quality_str {
+                "best" => "bestvideo+bestaudio/best",
+                "hd" | "1080p" => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+                "sd" | "720p" => "bestvideo[height<=720]+bestaudio/best[height<=720]",
+                _ => "bestvideo+bestaudio/best",
+            };
+            
+            let mut args = vec![
+                url.clone(),
+                "-f".to_string(), if audio_only { "bestaudio".to_string() } else { format_arg.to_string() },
+                "-o".to_string(), format!("{}\\%(title)s.%(ext)s", output_path),
+                "--embed-metadata".to_string(),
+                "--no-playlist".to_string(),
+            ];
+            
+            if audio_only {
+                args.push("-x".to_string());
+                args.push("--audio-format".to_string());
+                args.push("mp3".to_string());
+            }
+            
+            // Execute yt-dlp
+            match std::process::Command::new("yt-dlp")
+                .args(&args)
+                .output()
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        McpToolResponse::success_json(serde_json::json!({
+                            "success": true,
+                            "url": url,
+                            "output_dir": output_path,
+                            "audio_only": audio_only,
+                            "message": String::from_utf8_lossy(&output.stdout).trim()
+                        }))
+                    } else {
+                        McpToolResponse::error("YTDLP_FAILED", &String::from_utf8_lossy(&output.stderr))
+                    }
+                }
+                Err(e) => McpToolResponse::error("YTDLP_NOT_FOUND", &format!("yt-dlp command failed: {}. Make sure yt-dlp is installed.", e))
+            }
         }
         MediaAction::YoutubeSubtitles { url, language, format } => {
-            // TODO: Call existing YouTube subtitles implementation
-            McpToolResponse::success_text(format!(
-                "YouTube subtitles extraction: {}\nLanguage: {:?}",
-                url, language
-            ))
+            let lang = language.as_deref().unwrap_or("ja,en");
+            let fmt = format.as_deref().unwrap_or("json3");
+            
+            // Create temp dir for subtitles
+            let output_path = crate::core::config::AppConfig::data_dir()
+                .join("subtitles");
+            let _ = std::fs::create_dir_all(&output_path);
+            
+            // Build yt-dlp command for subtitle extraction
+            let args = vec![
+                url.clone(),
+                "--write-sub".to_string(),
+                "--write-auto-sub".to_string(),
+                "--sub-lang".to_string(), lang.to_string(),
+                "--sub-format".to_string(), fmt.to_string(),
+                "--skip-download".to_string(),
+                "-o".to_string(), format!("{}\\%(title)s", output_path.to_string_lossy()),
+                "--print".to_string(), "%(title)s".to_string(),
+            ];
+            
+            // Execute yt-dlp
+            match std::process::Command::new("yt-dlp")
+                .args(&args)
+                .output()
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        let title = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        
+                        // Try to read the subtitle file
+                        let subtitle_file = output_path.join(format!("{}.{}.{}", title, lang.split(',').next().unwrap_or("en"), fmt));
+                        let content = std::fs::read_to_string(&subtitle_file).ok();
+                        
+                        McpToolResponse::success_json(serde_json::json!({
+                            "success": true,
+                            "url": url,
+                            "title": title,
+                            "language": lang,
+                            "format": fmt,
+                            "file": subtitle_file.to_string_lossy(),
+                            "content": content
+                        }))
+                    } else {
+                        McpToolResponse::error("YTDLP_SUBTITLES_FAILED", &String::from_utf8_lossy(&output.stderr))
+                    }
+                }
+                Err(e) => McpToolResponse::error("YTDLP_NOT_FOUND", &format!("yt-dlp command failed: {}. Make sure yt-dlp is installed.", e))
+            }
         }
         MediaAction::VideoAnalyze { url, keyframes, audio, max_frames } => {
-            // TODO: Call existing video analyze implementation
+            // TODO: Implement with ffmpeg
             McpToolResponse::success_text(format!(
                 "Video analysis: {}\nKeyframes: {}, Audio: {}",
                 url, keyframes, audio
