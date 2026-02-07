@@ -608,12 +608,14 @@ pub fn generate_extract_interactive_elements_script() -> String {
             
             role: el.getAttribute('role'),
             ariaLabel: el.getAttribute('aria-label'),
+            ariaExpanded: el.getAttribute('aria-expanded'),
             tabIndex: el.tabIndex,
             isDisabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
             
             // 追加: フォーム文脈
             isInForm: el.closest('form') !== null,
-            inputType: el.type || null
+            inputType: el.type || null,
+            tagName: el.tagName.toLowerCase()
         };
     };
 
@@ -675,6 +677,18 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('role=button');
         }
         
+        // role="tab", "menuitem", "link" (+0.1)
+        if (['tab', 'menuitem', 'link', 'option', 'switch'].includes(props.role)) {
+            score += 0.1;
+            reasons.push('role=' + props.role);
+        }
+        
+        // aria-expandedがある（展開可能要素）(+0.1)
+        if (props.ariaExpanded !== null) {
+            score += 0.1;
+            reasons.push('展開可能');
+        }
+        
         // 太字 (+0.05)
         if (props.fontWeight && parseInt(props.fontWeight) >= 600) {
             score += 0.05;
@@ -706,10 +720,22 @@ pub fn generate_extract_interactive_elements_script() -> String {
         }
         
         // input要素はタイプ別にボーナス
-        const interactiveInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'];
+        const interactiveInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url', 'number', 'range', 'date', 'datetime-local', 'time', 'color', 'file'];
         if (interactiveInputTypes.includes(props.inputType)) {
             score += 0.2;  // inputはcursor:textなので補正
             reasons.push('input要素');
+        }
+        
+        // select要素 (+0.2)
+        if (props.tagName === 'select') {
+            score += 0.2;
+            reasons.push('select要素');
+        }
+        
+        // 画像リンク（商品ページ等で重要）(+0.1)
+        if (props.hasImage) {
+            score += 0.1;
+            reasons.push('画像リンク');
         }
         
         // 画像リンクでaltなしの場合はフラグ
