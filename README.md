@@ -72,7 +72,7 @@ agent(goal="Amazonでワイヤレスマウスを検索")
 |--------|------|
 | `session` | セッション管理（作成/解放/一覧） |
 | `navigate` | ページ遷移（wait条件付き） |
-| `capture` | スクリーンショット、要素取得、AI要約 |
+| `capture` | スクリーンショット、要素取得、AI要約、**チャレンジ検出** |
 | `interact` | クリック/タイプ/スクロール/待機 |
 | `extract` | 構造化データ抽出 |
 | `execute` | JavaScript実行 |
@@ -243,6 +243,25 @@ Amazonを開いてワイヤレスマウスを検索して
 2. `human_mode: true` - 人間らしい動作
 3. `instant: true` - サジェスト回避（Amazon等）
 4. 直接URL回避 - クリックで遷移
+
+### 🔐 CAPTCHA/チャレンジ自動対応
+
+`capture`が以下を自動検出し、対処戦略を返す：
+
+| チャレンジ | 自動対応 |
+|-----------|---------|
+| Cloudflare Turnstile | `wait_and_retry`: 10秒待機→リトライ |
+| Cloudflare "Just a moment" | `wait_and_retry`: 15秒待機→リトライ |
+| Google reCAPTCHA v2 | `click_checkbox`: チェックボックスクリック |
+| Google reCAPTCHA v3 | `proceed`: 自動処理（介入不要） |
+| hCaptcha | `click_checkbox`: チェックボックスクリック |
+
+```
+【チャレンジ検出】
+- cloudflare_interstitial: 待機推奨 (15000ms後リトライ)
+- google_recaptcha_v2: → click .recaptcha-checkbox で解決試行可
+```
+
 
 ## 📝 License
 

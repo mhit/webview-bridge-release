@@ -2094,7 +2094,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "capture",
-            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page. NEW: summarize=true uses AI to generate a concise summary of the page content.",
+            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page, summarize=true uses AI to summarize. FEATURES: 1) Interactivity scoring (0-1) with predicted actions, 2) CAPTCHA/Challenge detection (Cloudflare, reCAPTCHA, hCaptcha) with auto_strategy for autonomous handling, 3) Vision LLM analysis for images without alt text (analyze_vision=true).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2104,7 +2104,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "selector": { "type": "string", "description": "CSS selector to limit capture to specific element" },
                     "full_page": { "type": "boolean", "description": "Capture entire scrollable page, not just viewport" },
                     "text_max_chars": { "type": "integer", "description": "Max chars for text content" },
-                    "summarize": { "type": "boolean", "description": "Use AI to summarize page content" }
+                    "summarize": { "type": "boolean", "description": "Use AI to summarize page content" },
+                    "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to analyze images without alt text" }
                 }
             }
         },

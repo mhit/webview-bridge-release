@@ -628,3 +628,66 @@ observer.observe(document.body, {
 | **性能** | 20要素で1-3秒（キャッシュ時は即座） |
 | **制限** | Shadow DOM(closed)、Cross-origin iframe、Canvas |
 
+---
+
+## 追加機能: CAPTCHA/チャレンジ検出
+
+> 更新日: 2026-02-07
+
+### 概要
+
+AIエージェントが自律的にWeb操作を行う際、CAPTCHA/チャレンジページに遭遇することがある。
+本機能は、これらを**自動検出**し、**AIが自律的に対処できる戦略**を提供する。
+
+### 検出可能なチャレンジ
+
+| タイプ | 検出方法 | 自動対応戦略 |
+|--------|----------|-------------|
+| Cloudflare Turnstile | `iframe[src*="challenges.cloudflare.com"]`, `div.cf-turnstile` | `wait_and_retry`: 10秒待機→リトライ |
+| Cloudflare Interstitial | `"Just a moment"` テキスト, `div.cf-challenge` | `wait_and_retry`: 15秒待機→リトライ |
+| Google reCAPTCHA v2 | `div.g-recaptcha`, `iframe[src*="recaptcha"]` | `click_checkbox`: チェックボックスをクリック |
+| Google reCAPTCHA v3 | `.grecaptcha-badge` | `proceed`: そのまま送信（自動処理） |
+| hCaptcha | `div.h-captcha`, `iframe[src*="hcaptcha.com"]` | `click_checkbox`: チェックボックスをクリック |
+
+### 出力例
+
+```
+【チャレンジ検出】
+- cloudflare_interstitial: 待機推奨 (15000ms後リトライ)
+- google_recaptcha_v2: → click .recaptcha-checkbox で解決試行可
+```
+
+### JSON構造
+
+```json
+{
+  "challenges": [
+    {
+      "type": "cloudflare_turnstile",
+      "selector": "iframe[src*=\"challenges.cloudflare.com\"]",
+      "visible": true,
+      "position": { "x": 100, "y": 200, "width": 300, "height": 65 },
+      "auto_strategy": {
+        "action": "wait_and_retry",
+        "timeout_ms": 10000,
+        "retries": 3
+      }
+    }
+  ]
+}
+```
+
+### 自動対応戦略
+
+| action | 説明 | AIのアクション |
+|--------|------|--------------|
+| `proceed` | 対処不要 | そのまま処理続行 |
+| `wait_and_retry` | 待機後リトライ | `wait` → `capture` を繰り返す |
+| `click_checkbox` | チェックボックスをクリック | `interact` でクリック実行 |
+
+### 設計原則
+
+- **人間介在なし**: MCPはAIが使うため、「人間による操作が必要」は禁止語
+- **具体的アクション**: AIが次に何をすべきか明確に指示
+- **フォールバック**: 自動解決不可時は `vision_required` でVision LLM分析を推奨
+
