@@ -614,13 +614,24 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         }
     }
     
+    // 4.6 Optional: Vision LLM analysis for images without alt text
+    // TODO: Phase 3 - Vision analysis requires async element capture
+    // For now, just pass through the analyzed result
+    let final_result = if req.analyze_vision {
+        eprintln!("[Vision] Phase 3 vision analysis not yet fully implemented");
+        // Future: Use execute_script to capture elements and send to Vision LLM
+        analyzed_result.clone()
+    } else {
+        analyzed_result.clone()
+    };
+    
     // Build AI-optimized text response
-    let url = analyzed_result["url"].as_str().unwrap_or("Unknown");
-    let title = analyzed_result["title"].as_str().unwrap_or("Unknown");
+    let url = final_result["url"].as_str().unwrap_or("Unknown");
+    let title = final_result["title"].as_str().unwrap_or("Unknown");
     
     let mut text = format!("URL: {}\nTitle: {}\n\n【操作可能要素】\n", url, title);
     
-    if let Some(elements) = analyzed_result["elements"].as_array() {
+    if let Some(elements) = final_result["elements"].as_array() {
         // Filter: score >= 0.4, limit to top 20 for context efficiency
         // (threshold raised due to position bonuses)
         let filtered: Vec<_> = elements.iter()

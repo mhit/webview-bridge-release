@@ -205,6 +205,9 @@ pub struct CaptureRequest {
     /// Analyze interactivity of elements with LLM (Phase 2)
     #[serde(default)]
     pub analyze_interactivity: bool,
+    /// Analyze images without alt text using Vision LLM (Phase 3)
+    #[serde(default)]
+    pub analyze_vision: bool,
 }
 
 

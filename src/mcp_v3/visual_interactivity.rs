@@ -251,6 +251,167 @@ fn apply_llm_analysis(original_json: &str, llm_response: &str) -> Result<String,
         .map_err(|e| format!("Failed to serialize updated JSON: {}", e))
 }
 
+/// Analyze elements that need vision analysis (images without alt text)
+/// Takes element screenshots and sends to Vision LLM for content description
+pub fn analyze_with_vision(
+    elements_json: &str,
+    ai_config: &crate::core::ai::AiConfig,
+    capture_element_fn: impl Fn(&str) -> Result<String, String>, // Returns base64 image
+) -> Result<String, String> {
+    // Parse elements
+    let mut parsed: serde_json::Value = serde_json::from_str(elements_json)
+        .map_err(|e| format!("Failed to parse elements JSON: {}", e))?;
+    
+    // Collect elements that need vision analysis (avoid borrow issues)
+    let needs_vision: Vec<(usize, String, String, f64)> = {
+        let elements = parsed.get("elements")
+            .and_then(|e| e.as_array())
+            .ok_or("No elements array found")?;
+        
+        elements.iter()
+            .enumerate()
+            .filter(|(_, el)| {
+                el.get("interactivity")
+                    .and_then(|i| i.get("needs_vision"))
+                    .and_then(|n| n.as_bool())
+                    .unwrap_or(false)
+            })
+            .take(5)  // Limit to 5 elements (vision is expensive)
+            .map(|(idx, el)| {
+                let selector = el.get("selector")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tag = el.get("tag")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("element")
+                    .to_string();
+                let score = el.get("interactivity")
+                    .and_then(|i| i.get("score"))
+                    .and_then(|s| s.as_f64())
+                    .unwrap_or(0.5);
+                (idx, selector, tag, score)
+            })
+            .collect()
+    };
+    
+    if needs_vision.is_empty() {
+        return Ok(elements_json.to_string());
+    }
+    
+    // Analyze each element with vision
+    for (idx, selector, tag, current_score) in needs_vision {        
+        if selector.is_empty() {
+            continue;
+        }
+        
+        // Capture element screenshot
+        let image_base64 = match capture_element_fn(&selector) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("[Vision] Failed to capture element {}: {}", selector, e);
+                continue;
+            }
+        };
+        
+        // Build vision prompt
+        let prompt = build_vision_prompt_simple(&tag, current_score);
+        
+        // Call Vision LLM
+        let vision_response = match ai_config.provider.to_lowercase().as_str() {
+            "ollama" => {
+                let client = crate::core::ai::OllamaClient::new(ai_config);
+                client.call(&prompt, Some(&image_base64))
+            }
+            "gemini" => {
+                let client = crate::core::ai::GeminiClient::new(ai_config)
+                    .ok_or("Gemini client not available")?;
+                client.call(&prompt, Some(&image_base64))
+            }
+            _ => Err(format!("Unsupported provider: {}", ai_config.provider))
+        };
+        
+        // Update element with vision results
+        if let Ok(response) = vision_response {
+            if let Some(elements_array) = parsed.get_mut("elements").and_then(|e| e.as_array_mut()) {
+                if let Some(element) = elements_array.get_mut(idx) {
+                    // Parse vision response
+                    let (description, predicted_action) = parse_vision_response(&response);
+                    
+                    // Add vision_description to element
+                    element["vision_description"] = serde_json::json!(description);
+                    
+                    // Update label if it was empty
+                    if element.get("label").and_then(|l| l.as_str()).unwrap_or("").is_empty() {
+                        element["label"] = serde_json::json!(description.chars().take(50).collect::<String>());
+                    }
+                    
+                    // Add predicted action from vision
+                    if let Some(action) = predicted_action {
+                        if let Some(interactivity) = element.get_mut("interactivity") {
+                            if let Some(actions) = interactivity.get_mut("predicted_actions").and_then(|a| a.as_array_mut()) {
+                                actions.insert(0, serde_json::json!({
+                                    "action": action,
+                                    "purpose": "Vision分析"
+                                }));
+                            }
+                            interactivity["analyzed_by"] = serde_json::json!("vision");
+                            interactivity["needs_vision"] = serde_json::json!(false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    serde_json::to_string(&parsed)
+        .map_err(|e| format!("Failed to serialize: {}", e))
+}
+
+/// Build prompt for Vision LLM (simple version with direct params)
+fn build_vision_prompt_simple(tag: &str, current_score: f64) -> String {
+    format!(
+r#"この{}要素の画像を分析してください。
+
+1. 画像の内容を簡潔に説明（20文字以内）
+2. クリック可能性を判断（0.0-1.0、現在のスコア: {:.2}）
+3. 予測されるアクション（click_product, click_navigate, click_banner等）
+
+JSON形式で回答:
+{{"description": "商品画像", "score": 0.8, "action": "click_product"}}
+"#, tag, current_score)
+}
+
+/// Parse vision LLM response
+fn parse_vision_response(response: &str) -> (String, Option<String>) {
+    // Try to extract JSON
+    let json_start = response.find('{').unwrap_or(0);
+    let json_end = response.rfind('}').map(|i| i + 1).unwrap_or(response.len());
+    
+    if json_start >= json_end {
+        return (response.chars().take(50).collect(), None);
+    }
+    
+    let json_str = &response[json_start..json_end];
+    
+    match serde_json::from_str::<serde_json::Value>(json_str) {
+        Ok(parsed) => {
+            let description = parsed.get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("画像")
+                .to_string();
+            let action = parsed.get("action")
+                .and_then(|a| a.as_str())
+                .map(|s| s.to_string());
+            (description, action)
+        }
+        Err(_) => {
+            // Fallback: use raw response as description
+            (response.chars().take(50).collect(), None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
