@@ -139,11 +139,37 @@ WebView Bridge MCPレイヤーをAIフレンドリーに再設計する。V2 RES
   "tool": "navigate",
   "session": "my-session",
   "url": "https://example.com",
-  "wait_for": "load|networkidle|selector",
+  "wait_for": "load|networkidle|selector|stable",
   "wait_selector": "#main-content",
   "timeout_ms": 30000
 }
 ```
+
+#### 堅牢化設計（MCP層で実装）
+
+**問題**: 既存V2 APIの`wait_until`パラメータは定義のみ、実装未使用。
+
+**wait_for条件**:
+| 条件 | 説明 | 実装方法 |
+|------|------|----------|
+| `load` | DOMContentLoaded | 既存Navigate完了待ち |
+| `networkidle` | 通信が落ち着いた | PerformanceObserver or 500ms無通信 |
+| `selector` | 要素が出現 | wait_selector指定必須、ポーリング |
+| `stable` | DOM変更が停止 | MutationObserver、500ms変更なし |
+
+**SPA対応**:
+```
+1. URL変更検知（pushState/popState対応）
+2. ページ遷移後もDOM安定を待機
+3. React/Vue等のhydration検出（data-reactroot等）
+```
+
+**recommended デフォルト**: `stable`（最も安全）
+
+**エラーハンドリング**:
+- リダイレクトチェーン追跡
+- HTTP 4xx/5xx検出
+- 証明書エラー等
 
 ---
 
@@ -372,8 +398,30 @@ AIが判断に必要な情報のみ含める:
 - **アクセス**: `GET /files/{session}/{filename}`
 - **クリーンアップ**: セッション解放時に自動削除（オプション）
 - **保持数制限**: 最新N件のみ保持（設定可能）
-| `selector` | 特定領域のみ |
-| `full_page` | フルページスクリーンショット |
+
+#### 堅牢化設計（MCP層で実装）
+
+**既存の活用可能なコード**（screenshot_v2.rs）:
+- ✅ `generate_force_load_lazy_images_script()` - lazy load強制発火
+- ✅ `generate_wait_for_images_script()` - 画像読み込み待機
+
+**追加実装が必要**:
+
+| 機能 | 実装方法 |
+|------|----------|
+| skeleton/placeholder検出 | `.skeleton`, `.placeholder`, `[aria-busy]` 消滅待機 |
+| アニメーション完了待機 | `getComputedStyle().animationPlayState` |
+| 動的コンテンツ安定 | MutationObserver、500ms変更なし |
+
+**キャプチャ前の安定化フロー**:
+```
+1. Lazy画像強制読み込み（既存スクリプト使用）
+2. 画像読み込み完了待機（既存スクリプト使用）
+3. skeleton/placeholder消滅待機（新規実装）
+4. DOM安定待機（MutationObserver）
+5. スクリーンショット取得
+6. ファイル保存 + URL返却
+```
 
 ---
 
@@ -394,6 +442,43 @@ CSSセレクタで構造化抽出。
   "limit": 50
 }
 ```
+
+#### 堅牢化設計（MCP層で実装）
+
+**問題**: 動的生成コンテンツが抽出時点で存在しない可能性。
+
+**追加オプション**:
+```json
+{
+  "tool": "extract",
+  "selector": ".product-item",
+  "fields": {...},
+  "wait_for_count": 10,      // 最低10件取得できるまで待機
+  "wait_timeout_ms": 5000,   // 待機タイムアウト
+  "scroll_for_more": true,   // 無限スクロール対応
+  "scroll_max": 5            // 最大スクロール回数
+}
+```
+
+**抽出フロー**:
+```
+1. セレクタに一致する要素数を確認
+2. wait_for_count未満なら待機（ポーリング）
+3. scroll_for_more有効なら：
+   a. ページ末尾へスクロール
+   b. 新規要素出現待機
+   c. 最大回数まで繰り返し
+4. fields定義に従いデータ抽出
+5. limit件数に制限
+```
+
+**fields記法**:
+| 記法 | 説明 | 例 |
+|------|------|---|
+| `"h2"` | 要素のtextContent | `{"name": "h2"}` |
+| `".price"` | 子要素のテキスト | `{"price": ".price"}` |
+| `"a@href"` | 属性値 | `{"url": "a@href"}` |
+| `"img@src"` | 画像URL | `{"image": "img@src"}` |
 
 ---
 
