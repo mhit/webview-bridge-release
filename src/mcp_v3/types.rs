@@ -401,4 +401,14 @@ impl McpToolResponse {
             }),
         }
     }
+    
+    /// Success response with JSON data (serialized as text for AI parsing)
+    pub fn success_json(data: serde_json::Value) -> Self {
+        let text = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
+        Self {
+            success: true,
+            content: Some(vec![McpContent::Text { text }]),
+            error: None,
+        }
+    }
 }

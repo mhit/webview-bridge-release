@@ -154,10 +154,11 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
     };
     
     match wait_result {
-        Ok(_) => McpToolResponse::success_text(format!(
-            "Navigated to: {}\nWait condition: {:?} satisfied",
-            req.url, req.wait_for
-        )),
+        Ok(_) => McpToolResponse::success_json(serde_json::json!({
+            "url": req.url,
+            "wait_for": format!("{:?}", req.wait_for),
+            "status": "navigated"
+        })),
         Err(e) => McpToolResponse::error("WAIT_FAILED", &e),
     }
 }
@@ -593,11 +594,10 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                 let session_names: Vec<String> = response.sessions.iter()
                     .map(|s| s.name.clone())
                     .collect();
-                return McpToolResponse::success_text(format!(
-                    "Active sessions ({}):\n{}",
-                    session_names.len(),
-                    session_names.iter().map(|s| format!("- {}", s)).collect::<Vec<_>>().join("\n")
-                ));
+                return McpToolResponse::success_json(serde_json::json!({
+                    "sessions": session_names,
+                    "count": session_names.len()
+                }));
             }
             Err(e) => return McpToolResponse::error("SESSION_LIST_FAILED", &e),
         }
@@ -657,13 +657,13 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     response.session, response.is_new, waited_ms
                                 );
                                 
-                                return McpToolResponse::success_text(format!(
-                                    "Session '{}' acquired and ready\nis_new: {}\nprofile: {:?}\nwait_ms: {}",
-                                    response.session,
-                                    response.is_new,
-                                    response.profile,
-                                    waited_ms
-                                ));
+                                return McpToolResponse::success_json(serde_json::json!({
+                                    "session": response.session,
+                                    "is_new": response.is_new,
+                                    "profile": response.profile,
+                                    "wait_ms": waited_ms,
+                                    "status": "ready"
+                                }));
                             }
                             
                             // Check for error
@@ -693,14 +693,20 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
     
     if let Some(name) = &req.release {
         match manager.release(name) {
-            Ok(_) => return McpToolResponse::success_text(format!("Session '{}' released", name)),
+            Ok(_) => return McpToolResponse::success_json(serde_json::json!({
+                "session": name,
+                "status": "released"
+            })),
             Err(e) => return McpToolResponse::error("SESSION_RELEASE_FAILED", &e),
         }
     }
     
     if let Some(name) = &req.import {
         // TODO: Implement cookie import
-        return McpToolResponse::success_text(format!("Cookies imported to session '{}'", name));
+        return McpToolResponse::success_json(serde_json::json!({
+            "session": name,
+            "status": "cookies_imported"
+        }));
     }
     
     McpToolResponse::error("INVALID_SESSION_REQUEST", "No valid session action specified")
