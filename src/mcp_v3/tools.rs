@@ -657,12 +657,26 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     response.session, response.is_new, waited_ms
                                 );
                                 
+                                // If not headless, ensure window is visible
+                                if !req.headless {
+                                    let (vis_tx, vis_rx) = oneshot::channel();
+                                    let vis_cmd = crate::core::AppCommand::SetVisibility {
+                                        id: handle.id.clone(),
+                                        visible: true,
+                                        resp_tx: vis_tx,
+                                    };
+                                    if state.cmd_tx.send(vis_cmd).is_ok() {
+                                        let _ = tokio::time::timeout(Duration::from_millis(1000), vis_rx).await;
+                                    }
+                                }
+                                
                                 return McpToolResponse::success_json(serde_json::json!({
                                     "session": response.session,
                                     "is_new": response.is_new,
                                     "profile": response.profile,
                                     "wait_ms": waited_ms,
-                                    "status": "ready"
+                                    "status": "ready",
+                                    "visible": !req.headless
                                 }));
                             }
                             

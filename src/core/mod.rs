@@ -76,6 +76,11 @@ pub enum AppCommand {
         timeout_ms: u64,
         resp_tx: oneshot::Sender<Result<bool, String>>,
     },
+    SetVisibility {
+        id: String,
+        visible: bool,
+        resp_tx: oneshot::Sender<Result<bool, String>>,
+    },
 }
 
 /// Session thread command enum

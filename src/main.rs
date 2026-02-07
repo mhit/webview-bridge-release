@@ -230,5 +230,9 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.wait_for_selector(&id, selector, timeout_ms).await;
             let _ = resp_tx.send(result);
         }
+        AppCommand::SetVisibility { id, visible, resp_tx } => {
+            let result = manager.set_visibility(&id, visible).await;
+            let _ = resp_tx.send(result);
+        }
     }
 }
