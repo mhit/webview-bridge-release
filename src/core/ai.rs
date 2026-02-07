@@ -540,7 +540,7 @@ Return ONLY valid JSON (no markdown, no explanation) with this exact structure:
     }
     
     /// Analyze screenshot for login form detection
-    pub fn generate_login_prompt(screenshot_base64: &str) -> String {
+    pub fn generate_login_prompt(_screenshot_base64: &str) -> String {
         format!(r#"
 Analyze this webpage screenshot and identify login form elements.
 Return JSON with the following structure:

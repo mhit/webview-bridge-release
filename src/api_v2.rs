@@ -12,7 +12,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -1981,12 +1980,12 @@ async fn session_cleanup(
         "expired" => manager.cleanup_expired(),
         "all" => {
             // Cleanup all non-acquired sessions
-            let mut count = 0;
+            let mut _count = 0;
             if let Ok(ids) = manager.cleanup_expired() {
-                count += ids.len();
+                _count += ids.len();
             }
             if let Ok(ids) = manager.cleanup_inactive() {
-                count += ids.len();
+                _count += ids.len();
             }
             Ok(Vec::new()) // Return empty, count is in message
         },
@@ -2101,6 +2100,7 @@ async fn session_stats() -> impl IntoResponse {
 struct NavigateRequest {
     session: String,
     url: String,
+    #[allow(dead_code)]
     #[serde(default = "default_wait_until")]
     wait_until: String,  // "load" | "domready" | "none"
     #[serde(default = "default_nav_timeout")]
@@ -3479,7 +3479,7 @@ fn extract_youtube_id(url: &str) -> String {
 
 use crate::core::ai::{
     AiConfig, AiLoginRequest, AiImageAnalyzeRequest, AiExtractRequest,
-    LoginStatus, AiUsageTracker,
+    AiUsageTracker,
 };
 
 /// Global AI config
@@ -3744,7 +3744,7 @@ async fn ai_usage_stats() -> impl IntoResponse {
 
 use crate::core::download::{
     DownloadTriggerRequest, BatchDownloadRequest, CleanupRequest,
-    StorageConfig, DownloadManager, StorageManager, DownloadStatus,
+    StorageConfig, DownloadManager, StorageManager,
     PersistRequest, ExtendTtlRequest,
 };
 
@@ -3980,8 +3980,6 @@ async fn config_storage(
 
 /// GET /v2/media/screenshots - List saved screenshots
 async fn media_screenshots_list() -> impl IntoResponse {
-    use base64::Engine;
-    
     let screenshots_dir = dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("webview-bridge")
@@ -4159,7 +4157,7 @@ async fn media_extend_ttl(
 // ============================================================================
 
 use crate::core::comm::{
-    JobManager, JobStatus, JobType, BatchRequest, BatchResponse, BatchOperationResult,
+    JobManager, JobStatus, JobType, BatchRequest, BatchOperationResult,
 };
 
 /// Global job manager
@@ -4363,16 +4361,6 @@ async fn batch_execute(
 // MCP (Model Context Protocol) HTTP Handler
 // ============================================================================
 
-/// MCP JSON-RPC request
-#[derive(Debug, Deserialize)]
-struct McpRequest {
-    jsonrpc: String,
-    id: Option<serde_json::Value>,
-    method: String,
-    #[serde(default)]
-    params: Option<serde_json::Value>,
-}
-
 /// MCP JSON-RPC response
 #[derive(Serialize)]
 struct McpResponse {
@@ -4397,6 +4385,7 @@ struct McpError {
 /// MCP v3 Request format
 #[derive(Debug, serde::Deserialize)]
 struct McpV3Request {
+    #[allow(dead_code)]
     jsonrpc: String,
     method: String,
     #[serde(default)]

@@ -1605,7 +1605,7 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
             
             McpToolResponse::success_json(results)
         }
-        MediaAction::CollectImages { selector, min_width, min_height, download, max_images } => {
+        MediaAction::CollectImages { selector, min_width, min_height, download: _, max_images } => {
             let script = generate_collect_images_script(
                 selector.as_deref(),
                 min_width.unwrap_or(100),
