@@ -126,6 +126,10 @@ pub enum Action {
         value: String,
         #[serde(default)]
         clear: bool,
+        /// Instant mode: set value directly instead of character-by-character
+        /// Use for autocomplete-heavy inputs like Amazon search
+        #[serde(default)]
+        instant: bool,
     },
     Scroll {
         #[serde(default)]

@@ -313,17 +313,23 @@ async fn execute_action(
             Ok(None)
         }
         
-        Action::Type { target, value, clear } => {
+        Action::Type { target, value, clear, instant } => {
             // Wait for element
             let wait_script = generate_wait_for_clickable_script(target, timeout_ms);
             execute_script(session, wait_script, state, timeout_ms).await?;
             
-            // Type with events - extend timeout based on text length
-            // Each char takes ~10ms, plus overhead
-            let type_timeout = timeout_ms.max(5000 + (value.len() as u64 * 20));
-            tracing::info!("[type] Input length: {}, timeout: {}ms", value.len(), type_timeout);
+            // Type with events - extend timeout based on text length (if not instant)
+            // Instant mode is much faster, character mode takes ~10ms per char
+            let type_timeout = if *instant {
+                timeout_ms.max(5000)
+            } else {
+                timeout_ms.max(5000 + (value.len() as u64 * 20))
+            };
             
-            let type_script = generate_type_with_events_script(target, value, *clear);
+            tracing::info!("[type] Input length: {}, instant: {}, timeout: {}ms", 
+                value.len(), instant, type_timeout);
+            
+            let type_script = generate_type_with_events_script_ex(target, value, *clear, *instant);
             let result = execute_script(session, type_script, state, type_timeout).await?;
             
             let parsed: serde_json::Value = serde_json::from_str(&result)
@@ -333,8 +339,9 @@ async fn execute_action(
                 return Err(parsed["error"].as_str().unwrap_or("Type failed").to_string());
             }
             
-            tracing::info!("[type] Success: typed {} chars, final value: {}", 
+            tracing::info!("[type] Success: typed {} chars, instant: {}, final value: {}", 
                 parsed["length"].as_u64().unwrap_or(0),
+                parsed["instant"].as_bool().unwrap_or(false),
                 parsed["value"].as_str().unwrap_or("?"));
             
             Ok(None)
@@ -1684,6 +1691,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
                                 "target": { "type": "string", "description": "CSS selector (required for click, type, hover, select)" },
                                 "value": { "type": "string", "description": "Input text (for type/select) or selector/pattern (for wait conditions)" },
                                 "clear": { "type": "boolean", "description": "Clear input before typing (for type action)" },
+                                "instant": { "type": "boolean", "description": "Instant mode: set value directly instead of char-by-char. Use for autocomplete-heavy inputs like Amazon search." },
                                 "condition": { "type": "string", "enum": ["timeout", "element", "element_visible", "element_clickable", "element_hidden", "url_contains", "url_matches", "text_contains", "network_idle"], "description": "Wait condition type (required for wait action)" },
                                 "timeout_ms": { "type": "integer", "description": "Timeout in ms (for wait action, default: 10000)" },
                                 "direction": { "type": "string", "enum": ["down", "up", "left", "right"], "description": "Scroll direction (for scroll action)" },

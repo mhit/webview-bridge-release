@@ -159,13 +159,57 @@ pub fn generate_human_mouse_move_script(selector: &str) -> String {
 
 /// Type text with input event simulation
 pub fn generate_type_with_events_script(selector: &str, text: &str, clear: bool) -> String {
+    generate_type_with_events_script_ex(selector, text, clear, false)
+}
+
+/// Extended type script with instant mode for autocomplete-heavy inputs (like Amazon)
+pub fn generate_type_with_events_script_ex(selector: &str, text: &str, clear: bool, instant: bool) -> String {
     let clear_code = if clear {
         "el.value = ''; el.dispatchEvent(new Event('input', {bubbles: true}));"
     } else {
         ""
     };
 
-    format!(r#"
+    if instant {
+        // Instant mode: set value directly, skip character-by-character
+        // This avoids autocomplete/suggestion interference
+        format!(r#"
+(async function() {{
+    const el = document.querySelector("{}");
+    if (!el) {{
+        return JSON.stringify({{ success: false, error: "Element not found" }});
+    }}
+
+    // Focus
+    el.focus();
+    {}
+
+    // Set value directly (instant mode - avoids autocomplete interference)
+    const text = "{}";
+    el.value = text;
+    
+    // Dispatch events
+    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    
+    // Small delay to let any autocomplete settle
+    await new Promise(r => setTimeout(r, 100));
+    
+    // Blur to close autocomplete dropdown
+    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+
+    return JSON.stringify({{
+        success: true,
+        typed: true,
+        instant: true,
+        length: text.length,
+        value: el.value
+    }});
+}})();
+"#, selector.replace('"', "\\\""), clear_code, text.replace('"', "\\\"").replace('\n', "\\n"))
+    } else {
+        // Character-by-character mode for reactive forms
+        format!(r#"
 (async function() {{
     const el = document.querySelector("{}");
     if (!el) {{
@@ -191,11 +235,13 @@ pub fn generate_type_with_events_script(selector: &str, text: &str, clear: bool)
     return JSON.stringify({{
         success: true,
         typed: true,
+        instant: false,
         length: text.length,
         value: el.value
     }});
 }})();
 "#, selector.replace('"', "\\\""), clear_code, text.replace('"', "\\\"").replace('\n', "\\n"))
+    }
 }
 
 /// Wait for DOM stability (no mutations for specified duration)
