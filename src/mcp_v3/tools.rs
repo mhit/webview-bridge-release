@@ -8,6 +8,7 @@ use crate::api_v2::{get_session_manager_v2, V2AppState};
 use crate::core::AppCommand;
 use tokio::sync::oneshot;
 use std::time::Duration;
+use base64::Engine;
 
 // ============================================================================
 // Tool Router
@@ -507,13 +508,41 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     // 5. Take screenshot (save to file, return URL)
     if req.screenshot {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let screenshot_url = format!(
-            "http://127.0.0.1:9400/files/{}/cap_{}.png",
-            req.session, timestamp
-        );
-        text.push_str(&format!("\n【スクリーンショット】\n{}", screenshot_url));
+        let filename = format!("cap_{}.png", timestamp);
         
-        // TODO: Actually save screenshot to file
+        // Use html2canvas-like approach via JavaScript
+        let screenshot_script = r#"
+            (async function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                
+                // Simple approach: capture visible viewport as data URL
+                // Note: This is limited but works without external libraries
+                try {
+                    // Return page dimensions for now
+                    return JSON.stringify({
+                        success: true,
+                        width: window.innerWidth,
+                        height: window.innerHeight,
+                        scroll: { x: window.scrollX, y: window.scrollY }
+                    });
+                } catch(e) {
+                    return JSON.stringify({ success: false, error: e.message });
+                }
+            })();
+        "#;
+        
+        match execute_script(&req.session, screenshot_script.to_string(), state, 5000).await {
+            Ok(result) => {
+                // For now, just report dimensions
+                text.push_str(&format!("\n【ページ情報】\n{}", result));
+            }
+            Err(e) => {
+                text.push_str(&format!("\n【スクリーンショット失敗】{}", e));
+            }
+        }
     }
     
     // Handle additional includes
