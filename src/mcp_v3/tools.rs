@@ -867,33 +867,33 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "capture",
-            "description": "Capture page state optimized for AI. Returns URL, title, interactive elements list. Screenshot saved as file, URL returned.",
+            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "default": "default" },
-                    "screenshot": { "type": "boolean", "default": true },
-                    "include": { "type": "array", "items": { "type": "string", "enum": ["cookies", "full_text", "html", "images"] } },
-                    "selector": { "type": "string" },
-                    "full_page": { "type": "boolean" },
-                    "text_max_chars": { "type": "integer" },
-                    "summarize": { "type": "boolean", "description": "Use local LLM for summarization (optional)" }
+                    "screenshot": { "type": "boolean", "default": true, "description": "Save screenshot to file" },
+                    "include": { "type": "array", "items": { "type": "string", "enum": ["cookies", "full_text", "html", "images"] }, "description": "Extra data to include" },
+                    "selector": { "type": "string", "description": "CSS selector to limit capture to specific element" },
+                    "full_page": { "type": "boolean", "description": "Capture entire scrollable page, not just viewport" },
+                    "text_max_chars": { "type": "integer", "description": "Max chars for text content" },
+                    "summarize": { "type": "boolean", "description": "Use AI to summarize page content" }
                 }
             }
         },
         {
             "name": "extract",
-            "description": "Extract structured data from page using CSS selectors. Supports dynamic content waiting and infinite scroll.",
+            "description": "Extract structured data from page. Example: selector='.review', fields={'author':'.author-name','rating':'.star-rating@data-rating','text':'.review-text'} returns [{author:'John',rating:'5',text:'Great!'},...]). Use @attr to get attribute value instead of text content.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "default": "default" },
-                    "selector": { "type": "string", "description": "CSS selector for container elements" },
-                    "fields": { "type": "object", "description": "Field name -> sub-selector mapping. Use @attr for attributes (e.g. 'a@href')" },
-                    "limit": { "type": "integer" },
-                    "wait_for_count": { "type": "integer", "description": "Wait until at least this many elements" },
-                    "scroll_for_more": { "type": "boolean", "description": "Enable infinite scroll" },
-                    "scroll_max": { "type": "integer", "default": 5 }
+                    "selector": { "type": "string", "description": "CSS selector for container elements (e.g. '.review-card')" },
+                    "fields": { "type": "object", "description": "Map of field name to sub-selector. Examples: 'title':'.title', 'link':'a@href', 'rating':'span@data-rating'" },
+                    "limit": { "type": "integer", "description": "Max items to extract" },
+                    "wait_for_count": { "type": "integer", "description": "Wait until at least N elements exist" },
+                    "scroll_for_more": { "type": "boolean", "description": "Scroll down to load more items (infinite scroll)" },
+                    "scroll_max": { "type": "integer", "default": 5, "description": "Max scroll iterations" }
                 },
                 "required": ["selector", "fields"]
             }
@@ -934,13 +934,13 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "execute",
-            "description": "Execute raw JavaScript in the browser context",
+            "description": "Execute raw JavaScript in browser and return result. The script runs in page context with access to DOM. Return value is JSON-stringified. Examples: 'document.title', 'document.querySelector(\"#price\").textContent', '[...document.querySelectorAll(\"a\")].map(a=>a.href)'",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "default": "default" },
-                    "script": { "type": "string", "description": "JavaScript code to execute" },
-                    "timeout_ms": { "type": "integer", "default": 30000 }
+                    "script": { "type": "string", "description": "JavaScript code to execute. Use return for async functions." },
+                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Script execution timeout" }
                 },
                 "required": ["script"]
             }
