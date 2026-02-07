@@ -659,8 +659,8 @@ pub fn generate_extract_interactive_elements_script() -> String {
         }
         
         // CTAテキスト (+0.15)
-        const ctaWords = ['購入', '申込', '登録', '送信', 'ログイン', 'サインイン', 'カート', 
-                          'submit', 'buy', 'add', 'cart', 'login', 'sign', 'register', 'checkout'];
+        const ctaWords = ['購入', '申込', '登録', '送信', 'ログイン', 'サインイン', 'カート', '検索',
+                          'submit', 'buy', 'add', 'cart', 'login', 'sign', 'register', 'checkout', 'search'];
         const labelLower = (label || '').toLowerCase();
         if (ctaWords.some(w => labelLower.includes(w))) {
             score += 0.15;
@@ -685,9 +685,25 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('太字');
         }
         
+        // アイコンボタン（テキストなしでアイコンあり）(+0.1)
+        if (props.hasIcon && (!label || label.trim() === '')) {
+            score += 0.1;
+            reasons.push('アイコンボタン');
+        }
+        
+        // disabled要素は大幅減点 (-0.5)
+        if (props.isDisabled) {
+            score = Math.max(0, score - 0.5);
+            reasons.push('disabled');
+        }
+        
+        // 画像リンクでaltなしの場合はフラグ
+        const needsVisionAnalysis = props.hasImage && (!props.imageAlt || props.imageAlt.trim() === '');
+        
         return {
             score: Math.min(1, Math.round(score * 100) / 100),
-            reasons: reasons
+            reasons: reasons,
+            needsVisionAnalysis: needsVisionAnalysis
         };
     };
 
@@ -713,7 +729,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
             actions.push({ action: 'click_submit', purpose: 'フォーム送信' });
         }
         
-        // 通常ボタン
+        // 通常ボタン（typeがない場合も含む）
         if (tag === 'button' && type !== 'submit') {
             actions.push({ action: 'click_action', purpose: 'アクション実行' });
         }
@@ -807,6 +823,7 @@ pub fn generate_extract_interactive_elements_script() -> String {
                     score: scoreResult.score,
                     reasons: scoreResult.reasons,
                     predicted_actions: predictedActions,
+                    needs_vision: scoreResult.needsVisionAnalysis || false,
                     analyzed_by: 'rule'
                 }
             };
