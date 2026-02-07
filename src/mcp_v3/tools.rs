@@ -818,24 +818,53 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         }
     }
     
-    // Add challenge detection results
+    // Add challenge detection results with AI-actionable strategies
     if let Some(challenges) = final_result.get("challenges").and_then(|c| c.as_array()) {
         if !challenges.is_empty() {
-            text.push_str("\n【⚠️ チャレンジ検出】\n");
+            text.push_str("\n【チャレンジ検出】\n");
             for challenge in challenges {
                 let challenge_type = challenge.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                let visible = challenge.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
-                let selector = challenge.get("selector").and_then(|s| s.as_str()).unwrap_or("");
+                let auto_strategy = challenge.get("auto_strategy");
                 
-                text.push_str(&format!("- {}: {}", challenge_type, 
-                    if visible { "表示中" } else { "検出済み" }
-                ));
-                if !selector.is_empty() {
-                    text.push_str(&format!(" ({})", selector));
+                // Get recommended action
+                let action = auto_strategy
+                    .and_then(|s| s.get("action"))
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("unknown");
+                
+                let message = auto_strategy
+                    .and_then(|s| s.get("message"))
+                    .and_then(|m| m.as_str());
+                
+                text.push_str(&format!("- {}: ", challenge_type));
+                
+                match action {
+                    "proceed" => {
+                        text.push_str("自動処理可能");
+                        if let Some(msg) = message {
+                            text.push_str(&format!(" ({})", msg));
+                        }
+                    }
+                    "wait_and_retry" => {
+                        let timeout = auto_strategy
+                            .and_then(|s| s.get("timeout_ms"))
+                            .and_then(|t| t.as_u64())
+                            .unwrap_or(10000);
+                        text.push_str(&format!("待機推奨 ({}ms後リトライ)", timeout));
+                    }
+                    "click_checkbox" => {
+                        let selector = auto_strategy
+                            .and_then(|s| s.get("selector"))
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("");
+                        text.push_str(&format!("→ click {} で解決試行可", selector));
+                    }
+                    _ => {
+                        text.push_str("対応方法を検討中");
+                    }
                 }
                 text.push('\n');
             }
-            text.push_str("\n※ 人間による操作が必要な場合があります\n");
         }
     }
 

@@ -516,30 +516,41 @@ pub fn generate_extract_interactive_elements_script() -> String {
                 type: 'cloudflare_turnstile',
                 selector: turnstile.id ? `#${turnstile.id}` : 'iframe[src*="challenges.cloudflare.com"]',
                 visible: rect.width > 0 && rect.height > 0,
-                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+                // AI strategy: Turnstile often auto-solves, wait and retry
+                auto_strategy: { action: 'wait_and_retry', timeout_ms: 10000, retries: 3 }
             });
         }
         
         // Google reCAPTCHA v2
-        const recaptcha = document.querySelector('iframe[src*="google.com/recaptcha"], div.g-recaptcha, [data-sitekey*="recaptcha"]');
-        if (recaptcha) {
+        const recaptcha = document.querySelector('iframe[src*="google.com/recaptcha"], div.g-recaptcha');
+        if (recaptcha && !document.querySelector('.grecaptcha-badge')) {
             const rect = recaptcha.getBoundingClientRect();
+            // Check if checkbox is already checked
+            const isChecked = document.querySelector('.recaptcha-checkbox-checked') !== null;
             challenges.push({
                 type: 'google_recaptcha_v2',
                 selector: 'div.g-recaptcha, iframe[src*="recaptcha"]',
                 visible: rect.width > 0 && rect.height > 0,
-                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+                is_solved: isChecked,
+                // AI strategy: Try clicking checkbox, if image challenge appears → needs vision
+                auto_strategy: isChecked 
+                    ? { action: 'proceed', message: 'Already solved' }
+                    : { action: 'click_checkbox', selector: '.recaptcha-checkbox', fallback: 'vision_required' }
             });
         }
         
-        // Google reCAPTCHA v3 (invisible badge)
+        // Google reCAPTCHA v3 (invisible - auto handled by browser)
         const recaptchaBadge = document.querySelector('.grecaptcha-badge');
-        if (recaptchaBadge) {
+        if (recaptchaBadge && !document.querySelector('div.g-recaptcha')) {
             challenges.push({
                 type: 'google_recaptcha_v3',
                 selector: '.grecaptcha-badge',
-                visible: true,
-                invisible_challenge: true
+                visible: false,
+                invisible_challenge: true,
+                // AI strategy: v3 is automatic, just submit form normally
+                auto_strategy: { action: 'proceed', message: 'Invisible reCAPTCHA - submit normally' }
             });
         }
         
@@ -551,25 +562,23 @@ pub fn generate_extract_interactive_elements_script() -> String {
                 type: 'hcaptcha',
                 selector: 'div.h-captcha, iframe[src*="hcaptcha.com"]',
                 visible: rect.width > 0 && rect.height > 0,
-                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+                // AI strategy: Try accessibility mode or wait
+                auto_strategy: { action: 'click_checkbox', selector: '.hcaptcha-checkbox', fallback: 'vision_required' }
             });
         }
         
-        // Generic challenge page detection
-        const challengeIndicators = [
-            document.querySelector('div.cf-challenge'),
-            document.querySelector('[class*="challenge"]'),
-            document.querySelector('[id*="captcha"]'),
-            document.body?.textContent?.includes('Checking your browser') || 
-            document.body?.textContent?.includes('Please wait') ||
-            document.body?.textContent?.includes('Just a moment')
-        ].filter(Boolean);
-        
-        if (challengeIndicators.length > 0 && challenges.length === 0) {
+        // Cloudflare challenge page (interstitial)
+        const cfChallenge = document.querySelector('div.cf-challenge, #cf-wrapper');
+        const isCloudflareWait = document.body?.textContent?.includes('Just a moment') ||
+                                  document.body?.textContent?.includes('Checking your browser') ||
+                                  document.body?.textContent?.includes('Please wait');
+        if (cfChallenge || isCloudflareWait) {
             challenges.push({
-                type: 'unknown_challenge',
-                indicators: challengeIndicators.length,
-                page_title: document.title
+                type: 'cloudflare_interstitial',
+                page_blocked: true,
+                // AI strategy: Wait for automatic resolution
+                auto_strategy: { action: 'wait_and_retry', timeout_ms: 15000, retries: 5, message: 'Cloudflare check - wait for auto-resolution' }
             });
         }
         
