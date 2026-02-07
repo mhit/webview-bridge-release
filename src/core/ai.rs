@@ -80,9 +80,24 @@ impl Default for AiConfig {
 }
 
 impl AiConfig {
-    /// Check if AI is available (has API key and is enabled)
+    /// Check if AI is available (has API key for Gemini, or Ollama is running)
     pub fn is_available(&self) -> bool {
-        self.enabled && self.api_key.is_some()
+        if !self.enabled {
+            return false;
+        }
+        
+        match self.provider.to_lowercase().as_str() {
+            "ollama" => {
+                // Ollama doesn't need API key, just check if running
+                let url = std::env::var("OLLAMA_HOST")
+                    .unwrap_or_else(|_| "http://localhost:11434".to_string());
+                ureq::get(&format!("{}/api/tags", url)).call().is_ok()
+            }
+            _ => {
+                // Gemini needs API key
+                self.api_key.is_some()
+            }
+        }
     }
     
     /// Check if budget allows usage
@@ -631,7 +646,184 @@ No markdown formatting, no explanation, just the JSON.
     }
 }
 
-/// Login form analysis result from Gemini
+// ============================================================================
+// Ollama Client (Local LLM Support)
+// ============================================================================
+
+/// Ollama client for local LLM support
+#[derive(Debug, Clone)]
+pub struct OllamaClient {
+    pub base_url: String,
+    pub model: String,
+    pub timeout_ms: u64,
+}
+
+impl OllamaClient {
+    pub fn new(config: &AiConfig) -> Self {
+        // Support custom Ollama URL via environment variable
+        let base_url = std::env::var("OLLAMA_HOST")
+            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        
+        Self {
+            base_url,
+            model: config.model.clone(),
+            timeout_ms: config.timeout_ms,
+        }
+    }
+    
+    /// Make a request to Ollama API
+    pub fn call(&self, prompt: &str, image_base64: Option<&str>) -> Result<String, String> {
+        let url = format!("{}/api/generate", self.base_url);
+        
+        // Build request with or without images
+        let request_body = if let Some(image_data) = image_base64 {
+            // Vision request with image
+            serde_json::json!({
+                "model": self.model,
+                "prompt": prompt,
+                "images": [image_data],
+                "stream": false,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 4096
+                }
+            })
+        } else {
+            // Text-only request
+            serde_json::json!({
+                "model": self.model,
+                "prompt": prompt,
+                "stream": false,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 4096
+                }
+            })
+        };
+        
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .build();
+        
+        let response = client
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&request_body)
+            .map_err(|e| format!("Ollama API request failed: {}. Is Ollama running?", e))?;
+        
+        let response_body: serde_json::Value = response
+            .into_json()
+            .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
+        
+        // Extract response text
+        response_body
+            .get("response")
+            .and_then(|r| r.as_str())
+            .map(String::from)
+            .ok_or_else(|| {
+                let error = response_body.get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("Unknown error");
+                format!("Ollama API error: {}", error)
+            })
+    }
+    
+    /// List available models
+    pub fn list_models(&self) -> Result<Vec<String>, String> {
+        let url = format!("{}/api/tags", self.base_url);
+        
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .build();
+        
+        let response = client
+            .get(&url)
+            .call()
+            .map_err(|e| format!("Failed to list Ollama models: {}", e))?;
+        
+        let body: serde_json::Value = response
+            .into_json()
+            .map_err(|e| format!("Failed to parse model list: {}", e))?;
+        
+        let models = body
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        
+        Ok(models)
+    }
+    
+    /// Check if Ollama is running
+    pub fn is_available(&self) -> bool {
+        let url = format!("{}/api/tags", self.base_url);
+        ureq::get(&url).call().is_ok()
+    }
+}
+
+// ============================================================================
+// Unified AI Client
+// ============================================================================
+
+/// Unified AI client that automatically selects provider
+pub enum AiClient {
+    Gemini(GeminiClient),
+    Ollama(OllamaClient),
+}
+
+impl AiClient {
+    /// Create client based on configuration
+    pub fn new(config: &AiConfig) -> Option<Self> {
+        match config.provider.to_lowercase().as_str() {
+            "ollama" => {
+                let client = OllamaClient::new(config);
+                if client.is_available() {
+                    Some(AiClient::Ollama(client))
+                } else {
+                    tracing::warn!("Ollama not available, falling back to Gemini");
+                    GeminiClient::new(config).map(AiClient::Gemini)
+                }
+            }
+            "gemini" | _ => {
+                // Try Gemini first, fall back to Ollama if no API key
+                if let Some(gemini) = GeminiClient::new(config) {
+                    Some(AiClient::Gemini(gemini))
+                } else {
+                    // No Gemini API key, try Ollama
+                    let ollama = OllamaClient::new(config);
+                    if ollama.is_available() {
+                        tracing::info!("No Gemini API key, using Ollama");
+                        Some(AiClient::Ollama(ollama))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Make a request to the AI provider
+    pub fn call(&self, prompt: &str, image_base64: Option<&str>) -> Result<String, String> {
+        match self {
+            AiClient::Gemini(client) => client.call(prompt, image_base64),
+            AiClient::Ollama(client) => client.call(prompt, image_base64),
+        }
+    }
+    
+    /// Get provider name
+    pub fn provider_name(&self) -> &str {
+        match self {
+            AiClient::Gemini(_) => "gemini",
+            AiClient::Ollama(_) => "ollama",
+        }
+    }
+}
+
+/// Login form analysis result from AI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginFormAnalysis {
     pub has_login_form: bool,
