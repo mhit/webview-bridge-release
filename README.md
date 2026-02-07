@@ -1,56 +1,105 @@
 # WebView Bridge
 
-Windows上で動作するWebView2ベースのWebスクレイピングサーバー。OpenClawと連携し、安定したブラウザ自動化を提供。
+Windows上で動作するWebView2ベースのブラウザ自動化MCPサーバー。Claude/Gemini等のAIがブラウザを自然に操作可能。
 
 ## 🎯 なぜWebView Bridge?
 
 | 既存手法 | 問題点 |
 |---------|--------|
 | Puppeteer/Chrome | WSL2で不安定、ゾンビプロセス、Cloudflareブロック |
-| Browser Relay | 手動タブアタッチ必要、常時ブラウザ起動前提 |
-| HttpClient直接 | Cloudflareブロック、JS実行不可 |
+| Selenium | Bot検出されやすい、設定複雑 |
+| HttpClient直接 | Cloudflare/JS実行不可 |
 
 **WebView Bridge** は:
-- ✅ Cloudflare/Bot検出を自然にバイパス
-- ✅ Windowsネイティブで安定動作
-- ✅ ヘッドレス実行可能
-- ✅ プロファイルでログイン状態を永続化
-- ✅ OpenClawのbrowser toolと互換API
+- ✅ **Bot検出を自然にバイパス** - human_modeで完全人間化
+- ✅ **Windowsネイティブ** - Edge WebView2で安定動作
+- ✅ **MCP対応** - Claude/Gemini等から直接制御
+- ✅ **セッション永続化** - Cookie/ログイン状態を保持
+- ✅ **自律型Agent** - 目標指示だけで自動操作
+
+## 🚀 主要機能
+
+### MCPツール
+| ツール | 説明 |
+|--------|------|
+| `session` | セッション管理（作成/解放/一覧） |
+| `navigate` | ページ遷移（wait条件付き） |
+| `capture` | スクリーンショット、要素取得、AI要約 |
+| `interact` | クリック/タイプ/スクロール/待機 |
+| `extract` | 構造化データ抽出 |
+| `execute` | JavaScript実行 |
+| `agent` | 🆕 自律型ブラウザ操作 |
+
+### human_mode（完全人間化）
+```json
+{
+  "actions": [{"type": "type", "target": "#search", "value": "Anker"}],
+  "options": {"human_mode": true}
+}
+```
+
+| 機能 | 説明 |
+|------|------|
+| **ベジェ曲線マウス** | 直線じゃない自然なカーブ |
+| **イージング** | 加減速（始めゆっくり→速く→ゆっくり） |
+| **タイポ＆修正** | 3%で打ち間違い→BackSpace→正しい文字 |
+| **Shift/Spaceミス** | 大文字忘れ、ダブルスペース |
+| **思考の間** | ランダムに止まる |
+| **慣性スクロール** | 徐々に減速 |
 
 ## 📐 アーキテクチャ
 
 ```
-OpenClaw (WSL2)          WebView Bridge (Windows)
-┌─────────────┐          ┌─────────────────────────┐
-│   Agent     │─HTTP/WS─▶│  HTTP API Server        │
-│  (Claude)   │          │  ├─ Session Manager     │
-└─────────────┘          │  └─ WebView2 Pool       │
-                         └───────────┬─────────────┘
-                                     │
-                         ┌───────────▼─────────────┐
-                         │  Edge WebView2 Runtime  │
-                         └─────────────────────────┘
+AI (Claude/Gemini)           WebView Bridge (Windows)
+┌─────────────────┐          ┌─────────────────────────┐
+│  MCP Client     │◀──MCP──▶│  MCP Server             │
+│                 │          │  ├─ Session Manager     │
+└─────────────────┘          │  ├─ Robustness Layer    │
+                             │  └─ WebView2 Pool       │
+                             └───────────┬─────────────┘
+                                         │
+                             ┌───────────▼─────────────┐
+                             │  Edge WebView2 Runtime  │
+                             └─────────────────────────┘
 ```
 
-## 🚀 主要機能
+## 🔧 使い方
 
-- **セッション管理**: 複数WebView2インスタンスの並列実行
-- **プロファイル分離**: サイトごとにCookie/認証を分離
-- **REST API**: navigate, evaluate, screenshot, cookie管理
-- **WebSocket**: リアルタイムイベント通知
-- **OpenClaw互換**: snapshot, act APIを提供
+### 1. 起動
+```bash
+cargo run --release
+```
+
+### 2. MCP設定（config.toml）
+```toml
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[ai]
+enabled = true
+provider = "ollama"  # or "gemini"
+model = "gpt-oss:20b"
+```
+
+### 3. AIから操作
+```
+Amazonを開いてワイヤレスマウスを検索して
+→ agent(goal="Amazonでワイヤレスマウスを検索", human_mode=true)
+```
 
 ## 📖 ドキュメント
 
-- [設計書](docs/design.md) - アーキテクチャ、API仕様、技術詳細
+- [MCPツール詳細](docs/MCP_TOOLS.md) - 各ツールの使い方
+- [設計書](docs/design.md) - アーキテクチャ詳細
 - [ユースケース](docs/use-cases.md) - 具体的な利用シナリオ
 
-## 🛣️ ロードマップ
+## ⚠️ Bot対策サイトのコツ
 
-- [ ] Phase 1: MVP (基本API、単一セッション)
-- [ ] Phase 2: 機能拡充 (プール、プロファイル、WebSocket)
-- [ ] Phase 3: OpenClaw統合
-- [ ] Phase 4: 安定化、インストーラ
+1. `headless: false` - ウィンドウ表示
+2. `human_mode: true` - 人間らしい動作
+3. `instant: true` - サジェスト回避（Amazon等）
+4. 直接URL回避 - クリックで遷移
 
 ## 📝 License
 

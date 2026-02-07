@@ -1812,7 +1812,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
                             "wait_timeout_ms": { "type": "integer", "default": 10000 },
                             "retry_count": { "type": "integer", "default": 3 },
                             "screenshot_on_error": { "type": "boolean", "default": false },
-                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: random delays (100-500ms), natural mouse movement with bezier curves and jitter" }
+                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: bezier curve mouse movement with ease-in-out, micro-jitter, overshoot (10%), typo simulation (3%) with backspace correction, double-space/shift mistakes. Highly recommended for bot-protected sites like Amazon." }
                         }
                     }
                 },

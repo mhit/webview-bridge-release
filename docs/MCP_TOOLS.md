@@ -1,6 +1,6 @@
 # WebView Bridge MCP Tools
 
-Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
+Claude/Gemini等のAIがブラウザを操作するためのMCPサーバー。
 
 ## 🔧 Available Tools
 
@@ -29,7 +29,7 @@ Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
 {
   "session": "default",
   "screenshot": true,         // スクリーンショット保存
-  "summarize": true,          // **NEW** AIでページを要約
+  "summarize": true,          // AIでページを要約
   "include": ["full_text", "cookies", "html", "images"],
   "full_page": true           // 全ページキャプチャ
 }
@@ -41,7 +41,7 @@ Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
   "session": "default",
   "actions": [
     {"type": "click", "target": "#button"},
-    {"type": "type", "target": "#input", "value": "text", "clear": true},
+    {"type": "type", "target": "#input", "value": "text", "clear": true, "instant": true},
     {"type": "scroll", "direction": "down", "amount": 500},
     {"type": "wait", "condition": "element", "value": "#loaded"}
   ],
@@ -50,6 +50,12 @@ Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
   }
 }
 ```
+
+#### Type Action Options
+| オプション | 説明 |
+|-----------|------|
+| `clear` | 入力前にフィールドをクリア |
+| `instant` | **NEW** 値を一発セット（サジェスト回避） |
 
 ### 5. **extract** - 構造化データ抽出
 ```json
@@ -74,15 +80,17 @@ Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
 }
 ```
 
-### 7. **agent** - 🆕 自律型ブラウザ操作
+### 7. **agent** - 自律型ブラウザ操作
 ```json
 {
   "session": "default",
   "action": {
     "type": "start",
-    "goal": "DuckDuckGoで「Rust」を検索する",
-    "max_steps": 5,
-    "system_prompt": "価格を重視して判断してください"  // カスタム指示
+    "goal": "Amazonで「Anker モバイルバッテリー」を検索する",
+    "max_steps": 10,
+    "human_mode": true,       // 人間らしい操作
+    "instant_type": true,     // サジェスト回避タイプ
+    "system_prompt": "価格を重視して判断してください"
   }
 }
 ```
@@ -91,39 +99,56 @@ Claude/OpenClaw等のAIがブラウザを操作するためのMCPサーバー。
 - ページ状態を分析
 - 次のアクションを決定（click/type/navigate）
 - 目標達成まで繰り返し
+- **内部でMCPツールを使用**（robustness層活用）
 
 ---
 
-## 🧪 OpenClawでのテスト
+## 🤖 human_mode の詳細
 
-### テスト1: 基本的なナビゲーション
-```
-セッションを作成してGoogleを開き、ページタイトルを確認して
+`human_mode: true` を指定すると、以下の人間らしい動作がシミュレートされます。
+
+### マウス移動
+| 機能 | 説明 |
+|------|------|
+| **ベジェ曲線移動** | 直線ではなく自然なカーブで移動 |
+| **イージング（加減速）** | 始めゆっくり→中間速く→終わりゆっくり |
+| **マイクロジッター** | 手の震えをシミュレート |
+| **オーバーシュート** | 10%の確率で行き過ぎて戻る |
+
+### タイピング（`instant: false` の場合）
+| 機能 | 確率 | 説明 |
+|------|------|------|
+| **隣接キー打ち間違い** | 3% | `thw` → BackSpace → `the` |
+| **ダブルスペース** | 2% | スペース2回→気づいて削除 |
+| **Shift押し忘れ** | 1.5% | `hello` → `Hello`に修正 |
+| **Shift離し忘れ** | 1% | `THe` → `The`に修正 |
+| **思考の間** | 2% | 300-800msランダム停止 |
+| **高速コンボ** | - | `th`, `er`等は高速入力 |
+| **句読点で休止** | - | 考え中をシミュレート |
+
+### スクロール
+| 機能 | 説明 |
+|------|------|
+| **慣性スクロール** | 始め速く→徐々に減速 |
+| **ホイールジッター** | 手の動きによる揺れ |
+
+---
+
+## ⚡ instant_type の使い方
+
+Amazonなどサジェスト機能が強いサイトでは、文字入力が干渉されて失敗することがあります。
+
+```json
+// サジェストに邪魔されるサイト向け
+{"type": "type", "target": "#search", "value": "Anker", "instant": true}
 ```
 
-### テスト2: AI要約機能（summarize）
-```
-Wikipediaの「Rust (programming language)」ページを開いて、要約して
-capture(summarize=true) を使用
-```
+| モード | 動作 | 用途 |
+|--------|------|------|
+| `instant: false` | 1文字ずつ入力 | リアクティブフォーム |
+| `instant: true` | 値を一発セット | サジェスト回避 |
 
-### テスト3: 自律型エージェント
-```
-DuckDuckGoを開いて、agentツールで「WebView2」を検索させて
-agent(goal="検索ボックスにWebView2と入力して検索する")
-```
-
-### テスト4: カスタムプロンプト付きエージェント
-```
-Amazonを開いて、agentで「ワイヤレスマウス」を検索
-system_prompt="価格の安い順にソートしてください" を追加
-```
-
-### テスト5: データ抽出
-```
-ニュースサイトを開いて、見出しとリンクを抽出して
-extract(selector=".headline", fields={title: "h2", link: "a@href"})
-```
+**Lenient Mode**: `instant: true`で内部エラーが発生しても、値がセットされていれば成功として扱います。
 
 ---
 
@@ -131,8 +156,9 @@ extract(selector=".headline", fields={title: "h2", link: "a@href"})
 
 1. **headless: false** - ウィンドウ表示モード
 2. **human_mode: true** - 人間らしい操作
-3. **直接URL回避** - ホームページ→クリックで遷移
-4. **適度な待機** - wait actionを挟む
+3. **instant_type: true** - サジェスト干渉回避
+4. **直接URL回避** - ホームページ→クリックで遷移
+5. **適度な待機** - wait actionを挟む
 
 ---
 
@@ -145,4 +171,42 @@ enabled = true
 provider = "ollama"           # または "gemini"
 model = "gpt-oss:20b"
 # api_key = "..."             # Geminiの場合
+```
+
+---
+
+## 🧪 テスト例
+
+### 基本的なナビゲーション
+```
+セッションを作成してGoogleを開き、ページタイトルを確認して
+```
+
+### AI要約機能
+```
+capture(summarize=true) でWikipediaを要約
+```
+
+### 自律型エージェント（Amazon）
+```json
+{
+  "action": {
+    "type": "start",
+    "goal": "Amazonでワイヤレスマウスを検索して価格順に並べる",
+    "human_mode": true,
+    "instant_type": true
+  }
+}
+```
+
+### データ抽出
+```json
+{
+  "selector": ".product",
+  "fields": {
+    "title": ".title",
+    "price": ".price",
+    "rating": ".stars@data-rating"
+  }
+}
 ```
