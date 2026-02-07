@@ -791,14 +791,14 @@ pub fn get_mcp_tools() -> serde_json::Value {
     serde_json::json!([
         {
             "name": "navigate",
-            "description": "Navigate to URL with wait conditions (load, stable, networkidle, selector)",
+            "description": "Navigate to URL with wait conditions. For SPA sites (React, Vue, etc.) use 'stable' or 'selector' wait to ensure dynamic content loads. 'networkidle' waits for network quiet. For bot-protected sites, ensure session has headless=false.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "description": "Session name (default: 'default')" },
                     "url": { "type": "string", "description": "URL to navigate to" },
-                    "wait_for": { "type": "string", "enum": ["load", "stable", "networkidle", "selector"], "default": "stable" },
-                    "wait_selector": { "type": "string", "description": "Selector to wait for (required if wait_for=selector)" },
+                    "wait_for": { "type": "string", "enum": ["load", "stable", "networkidle", "selector"], "default": "stable", "description": "load=basic load, stable=DOM stops changing, networkidle=no network activity, selector=wait for element" },
+                    "wait_selector": { "type": "string", "description": "CSS selector to wait for (required if wait_for=selector)" },
                     "timeout_ms": { "type": "integer", "default": 30000 }
                 },
                 "required": ["url"]
@@ -873,18 +873,18 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "session",
-            "description": "Session management: acquire, release, list, import cookies",
+            "description": "Session management: acquire, release, list, import cookies. Sessions use WebView2 with persistent cookie storage. NOTE: headless=true uses 'pseudo-headless' mode (window hidden, not true headless) - this may affect some sites' bot detection. For SPA sites or login flows, use headless=false to ensure proper JavaScript execution and avoid detection.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "acquire": { "type": "string", "description": "Acquire session by name" },
-                    "release": { "type": "string", "description": "Release session by name" },
+                    "acquire": { "type": "string", "description": "Acquire session by name. Creates if not exists." },
+                    "release": { "type": "string", "description": "Release session by name (keeps cookies)" },
                     "list": { "type": "boolean", "description": "List all sessions" },
                     "import": { "type": "string", "description": "Import cookies to session" },
-                    "headless": { "type": "boolean" },
-                    "restore": { "type": "boolean", "default": true },
-                    "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"] },
-                    "domains": { "type": "array", "items": { "type": "string" } }
+                    "headless": { "type": "boolean", "description": "If true, window is hidden (pseudo-headless). Use false for login flows or bot-protected sites like Amazon. Default: false" },
+                    "restore": { "type": "boolean", "default": true, "description": "Restore last URL on session resume" },
+                    "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"], "description": "Browser profile to import cookies from" },
+                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import" }
                 }
             }
         },
