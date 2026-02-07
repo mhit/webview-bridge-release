@@ -91,9 +91,9 @@ pub fn analyze_with_llm(
                 .and_then(|i| i.get("score"))
                 .and_then(|s| s.as_f64())
                 .unwrap_or(0.0);
-            // Analyze elements with scores 0.2-0.7 (uncertain range)
-            // Elements >= 0.7 are clearly interactive, < 0.2 are clearly not
-            score >= 0.2 && score < 0.7
+            // Analyze elements with scores 0.3-0.8 (uncertain range)
+            // With position bonuses, scores shifted higher
+            score >= 0.3 && score < 0.8
         })
         .take(10)  // Limit to 10 elements per batch
         .collect();

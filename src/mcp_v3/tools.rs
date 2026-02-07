@@ -621,16 +621,20 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     let mut text = format!("URL: {}\nTitle: {}\n\n【操作可能要素】\n", url, title);
     
     if let Some(elements) = analyzed_result["elements"].as_array() {
-        // Filter: score >= 0.3, limit to top 20 for context efficiency
+        // Filter: score >= 0.4, limit to top 20 for context efficiency
+        // (threshold raised due to position bonuses)
         let filtered: Vec<_> = elements.iter()
             .filter(|el| {
                 el.get("interactivity")
                     .and_then(|i| i.get("score"))
                     .and_then(|s| s.as_f64())
-                    .unwrap_or(0.0) >= 0.3
+                    .unwrap_or(0.0) >= 0.4
             })
             .take(20)
             .collect();
+        
+        // Show count info
+        text.push_str(&format!("({}要素中 上位{}件)\n", elements.len(), filtered.len()));
         
         for el in filtered {
             // Truncate selector for AI context efficiency

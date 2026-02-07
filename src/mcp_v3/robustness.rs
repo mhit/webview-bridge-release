@@ -789,15 +789,15 @@ pub fn generate_extract_interactive_elements_script() -> String {
             reasons.push('大要素');
         }
         
-        // セマンティックエリア
+        // セマンティックエリア (排他的)
         if (el) {
             // main/article内は主要コンテンツ (+0.1)
             if (el.closest('main, article, [role="main"]')) {
                 score += 0.1;
                 reasons.push('main内');
             }
-            // footer/aside内は補助的 (-0.1)
-            if (el.closest('footer, aside, [role="contentinfo"], [role="complementary"]')) {
+            // footer/aside内は補助的 (-0.1) - mainと排他
+            else if (el.closest('footer, aside, [role="contentinfo"], [role="complementary"]')) {
                 score = Math.max(0.1, score - 0.1);
                 reasons.push('補助エリア');
             }
