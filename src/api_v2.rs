@@ -984,28 +984,39 @@ async fn root_handler() -> Html<&'static str> {
             const modelSelect = document.getElementById('ai-model');
             const currentValue = modelSelect.value;
             
-            try {
-                // Use MCP session tool to get models
-                const res = await api('/v2/mcp', 'POST', {
-                    tool: 'session',
-                    ai_models: true
-                });
-                
-                if (res.content && res.content[0]?.text) {
-                    const data = JSON.parse(res.content[0].text);
+            if (provider === 'ollama') {
+                // Ollama: Call Ollama API directly
+                const ollamaHost = document.getElementById('ollama-host').value || 'http://localhost:11434';
+                try {
+                    const res = await fetch(ollamaHost + '/api/tags');
+                    const data = await res.json();
                     if (data.models && data.models.length > 0) {
-                        modelSelect.innerHTML = data.models.map(m => 
+                        const models = data.models.map(m => m.name);
+                        modelSelect.innerHTML = models.map(m => 
                             `<option value="${m}">${m}</option>`
                         ).join('');
-                        // Restore selection if still valid
-                        if (data.models.includes(currentValue)) {
+                        if (models.includes(currentValue)) {
                             modelSelect.value = currentValue;
                         }
-                        showToast(`${data.models.length} モデルを取得しました`);
+                        showToast(`${models.length} Ollamaモデルを取得`);
+                    } else {
+                        modelSelect.innerHTML = '<option value="">モデルなし</option>';
+                        showToast('Ollamaにモデルがありません', 'warning');
                     }
+                } catch (e) {
+                    modelSelect.innerHTML = '<option value="">接続エラー</option>';
+                    showToast('Ollama接続失敗: ' + ollamaHost, 'error');
                 }
-            } catch (e) {
-                showToast('モデル取得失敗', 'error');
+            } else {
+                // Gemini: Use static list
+                modelSelect.innerHTML = `
+                    <option value="gemini-2.0-flash">gemini-2.0-flash (推奨)</option>
+                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                `;
+                if (['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'].includes(currentValue)) {
+                    modelSelect.value = currentValue;
+                }
             }
         };
         
@@ -1035,12 +1046,46 @@ async fn root_handler() -> Html<&'static str> {
         };
         
         const testAiConnection = async () => {
+            const provider = document.getElementById('ai-provider').value;
             showToast('接続テスト中...');
-            try {
-                const res = await api('/v2/ai/test', 'POST');
-                showToast(res.success ? 'AI接続OK' : 'AI接続失敗', res.success ? 'success' : 'error');
-            } catch (e) {
-                showToast('接続テスト失敗', 'error');
+            
+            if (provider === 'ollama') {
+                // Ollama: Test directly
+                const ollamaHost = document.getElementById('ollama-host').value || 'http://localhost:11434';
+                const model = document.getElementById('ai-model').value;
+                try {
+                    // First check if Ollama is running
+                    const tagsRes = await fetch(ollamaHost + '/api/tags');
+                    if (!tagsRes.ok) throw new Error('Ollama not running');
+                    
+                    // Try a simple generation
+                    const genRes = await fetch(ollamaHost + '/api/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            model: model,
+                            prompt: 'Say "OK" in one word.',
+                            stream: false,
+                            options: { num_predict: 10 }
+                        })
+                    });
+                    const data = await genRes.json();
+                    if (data.response) {
+                        showToast('Ollama接続OK: ' + model, 'success');
+                    } else if (data.error) {
+                        showToast('Ollamaエラー: ' + data.error, 'error');
+                    }
+                } catch (e) {
+                    showToast('Ollama接続失敗: ' + e.message, 'error');
+                }
+            } else {
+                // Gemini: Use server API
+                try {
+                    const res = await api('/v2/ai/test', 'POST');
+                    showToast(res.success ? 'Gemini接続OK' : 'Gemini接続失敗', res.success ? 'success' : 'error');
+                } catch (e) {
+                    showToast('接続テスト失敗', 'error');
+                }
             }
         };
         
