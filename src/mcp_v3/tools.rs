@@ -1253,6 +1253,272 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
     }
 }
 
+// ============================================================================
+// 8. Agent (Agentic Mode - Goal-based Browser Automation)
+// ============================================================================
+
+async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse {
+    use crate::mcp_v3::types::AgentAction;
+    
+    let manager = get_session_manager_v2();
+    if manager.get_handle(&req.session).is_none() {
+        return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session));
+    }
+    
+    match req.action {
+        AgentAction::Start { goal, context, max_steps } => {
+            let max_steps = max_steps.unwrap_or(5);
+            let context_text = context.unwrap_or_default();
+            
+            // Agent loop
+            let mut steps = Vec::new();
+            let mut completed = false;
+            let mut final_result = String::new();
+            
+            for step_num in 1..=max_steps {
+                // 1. Capture current page state
+                let capture_script = r#"
+                    JSON.stringify({
+                        url: window.location.href,
+                        title: document.title,
+                        text: document.body.innerText.substring(0, 3000),
+                        elements: Array.from(document.querySelectorAll('a, button, input, select, textarea'))
+                            .slice(0, 30)
+                            .map(el => ({
+                                tag: el.tagName.toLowerCase(),
+                                text: (el.textContent || el.placeholder || el.value || '').substring(0, 50).trim(),
+                                type: el.type || null,
+                                href: el.href || null,
+                                selector: el.id ? '#' + el.id : (el.className ? '.' + el.className.split(' ')[0] : el.tagName.toLowerCase())
+                            }))
+                            .filter(e => e.text || e.type === 'text')
+                    });
+                "#;
+                
+                let page_state = match execute_script(&req.session, capture_script.to_string(), state, 5000).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "capture",
+                            "error": e
+                        }));
+                        break;
+                    }
+                };
+                
+                let page_data: serde_json::Value = serde_json::from_str(&page_state)
+                    .unwrap_or(serde_json::json!({"error": "parse failed"}));
+                
+                // 2. Ask AI for next action
+                let config = crate::core::config::get_config();
+                let ai_config = crate::core::ai::AiConfig {
+                    enabled: config.ai.enabled,
+                    provider: config.ai.provider.clone(),
+                    model: config.ai.model.clone(),
+                    api_key: config.ai.api_key.clone(),
+                    timeout_ms: config.ai.timeout_ms,
+                    daily_budget_usd: config.ai.daily_budget_usd,
+                    daily_usage_usd: 0.0,
+                };
+                
+                let ai_prompt = format!(r#"あなたはブラウザ自動操作エージェントです。
+
+【目標】
+{}
+
+【コンテキスト】
+{}
+
+【現在のページ状態】
+URL: {}
+タイトル: {}
+ページテキスト(抜粋): {}
+
+【操作可能な要素】
+{}
+
+【指示】
+次にどのアクションを実行すべきか、JSONで回答してください。
+回答形式:
+- 目標達成: {{"done": true, "result": "達成した結果の説明"}}
+- クリック: {{"action": "click", "selector": "CSSセレクタ", "reason": "理由"}}
+- 入力: {{"action": "type", "selector": "CSSセレクタ", "value": "入力値", "reason": "理由"}}
+- ナビゲート: {{"action": "navigate", "url": "URL", "reason": "理由"}}
+- 失敗: {{"failed": true, "reason": "失敗理由"}}
+
+JSON以外は出力しないでください。"#,
+                    goal,
+                    context_text,
+                    page_data["url"].as_str().unwrap_or("unknown"),
+                    page_data["title"].as_str().unwrap_or("unknown"),
+                    page_data["text"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),
+                    serde_json::to_string_pretty(&page_data["elements"]).unwrap_or_default()
+                );
+                
+                let ai_response = if config.ai.provider.to_lowercase() == "ollama" {
+                    let ollama = crate::core::ai::OllamaClient::new(&ai_config);
+                    ollama.call(&ai_prompt, None)
+                } else {
+                    match crate::core::ai::AiClient::new(&ai_config) {
+                        Some(client) => client.call(&ai_prompt, None),
+                        None => Err("AI not configured".to_string()),
+                    }
+                };
+                
+                let ai_text = match ai_response {
+                    Ok(t) => t,
+                    Err(e) => {
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "ai_decision",
+                            "error": e
+                        }));
+                        break;
+                    }
+                };
+                
+                // Extract JSON from AI response
+                let ai_json: serde_json::Value = {
+                    // Try to find JSON in the response
+                    let json_start = ai_text.find('{');
+                    let json_end = ai_text.rfind('}');
+                    
+                    match (json_start, json_end) {
+                        (Some(start), Some(end)) if end > start => {
+                            serde_json::from_str(&ai_text[start..=end])
+                                .unwrap_or(serde_json::json!({"failed": true, "reason": "Invalid JSON from AI"}))
+                        }
+                        _ => serde_json::json!({"failed": true, "reason": "No JSON found in AI response"})
+                    }
+                };
+                
+                // 3. Execute the action
+                if ai_json.get("done").and_then(|v| v.as_bool()) == Some(true) {
+                    completed = true;
+                    final_result = ai_json["result"].as_str().unwrap_or("完了").to_string();
+                    steps.push(serde_json::json!({
+                        "step": step_num,
+                        "action": "done",
+                        "result": final_result
+                    }));
+                    break;
+                }
+                
+                if ai_json.get("failed").and_then(|v| v.as_bool()) == Some(true) {
+                    final_result = ai_json["reason"].as_str().unwrap_or("失敗").to_string();
+                    steps.push(serde_json::json!({
+                        "step": step_num,
+                        "action": "failed",
+                        "reason": final_result
+                    }));
+                    break;
+                }
+                
+                let action = ai_json["action"].as_str().unwrap_or("unknown");
+                match action {
+                    "click" => {
+                        let selector = ai_json["selector"].as_str().unwrap_or("");
+                        let click_script = format!(r#"
+                            (function() {{
+                                const el = document.querySelector('{}');
+                                if (el) {{
+                                    el.click();
+                                    return JSON.stringify({{success: true}});
+                                }}
+                                return JSON.stringify({{success: false, error: 'Element not found'}});
+                            }})();
+                        "#, selector.replace('\'', "\\'"));
+                        
+                        let result = execute_script(&req.session, click_script, state, 5000).await;
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "click",
+                            "selector": selector,
+                            "reason": ai_json["reason"],
+                            "result": result.unwrap_or_else(|e| e)
+                        }));
+                        
+                        // Wait for page update
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                    }
+                    "type" => {
+                        let selector = ai_json["selector"].as_str().unwrap_or("");
+                        let value = ai_json["value"].as_str().unwrap_or("");
+                        let type_script = format!(r#"
+                            (function() {{
+                                const el = document.querySelector('{}');
+                                if (el) {{
+                                    el.focus();
+                                    el.value = '{}';
+                                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                    return JSON.stringify({{success: true}});
+                                }}
+                                return JSON.stringify({{success: false, error: 'Element not found'}});
+                            }})();
+                        "#, selector.replace('\'', "\\'"), value.replace('\'', "\\'"));
+                        
+                        let result = execute_script(&req.session, type_script, state, 5000).await;
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "type",
+                            "selector": selector,
+                            "value": value,
+                            "reason": ai_json["reason"],
+                            "result": result.unwrap_or_else(|e| e)
+                        }));
+                    }
+                    "navigate" => {
+                        let url = ai_json["url"].as_str().unwrap_or("");
+                        let nav_script = format!("window.location.href = '{}'; JSON.stringify({{success: true}});", 
+                            url.replace('\'', "\\'"));
+                        
+                        let result = execute_script(&req.session, nav_script, state, 5000).await;
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "navigate",
+                            "url": url,
+                            "reason": ai_json["reason"],
+                            "result": result.unwrap_or_else(|e| e)
+                        }));
+                        
+                        // Wait for navigation
+                        tokio::time::sleep(Duration::from_millis(2000)).await;
+                    }
+                    _ => {
+                        steps.push(serde_json::json!({
+                            "step": step_num,
+                            "action": "unknown",
+                            "ai_response": ai_json
+                        }));
+                    }
+                }
+            }
+            
+            McpToolResponse::success_json(serde_json::json!({
+                "goal": goal,
+                "completed": completed,
+                "result": final_result,
+                "steps_taken": steps.len(),
+                "max_steps": max_steps,
+                "steps": steps
+            }))
+        }
+        AgentAction::Resume => {
+            // TODO: Implement session-based state recovery
+            McpToolResponse::error("NOT_IMPLEMENTED", "Resume not yet implemented")
+        }
+        AgentAction::Status => {
+            // TODO: Implement status tracking
+            McpToolResponse::error("NOT_IMPLEMENTED", "Status not yet implemented")
+        }
+        AgentAction::Cancel => {
+            // TODO: Implement cancellation
+            McpToolResponse::error("NOT_IMPLEMENTED", "Cancel not yet implemented")
+        }
+    }
+}
+
 fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_height: u32, max_images: usize) -> String {
     let selector_code = selector
         .map(|s| format!("document.querySelectorAll('{}')", s.replace('\'', "\\'")))
@@ -1310,17 +1576,6 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
         Ok(result) => McpToolResponse::success_text(format!("Result: {}", result)),
         Err(e) => McpToolResponse::error("EXECUTE_FAILED", &e),
     }
-}
-
-// ============================================================================
-// 8. Agent (Future)
-// ============================================================================
-
-async fn handle_agent(req: AgentRequest, _state: &V2AppState) -> McpToolResponse {
-    McpToolResponse::error(
-        "NOT_IMPLEMENTED",
-        "Agentic mode is not yet implemented. Coming in next phase.",
-    )
 }
 
 // ============================================================================
