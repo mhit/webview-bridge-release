@@ -368,6 +368,12 @@ pub enum AgentAction {
         max_steps: Option<u32>,
         #[serde(default)]
         system_prompt: Option<String>,
+        /// Use human-mode for actions (delays, natural mouse movement)
+        #[serde(default)]
+        human_mode: bool,
+        /// Use instant mode for type actions (avoid autocomplete interference)
+        #[serde(default)]
+        instant_type: bool,
     },
     Resume,
     Status,

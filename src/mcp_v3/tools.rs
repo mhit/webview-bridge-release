@@ -330,19 +330,51 @@ async fn execute_action(
                 value.len(), instant, type_timeout);
             
             let type_script = generate_type_with_events_script_ex(target, value, *clear, *instant);
-            let result = execute_script(session, type_script, state, type_timeout).await?;
+            let result = execute_script(session, type_script, state, type_timeout).await;
             
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .map_err(|e| format!("Failed to parse type result: {}", e))?;
-            
-            if !parsed["success"].as_bool().unwrap_or(false) {
-                return Err(parsed["error"].as_str().unwrap_or("Type failed").to_string());
+            match result {
+                Ok(res) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&res)
+                        .map_err(|e| format!("Failed to parse type result: {}", e))?;
+                    
+                    if !parsed["success"].as_bool().unwrap_or(false) {
+                        return Err(parsed["error"].as_str().unwrap_or("Type failed").to_string());
+                    }
+                    
+                    tracing::info!("[type] Success: typed {} chars, instant: {}, final value: {}", 
+                        parsed["length"].as_u64().unwrap_or(0),
+                        parsed["instant"].as_bool().unwrap_or(false),
+                        parsed["value"].as_str().unwrap_or("?"));
+                }
+                Err(e) => {
+                    // Lenient mode: if typing failed but it's instant mode, 
+                    // check if value was actually set before failing
+                    if *instant {
+                        tracing::warn!("[type] Instant mode failed: {}, checking if value was set anyway...", e);
+                        
+                        let verify_script = format!(r#"
+                            (function() {{
+                                const el = document.querySelector("{}");
+                                if (el && el.value) {{
+                                    return JSON.stringify({{ success: true, value: el.value }});
+                                }}
+                                return JSON.stringify({{ success: false }});
+                            }})();
+                        "#, target.replace('"', "\\\""));
+                        
+                        if let Ok(verify_result) = execute_script(session, verify_script, state, 2000).await {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&verify_result) {
+                                if v["success"].as_bool().unwrap_or(false) {
+                                    tracing::info!("[type] Lenient success: value was set to: {}", 
+                                        v["value"].as_str().unwrap_or("?"));
+                                    return Ok(None); // Success despite the error!
+                                }
+                            }
+                        }
+                    }
+                    return Err(e);
+                }
             }
-            
-            tracing::info!("[type] Success: typed {} chars, instant: {}, final value: {}", 
-                parsed["length"].as_u64().unwrap_or(0),
-                parsed["instant"].as_bool().unwrap_or(false),
-                parsed["value"].as_str().unwrap_or("?"));
             
             Ok(None)
         }
@@ -1295,10 +1327,13 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
     }
     
     match req.action {
-        AgentAction::Start { goal, context, max_steps, system_prompt } => {
+        AgentAction::Start { goal, context, max_steps, system_prompt, human_mode, instant_type } => {
             let max_steps = max_steps.unwrap_or(5);
             let context_text = context.unwrap_or_default();
             let custom_prompt = system_prompt.unwrap_or_default();
+            
+            tracing::info!("[agent] Starting goal: {}, human_mode: {}, instant_type: {}", 
+                goal, human_mode, instant_type);
             
             // Agent loop
             let mut steps = Vec::new();
@@ -1474,69 +1509,89 @@ Output JSON only, no explanation."#,
                     break;
                 }
                 
-                let action = ai_json["action"].as_str().unwrap_or("unknown");
-                match action {
+                let action_name = ai_json["action"].as_str().unwrap_or("unknown");
+                match action_name {
                     "click" => {
-                        let selector = ai_json["selector"].as_str().unwrap_or("");
-                        let click_script = format!(r#"
-                            (function() {{
-                                const el = document.querySelector('{}');
-                                if (el) {{
-                                    el.click();
-                                    return JSON.stringify({{success: true}});
-                                }}
-                                return JSON.stringify({{success: false, error: 'Element not found'}});
-                            }})();
-                        "#, selector.replace('\'', "\\'"));
+                        let selector = ai_json["selector"].as_str().unwrap_or("").to_string();
+                        tracing::info!("[agent] Executing click on: {}", selector);
                         
-                        let result = execute_script(&req.session, click_script, state, 5000).await;
+                        let click_action = Action::Click { 
+                            target: selector.clone(), 
+                            wait_after_ms: Some(500) 
+                        };
+                        
+                        let result = execute_action(&req.session, &click_action, 10000, state, human_mode).await;
+                        
                         steps.push(serde_json::json!({
                             "step": step_num,
                             "action": "click",
                             "selector": selector,
                             "reason": ai_json["reason"],
-                            "result": result.unwrap_or_else(|e| e)
+                            "human_mode": human_mode,
+                            "result": result.as_ref().map(|_| "success").unwrap_or("failed"),
+                            "error": result.as_ref().err()
                         }));
+                        
+                        if result.is_err() {
+                            tracing::warn!("[agent] Click failed: {:?}", result.err());
+                        }
                         
                         // Wait for page update
                         tokio::time::sleep(Duration::from_millis(1000)).await;
                     }
                     "type" => {
-                        let selector = ai_json["selector"].as_str().unwrap_or("");
-                        let value = ai_json["value"].as_str().unwrap_or("");
+                        let selector = ai_json["selector"].as_str().unwrap_or("").to_string();
+                        let value = ai_json["value"].as_str().unwrap_or("").to_string();
                         let should_submit = ai_json["submit"].as_bool().unwrap_or(false);
                         
-                        let type_script = format!(r#"
-                            (function() {{
-                                const el = document.querySelector('{}');
-                                if (el) {{
-                                    el.focus();
-                                    el.value = '{}';
-                                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                                    {}
-                                    return JSON.stringify({{success: true, submitted: {}}});
-                                }}
-                                return JSON.stringify({{success: false, error: 'Element not found'}});
-                            }})();
-                        "#, 
-                            selector.replace('\'', "\\'"), 
-                            value.replace('\'', "\\'"),
-                            if should_submit { 
-                                "el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true})); if (el.form) el.form.submit();" 
-                            } else { "" },
-                            should_submit
-                        );
+                        tracing::info!("[agent] Executing type on: {}, value: {}, submit: {}, instant: {}", 
+                            selector, value, should_submit, instant_type);
                         
-                        let result = execute_script(&req.session, type_script, state, 5000).await;
+                        // Use execute_action with instant mode for autocomplete-heavy sites
+                        let type_action = Action::Type { 
+                            target: selector.clone(), 
+                            value: value.clone(),
+                            clear: true,
+                            instant: instant_type,
+                        };
+                        
+                        let result = execute_action(&req.session, &type_action, 10000, state, human_mode).await;
+                        
+                        // If submit requested, press Enter
+                        let submit_result = if should_submit && result.is_ok() {
+                            let enter_script = format!(r#"
+                                (function() {{
+                                    const el = document.querySelector('{}');
+                                    if (el) {{
+                                        el.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', keyCode: 13, bubbles: true}}));
+                                        if (el.form) el.form.submit();
+                                        return JSON.stringify({{success: true}});
+                                    }}
+                                    return JSON.stringify({{success: false}});
+                                }})();
+                            "#, selector.replace('\'', "\\'"));
+                            execute_script(&req.session, enter_script, state, 3000).await.ok()
+                        } else {
+                            None
+                        };
+                        
                         steps.push(serde_json::json!({
                             "step": step_num,
                             "action": "type",
                             "selector": selector,
                             "value": value,
                             "submit": should_submit,
+                            "instant": instant_type,
+                            "human_mode": human_mode,
                             "reason": ai_json["reason"],
-                            "result": result.unwrap_or_else(|e| e)
+                            "result": result.as_ref().map(|_| "success").unwrap_or("failed"),
+                            "submit_result": submit_result,
+                            "error": result.as_ref().err()
                         }));
+                        
+                        if result.is_err() {
+                            tracing::warn!("[agent] Type failed: {:?}", result.err());
+                        }
                         
                         // Wait for response if submitted
                         if should_submit {
@@ -1796,7 +1851,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "agent",
-            "description": "Goal-based browser automation with internal AI. Provide a goal and the agent will autonomously navigate, click, type to achieve it. Use system_prompt to customize AI behavior for specific tasks.",
+            "description": "Goal-based browser automation with internal AI. Provide a goal and the agent will autonomously navigate, click, type to achieve it. Uses MCP tools internally with full robustness (visibility checks, retries, human_mode).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1808,7 +1863,9 @@ pub fn get_mcp_tools() -> serde_json::Value {
                             "goal": { "type": "string", "description": "The goal to achieve, e.g. 'Search for Rust on DuckDuckGo'" },
                             "context": { "type": "string", "description": "Additional context about the current situation" },
                             "max_steps": { "type": "integer", "description": "Maximum number of steps (default: 5)" },
-                            "system_prompt": { "type": "string", "description": "Custom instructions for the internal AI agent. Use this to specialize behavior for specific tasks." }
+                            "system_prompt": { "type": "string", "description": "Custom instructions for the internal AI agent." },
+                            "human_mode": { "type": "boolean", "description": "Enable human-like behavior: delays and natural movements (recommended for bot-protected sites)" },
+                            "instant_type": { "type": "boolean", "description": "Use instant mode for typing (avoids autocomplete interference on Amazon, Google, etc.)" }
                         }
                     }
                 },
