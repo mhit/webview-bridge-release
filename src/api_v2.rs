@@ -39,7 +39,7 @@ pub fn set_core_session_manager(manager: Arc<crate::core::SessionManager>) {
 }
 
 /// Get the v2 session manager
-fn get_session_manager_v2() -> &'static SessionManagerV2 {
+pub fn get_session_manager_v2() -> &'static SessionManagerV2 {
     SESSION_MANAGER_V2.get().expect("SessionManagerV2 not initialized")
 }
 
