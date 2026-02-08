@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebView Bridge — OpenClaw Dashboard</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" href="/assets/icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -79,6 +81,21 @@
             padding: 0 0.4rem 1rem;
             border-bottom: 1px solid var(--bdr);
             margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            flex-shrink: 0;
+            filter: drop-shadow(0 0 6px rgba(0, 212, 255, 0.35));
+        }
+
+        .logo-text {
+            min-width: 0;
         }
 
         .logo-n {
@@ -223,6 +240,73 @@
         .ph h1 {
             font-size: 1.25rem;
             font-weight: 600;
+        }
+
+        /* Hero banner for dashboard */
+        .hero {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.08) 0%, rgba(124, 58, 237, 0.08) 100%);
+            border: 1px solid rgba(0, 212, 255, 0.12);
+            border-radius: 14px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 1.1rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -40%;
+            right: -5%;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 12px;
+            filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.3));
+            flex-shrink: 0;
+        }
+
+        .hero-text h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 0.15rem;
+        }
+
+        .hero-text p {
+            color: var(--tx2);
+            font-size: 0.78rem;
+        }
+
+        .hero-ver {
+            margin-left: auto;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .hero-ver .tag {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--acc), var(--acc2));
+            color: #fff;
+            font-size: 0.6rem;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 20px;
+            letter-spacing: 0.04em;
+        }
+
+        .hero-ver .build {
+            font-size: 0.6rem;
+            color: var(--tx3);
+            margin-top: 4px;
         }
 
         .ph p {
@@ -767,11 +851,15 @@
             }
 
             .sb .nl,
-            .sb .logo-n,
-            .sb .logo-v,
+            .sb .logo-text,
             .sb .nb span:not(.i),
             .sb .sp span:not(.dt) {
                 display: none;
+            }
+
+            .sb .logo-icon {
+                width: 28px;
+                height: 28px;
             }
 
             .mn {
@@ -786,8 +874,11 @@
     <div class="app">
         <aside class="sb">
             <div class="logo">
-                <div class="logo-n">🌐 WebView Bridge</div>
-                <div class="logo-v">v3.5 — OpenClaw (CDP)</div>
+                <img src="/assets/icon.png" alt="WebView Bridge" class="logo-icon">
+                <div class="logo-text">
+                    <div class="logo-n">WebView Bridge</div>
+                    <div class="logo-v">v3.5 — OpenClaw (CDP)</div>
+                </div>
             </div>
             <div class="ng">
                 <div class="nl">監視</div>
@@ -814,11 +905,19 @@
         <main class="mn">
             <!-- DASHBOARD -->
             <div id="pg-dash" class="pg on">
-                <div class="ph">
-                    <div>
+                <div class="hero">
+                    <img src="/assets/icon.png" alt="" class="hero-icon">
+                    <div class="hero-text">
                         <h1>ダッシュボード</h1>
-                        <p>システム状態の概要</p>
-                    </div><button class="bn bn-s" onclick="loadAll()">🔄 更新</button>
+                        <p>WebView Bridge — システム状態の概要</p>
+                    </div>
+                    <div class="hero-ver">
+                        <span class="tag">OpenClaw CDP</span>
+                        <div class="build">v3.5</div>
+                    </div>
+                </div>
+                <div class="ph">
+                    <div></div><button class="bn bn-s" onclick="loadAll()">🔄 更新</button>
                 </div>
                 <div class="sts">
                     <div class="st">

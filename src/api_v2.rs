@@ -136,8 +136,10 @@ pub struct V2AppState {
 /// Create the v2 API router
 pub fn create_v2_router(state: V2AppState) -> Router {
     Router::new()
-        // Root and health
+        // Root, favicon, and health
         .route("/", get(root_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .route("/assets/icon.png", get(icon_png_handler))
         .route("/health", get(health_check))
         // Session management
         .route("/session/acquire", post(session_acquire))
@@ -220,6 +222,24 @@ pub fn create_v2_router(state: V2AppState) -> Router {
 /// GET / - Admin Dashboard
 async fn root_handler() -> Html<&'static str> {
     Html(include_str!("dashboard.html"))
+}
+
+/// GET /favicon.ico - Embedded application icon
+async fn favicon_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "image/x-icon"), ("cache-control", "public, max-age=86400")],
+        include_bytes!("../docs/img/icon.ico").as_slice(),
+    )
+}
+
+/// GET /assets/icon.png - Embedded application icon (PNG)
+async fn icon_png_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "image/png"), ("cache-control", "public, max-age=86400")],
+        include_bytes!("../docs/img/icon-128.png").as_slice(),
+    )
 }
 
 

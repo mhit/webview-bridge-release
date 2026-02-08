@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 pub mod api_v2;
 pub mod core;
 pub mod mcp_v3;
@@ -82,16 +84,26 @@ fn main() {
         Some(c) => c,
         None => return, // --help was shown
     };
-    
-    // HTTP server mode with tokio
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(run_http_server(config));
+
+    let port = config.port;
+
+    // Channel: tray "Exit" → server graceful shutdown
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
+
+    // Background thread: Tokio runtime + HTTP server
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run_http_server(config, shutdown_rx));
+    });
+
+    // Main thread: Win32 message loop (system tray icon)
+    webview_bridge_rust::tray::run(port, shutdown_tx);
 }
 
-async fn run_http_server(config: Config) {
+async fn run_http_server(config: Config, shutdown_rx: std::sync::mpsc::Receiver<()>) {
     // Initialize config file system first
     let app_config = crate::core::config::init_config();
     {
@@ -222,10 +234,22 @@ async fn run_http_server(config: Config) {
         }
     });
 
+    // Graceful shutdown: wait for the tray "Exit" signal.
+    let shutdown_signal = async move {
+        tokio::task::spawn_blocking(move || {
+            let _ = shutdown_rx.recv(); // blocks until tray sends or channel drops
+        })
+        .await
+        .ok();
+    };
+
     match axum::serve(
         tokio::net::TcpListener::bind(&addr).await.unwrap(),
         app,
-    ).await {
+    )
+    .with_graceful_shutdown(shutdown_signal)
+    .await
+    {
         Ok(_) => tracing::info!("Server shut down gracefully"),
         Err(e) => tracing::error!("Server error: {:?}", e),
     }
