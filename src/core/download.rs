@@ -156,13 +156,8 @@ pub struct StorageConfig {
 }
 
 fn default_data_path() -> PathBuf {
-    std::env::var("WEBVIEW_BRIDGE_DATA_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::data_local_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("webview-bridge")
-        })
+    // Reuse AppConfig::data_dir() for consistent path resolution
+    crate::core::config::AppConfig::data_dir()
 }
 
 fn default_max_storage() -> u64 {

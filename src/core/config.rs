@@ -185,6 +185,20 @@ impl Default for MediaSettings {
     }
 }
 
+/// Application configuration and path management.
+///
+/// Directory layout (~/.webview-bridge/):
+/// ```text
+/// config.toml              設定ファイル
+/// sessions.json            セッション永続化メタデータ
+/// profiles/
+///   {profile_name}/
+///     (WebView2 userdata)  ブラウザデータ (Cookie, Cache)
+///     screenshots/         スクリーンショット保存
+/// downloads/               ダウンロード出力 (yt-dlp等)
+/// subtitles/               字幕抽出出力
+/// analysis/                動画分析出力
+/// ```
 impl AppConfig {
     /// Get the base data directory (~/.webview-bridge/)
     pub fn data_dir() -> PathBuf {
@@ -192,7 +206,8 @@ impl AppConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
+                    .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+                    .expect("Cannot determine home directory. Set WEBVIEW_BRIDGE_DATA_PATH or USERPROFILE.")
                     .join(".webview-bridge")
             })
     }
@@ -276,36 +291,19 @@ impl AppConfig {
             })
     }
     
-    /// Get session-specific directory (~/.webview-bridge/sessions/{name}/)
-    pub fn get_session_dir(session_name: &str) -> PathBuf {
-        Self::data_dir().join("sessions").join(session_name)
+    /// Base directory for all profiles: {data_dir}/profiles/
+    pub fn profiles_dir() -> PathBuf {
+        Self::data_dir().join("profiles")
     }
-    
-    /// Get session-specific download directory
-    pub fn get_session_download_dir(session_name: &str) -> PathBuf {
-        Self::get_session_dir(session_name).join("downloads")
+
+    /// Root directory for a specific profile: {data_dir}/profiles/{name}/
+    pub fn profile_dir(name: &str) -> PathBuf {
+        Self::profiles_dir().join(name)
     }
-    
-    /// Get session-specific screenshots directory
-    pub fn get_session_screenshots_dir(session_name: &str) -> PathBuf {
-        Self::get_session_dir(session_name).join("screenshots")
-    }
-    
-    /// Get session-specific media directory (for YouTube downloads, etc.)
-    pub fn get_session_media_dir(session_name: &str) -> PathBuf {
-        Self::get_session_dir(session_name).join("media")
-    }
-    
-    /// Ensure session directories exist
-    pub fn ensure_session_dirs(session_name: &str) -> Result<(), String> {
-        let session_dir = Self::get_session_dir(session_name);
-        std::fs::create_dir_all(session_dir.join("downloads"))
-            .map_err(|e| format!("Failed to create downloads dir: {}", e))?;
-        std::fs::create_dir_all(session_dir.join("screenshots"))
-            .map_err(|e| format!("Failed to create screenshots dir: {}", e))?;
-        std::fs::create_dir_all(session_dir.join("media"))
-            .map_err(|e| format!("Failed to create media dir: {}", e))?;
-        Ok(())
+
+    /// Screenshots directory for a profile: {data_dir}/profiles/{name}/screenshots/
+    pub fn profile_screenshots_dir(name: &str) -> PathBuf {
+        Self::profile_dir(name).join("screenshots")
     }
 }
 

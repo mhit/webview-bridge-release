@@ -95,11 +95,7 @@ impl ProfileManager {
     /// Create a ProfileManager with the default base directory
     /// Default: ~/.webview-bridge/profiles
     pub fn default() -> Result<Self, ProfileError> {
-        let home_dir = dirs::home_dir().ok_or_else(|| {
-            ProfileError::new("NO_HOME_DIR", "Could not determine home directory")
-        })?;
-
-        let base_dir = home_dir.join(".webview-bridge").join(PROFILES_DIR_NAME);
+        let base_dir = crate::core::config::AppConfig::profiles_dir();
 
         // Ensure base directory exists
         fs::create_dir_all(&base_dir)?;

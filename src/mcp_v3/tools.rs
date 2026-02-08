@@ -592,9 +592,7 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     
     // Create screenshot directory
-    let screenshot_dir = dirs::home_dir()
-        .map(|h| h.join(".webview-bridge").join("profiles").join(session).join("screenshots"))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(session);
     let _ = std::fs::create_dir_all(&screenshot_dir);
     
     let filename = format!("cap_{}.png", timestamp);
@@ -953,9 +951,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         let filename = format!("cap_{}.png", timestamp);
         
         // Get screenshot output directory (inside session profile folder)
-        let screenshot_dir = dirs::home_dir()
-            .map(|h| h.join(".webview-bridge").join("profiles").join(&req.session).join("screenshots"))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(&req.session);
         let _ = std::fs::create_dir_all(&screenshot_dir);
         let screenshot_path = screenshot_dir.join(&filename);
         

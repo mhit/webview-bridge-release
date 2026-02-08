@@ -3075,11 +3075,8 @@ async fn config_storage(
 
 /// GET /v2/media/screenshots - List saved screenshots across all sessions
 async fn media_screenshots_list() -> impl IntoResponse {
-    let profiles_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".webview-bridge")
-        .join("profiles");
-    
+    let profiles_dir = crate::core::config::AppConfig::profiles_dir();
+
     let mut files = Vec::new();
     // Scan all session profile directories
     if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
@@ -3136,12 +3133,7 @@ async fn media_screenshots_get(
         ).into_response();
     }
     
-    let screenshots_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".webview-bridge")
-        .join("profiles")
-        .join(&session)
-        .join("screenshots");
+    let screenshots_dir = crate::core::config::AppConfig::profile_screenshots_dir(&session);
     
     let filepath = screenshots_dir.join(&filename);
     
@@ -3614,11 +3606,8 @@ async fn mcp_v3_handler(
         
         "resources/list" => {
             // Dynamically list screenshots as MCP resources
-            let profiles_dir = dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".webview-bridge")
-                .join("profiles");
-            
+            let profiles_dir = crate::core::config::AppConfig::profiles_dir();
+
             let mut resources = Vec::new();
             if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
                 for session_entry in sessions.flatten() {

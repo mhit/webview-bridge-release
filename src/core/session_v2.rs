@@ -855,20 +855,11 @@ impl SessionManagerV2 {
         }
         
         // Copy profile directory
-        let data_dir = crate::core::config::AppConfig::data_dir();
-        let source_profile_dir = data_dir.join("profiles").join(&source_meta.profile);
-        let new_profile_dir = data_dir.join("profiles").join(new_name);
+        let source_profile_dir = crate::core::config::AppConfig::profile_dir(&source_meta.profile);
+        let new_profile_dir = crate::core::config::AppConfig::profile_dir(new_name);
         
         if source_profile_dir.exists() {
             copy_dir_recursive(&source_profile_dir, &new_profile_dir)?;
-        }
-        
-        // Copy session data directory  
-        let source_session_dir = crate::core::config::AppConfig::get_session_dir(source_name);
-        let new_session_dir = crate::core::config::AppConfig::get_session_dir(new_name);
-        
-        if source_session_dir.exists() {
-            copy_dir_recursive(&source_session_dir, &new_session_dir)?;
         }
         
         // Create new session metadata
@@ -1217,6 +1208,11 @@ mod tests {
             last_accessed: "2026-02-05T12:00:00Z".to_string(),
             auto_extend: true,
             created_at: "2026-02-05T12:00:00Z".to_string(),
+            ttl_hours: 168,
+            expires_at: None,
+            last_url: None,
+            navigation_history: Vec::new(),
+            auto_restore: false,
         });
         
         let json = serde_json::to_string_pretty(&file).unwrap();
@@ -1293,6 +1289,9 @@ mod tests {
             created_at: "2026-02-05T12:00:00Z".to_string(),
             ttl_hours: 168,
             expires_at: Some("2026-02-12T12:00:00Z".to_string()),
+            last_url: None,
+            navigation_history: Vec::new(),
+            auto_restore: false,
         };
         
         let json = serde_json::to_string(&meta).unwrap();
@@ -1345,6 +1344,7 @@ mod tests {
             is_new: false,
             profile: "default".to_string(),
             auth_status: Some(AuthStatus::default()),
+            restored_url: None,
         };
         
         let json = serde_json::to_string(&response).unwrap();

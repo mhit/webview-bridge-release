@@ -410,7 +410,11 @@ impl SessionManager {
 
         // Create user data folder based on profile name only (NOT session ID)
         // This ensures cookies persist across sessions with the same profile
-        let user_data_folder = format!("./profiles/{}", options.profile);
+        // Use absolute path under data_dir (~/.webview-bridge/) to avoid
+        // permission issues when launched from Program Files
+        let user_data_folder = crate::core::config::AppConfig::profile_dir(&options.profile)
+            .to_string_lossy()
+            .to_string();
 
         // Create WebViewInstance
         let title = options.window_title.as_deref()
@@ -1468,6 +1472,7 @@ mod tests {
             profile: "default".to_string(),
             headless: true,
             user_agent: None,
+            window_title: None,
         };
 
         let result = manager.create_session(options);
@@ -1486,6 +1491,7 @@ mod tests {
             profile: "test".to_string(),
             headless: true,
             user_agent: None,
+            window_title: None,
         };
 
         assert!(manager.create_session(options.clone()).is_ok());
