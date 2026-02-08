@@ -101,6 +101,7 @@ UninstPage custom un.DataCleanupPage un.DataCleanupPageLeave
 
 Var DeleteDataCheckbox
 Var DeleteDataState
+Var WebView2Version
 
 ; ============================================================
 ; Installer Attributes
@@ -133,10 +134,53 @@ Function un.JapaneseFontFix
 FunctionEnd
 
 ; ============================================================
+; Helper: Check & Install WebView2 Runtime via winget
+; ============================================================
+
+Function CheckAndInstallWebView2
+  ; Check 64-bit registry first
+  ReadRegStr $WebView2Version HKLM \
+    "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" \
+    "pv"
+  ${If} $WebView2Version != ""
+    DetailPrint "WebView2 Runtime detected: $WebView2Version"
+    Return
+  ${EndIf}
+
+  ; Check native registry
+  ReadRegStr $WebView2Version HKLM \
+    "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" \
+    "pv"
+  ${If} $WebView2Version != ""
+    DetailPrint "WebView2 Runtime detected: $WebView2Version"
+    Return
+  ${EndIf}
+
+  ; WebView2 not found — try winget
+  DetailPrint "WebView2 Runtime not found. Installing via winget..."
+  nsExec::ExecToLog 'winget install --id Microsoft.EdgeWebView2Runtime --accept-source-agreements --accept-package-agreements --silent'
+  Pop $0
+  ${If} $0 == 0
+    DetailPrint "WebView2 Runtime installed successfully."
+    Return
+  ${EndIf}
+
+  ; winget failed — show manual download message
+  MessageBox MB_OK|MB_ICONINFORMATION \
+    "WebView2 Runtime のインストールに失敗しました。$\r$\n$\r$\n\
+    以下の URL から手動でインストールしてください:$\r$\n\
+    https://developer.microsoft.com/ja-jp/microsoft-edge/webview2/$\r$\n$\r$\n\
+    WebView2 Runtime がないと ${PRODUCT_NAME} は動作しません。"
+FunctionEnd
+
+; ============================================================
 ; Installer Section
 ; ============================================================
 
 Section "Install" SecInstall
+  ; --- Check & Install WebView2 Runtime ---
+  Call CheckAndInstallWebView2
+
   SetOutPath "$INSTDIR"
 
   ; --- Main executable ---
