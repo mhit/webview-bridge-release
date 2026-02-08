@@ -246,16 +246,38 @@ browser://screenshots/{session}/{filename}
 cargo run --release
 ```
 
-### 2. MCP設定（config.toml）
+### 2. MCP設定
+
+#### Claude Desktop / Cline
+
+`claude_desktop_config.json` または MCP設定ファイル:
+
+```json
+{
+  "mcpServers": {
+    "webview-bridge": {
+      "command": "webview-bridge-rust.exe",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
+#### config.toml（サーバー設定）
+
+`%APPDATA%/webview-bridge/config.toml`:
+
 ```toml
 [server]
-host = "127.0.0.1"
-port = 3030
+bind = "0.0.0.0"
+port = 9400
+max_sessions = 10
 
 [ai]
 enabled = true
-provider = "ollama"  # or "gemini"
-model = "gpt-oss:20b"
+provider = "ollama"       # "ollama" or "gemini"
+model = "gemma3:12b"      # ローカルLLM
+# api_key = "your-key"    # Gemini使用時
 ```
 
 ### 3. AIから操作
