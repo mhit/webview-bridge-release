@@ -1,496 +1,243 @@
-# WebView Bridge API ドキュメント
+# REST API リファレンス
 
-> 最終更新: 2026-02-07
+WebView Bridge v3.5 REST API。デフォルト: `http://localhost:9400`
 
-## 概要
+## 共通
 
-WebView Bridge は、WebView2 を使用したブラウザ自動化サーバーです。HTTP REST API を通じてブラウザセッションを制御できます。
+- Content-Type: `application/json`
+- レスポンス: JSON形式
 
-## ベースURL
+---
 
+## システム
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| GET | `/` | ダッシュボード (HTML) |
+| GET | `/health` | ヘルスチェック |
+
+---
+
+## セッション管理
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/session/acquire` | セッション作成 |
+| POST | `/session/release` | セッション解放 |
+| DELETE | `/session/destroy` | セッション完全削除 |
+| POST | `/session/cleanup` | 期限切れセッションのクリーンアップ |
+| POST | `/session/clone` | セッション複製 |
+| POST | `/session/visibility` | ウィンドウ表示/非表示切替 |
+| POST | `/session/focus` | ウィンドウフォーカス |
+| GET | `/session/list` | セッション一覧 |
+| GET | `/session/stats` | セッション統計 |
+| GET | `/session/:name` | セッション詳細取得 |
+| POST | `/session/state/url` | 現在のURL取得/設定 |
+| GET | `/session/state/history` | URL履歴取得 |
+| POST | `/session/import` | Cookie インポート |
+| GET | `/session/import/profiles` | インポート可能なプロファイル一覧 |
+
+### POST /session/acquire
+
+```json
+// リクエスト
+{"name": "my-session", "headless": false, "restore": true, "ttl_hours": 168}
+
+// レスポンス
+{"session": "my-session", "id": "uuid", "status": "active"}
 ```
-http://localhost:3030
+
+### POST /session/release
+
+```json
+{"name": "my-session"}
 ```
 
 ---
 
-## エンドポイント一覧
+## ナビゲーション
 
-### ヘルスチェック
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/navigate` | ページ遷移 |
 
-| エンドポイント | メソッド | 説明 |
-|---------------|----------|------|
-| `/health` | GET | サーバーの稼働状態を確認 |
+```json
+// リクエスト
+{"session": "my-session", "url": "https://example.com", "wait_for": "stable"}
 
-**レスポンス:**
-```
-OK
+// レスポンス
+{"success": true, "url": "https://example.com", "title": "Example"}
 ```
 
 ---
 
-### セッション管理
+## ブラウザ操作
 
-#### セッション作成
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/click` | 要素クリック |
+| POST | `/type` | テキスト入力 |
+| POST | `/execute` | JavaScript実行 |
+| POST | `/wait` | 条件待機 |
 
-**POST** `/create`
+### POST /click
 
 ```json
-{
-  "profile": "default",
-  "headless": false,
-  "user_agent": "Custom User Agent (optional)"
-}
+{"session": "my-session", "selector": "#submit"}
 ```
 
-**レスポンス:**
+### POST /type
+
 ```json
-{
-  "id": "abc12345-6789-...",
-  "message": "Session created"
-}
+{"session": "my-session", "selector": "#search", "text": "query", "clear": true}
 ```
 
-#### セッション削除
+### POST /execute
 
-**DELETE** `/close/:id`
-
-**レスポンス:**
 ```json
-{
-  "message": "Session closed"
-}
-```
-
-#### セッション状態取得
-
-**GET** `/status/:id`
-
-**レスポンス:**
-```json
-{
-  "id": "abc12345-6789-...",
-  "status": "Ready",
-  "url": "https://example.com",
-  "options": {
-    "profile": "default",
-    "headless": false,
-    "user_agent": null
-  }
-}
+{"session": "my-session", "script": "return document.title"}
 ```
 
 ---
 
-### ナビゲーション
+## スクリーンショット
 
-#### ページ遷移
-
-**POST** `/navigate/:id`
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/screenshot` | スクリーンショット取得 |
+| GET | `/screenshot/devices` | 利用可能デバイス一覧 |
 
 ```json
-{
-  "url": "https://example.com"
-}
-```
-
-**レスポンス:**
-```json
-{
-  "success": true
-}
+// リクエスト
+{"session": "my-session", "full_page": true}
 ```
 
 ---
 
-### スクリプト実行
+## Goal/マクロ
 
-#### JavaScript実行
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/goal` | ゴールベース操作実行 |
+| GET | `/goal/flows` | フロー一覧 |
+| POST | `/macro` | マクロ実行 |
+| GET | `/macro/list` | マクロ一覧 |
+| POST | `/macro/register` | マクロ登録 |
+| POST | `/macro/detect-spa` | SPA検出 |
 
-**POST** `/execute/:id`
+---
+
+## メディア
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/media/images` | 画像収集 |
+| POST | `/media/youtube/subtitles` | YouTube字幕取得 |
+| POST | `/media/youtube/download` | YouTubeダウンロード |
+| POST | `/media/analyze` | メディア分析 |
+| GET | `/media/files/:ref` | ファイル一覧 |
+| GET | `/media/screenshots` | スクリーンショット一覧 |
+| GET | `/media/screenshots/:session/:filename` | スクリーンショット取得 |
+| POST | `/media/persist` | メディア永続化 |
+| POST | `/media/extend` | TTL延長 |
+
+---
+
+## AI
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/ai/config` | AI設定更新 |
+| GET | `/ai/config` | AI設定取得 |
+| POST | `/ai/login` | AIログイン |
+| POST | `/ai/images/analyze` | 画像分析(Vision) |
+| POST | `/ai/extract` | AI抽出 |
+| GET | `/ai/usage` | AI使用量統計 |
+
+---
+
+## ダウンロード
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/download/trigger` | ダウンロード開始 |
+| GET | `/download/status/:id` | ダウンロード状態 |
+| POST | `/download/batch` | バッチダウンロード |
+
+---
+
+## ストレージ
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| GET | `/storage/status` | ストレージ状態 |
+| POST | `/storage/cleanup` | ストレージクリーンアップ |
+| POST | `/config/storage` | ストレージ設定 |
+
+---
+
+## 設定
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| GET | `/v2/config` | 設定取得 |
+| POST | `/v2/config` | 設定更新 |
+| POST | `/v2/ai/test` | AI接続テスト |
+
+---
+
+## ジョブ
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| GET | `/jobs/:id` | ジョブ状態取得 |
+| DELETE | `/jobs/:id` | ジョブキャンセル |
+| GET | `/jobs` | ジョブ一覧 |
+
+---
+
+## バッチ
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/batch` | 複数API一括実行 |
+
+---
+
+## MCP
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/mcp` | MCPツール呼び出し |
+| GET | `/mcp/tools` | ツール一覧 |
 
 ```json
-{
-  "script": "return document.title"
-}
-```
+// リクエスト
+{"tool": "navigate", "session": "demo", "url": "https://example.com"}
 
-**レスポンス:**
-```json
-{
-  "result": "Example Domain"
-}
+// レスポンス
+{"success": true, "content": [{"type": "text", "text": "..."}]}
 ```
 
 ---
 
-### DOM操作
+## WebSocket
 
-#### セレクター待機
+| パス | 説明 |
+|------|------|
+| `/ws` | リアルタイムイベント |
 
-**POST** `/wait/:id`
-
-```json
-{
-  "selector": "#main-content",
-  "timeout": 10000
-}
-```
-
-**レスポンス:**
-```json
-{
-  "found": true
-}
-```
-
-#### 要素抽出
-
-**POST** `/extract/:id`
-
-```json
-{
-  "selector": "h1"
-}
-```
-
-**レスポンス:**
-```json
-{
-  "data": ["Example Domain"]
-}
-```
+イベント: ページ遷移、DOM変更、ネットワーク通信等をリアルタイム配信。
 
 ---
 
-### スクリーンショット
-
-**GET** `/screenshot/:id`
-
-**レスポンス:**
-```json
-{
-  "format": "png",
-  "data": "iVBORw0KGgoAAAANSU..."
-}
-```
-
-`data` は Base64 エンコードされた PNG 画像です。
-
----
-
-### Cookie管理
-
-#### Cookie取得
-
-**GET** `/cookies/:id`
-
-**レスポンス:**
-```json
-{
-  "cookies": [
-    {
-      "name": "session_id",
-      "value": "abc123",
-      "domain": "example.com",
-      "path": "/"
-    }
-  ]
-}
-```
-
-#### Cookie設定
-
-**POST** `/cookies/:id`
-
-```json
-{
-  "cookies": [
-    {
-      "name": "session_id",
-      "value": "abc123",
-      "domain": "example.com",
-      "path": "/",
-      "secure": false,
-      "httpOnly": false
-    }
-  ]
-}
-```
-
----
-
-### Act API (OpenClaw互換)
-
-#### クリック
-
-**POST** `/act/:id`
-
-```json
-{
-  "action": "click",
-  "selector": "#submit-button"
-}
-```
-
-#### テキスト入力
-
-**POST** `/act/:id`
-
-```json
-{
-  "action": "type",
-  "selector": "#username",
-  "value": "testuser"
-}
-```
-
-#### キー押下
-
-**POST** `/act/:id`
-
-```json
-{
-  "action": "press",
-  "key": "Enter"
-}
-```
-
----
-
-### スナップショット
-
-#### ページスナップショット取得
-
-**GET** `/snapshot/:id`
-
-**クエリパラメータ:**
-- `format`: `html` | `text` | `aria` (default: `html`)
-
-**レスポンス:**
-```json
-{
-  "content": "<!DOCTYPE html>..."
-}
-```
-
----
-
-## プロファイル管理
-
-#### プロファイル一覧
-
-**GET** `/profile/list`
-
-**レスポンス:**
-```json
-{
-  "profiles": ["default", "work", "personal"]
-}
-```
-
-#### プロファイル作成
-
-**POST** `/profile/create`
-
-```json
-{
-  "name": "new_profile"
-}
-```
-
-#### プロファイル削除
-
-**DELETE** `/profile/:name`
-
----
-
-## WebDriver Protocol (Selenium互換)
-
-| エンドポイント | メソッド | 説明 |
-|---------------|----------|------|
-| `/wd/hub/status` | GET | WebDriver ステータス |
-| `/wd/hub/session` | POST | セッション作成 |
-| `/wd/hub/session/:id` | DELETE | セッション削除 |
-| `/wd/hub/session/:id/url` | POST | ナビゲート |
-| `/wd/hub/session/:id/url` | GET | 現在のURL取得 |
-| `/wd/hub/session/:id/title` | GET | ページタイトル取得 |
-| `/wd/hub/session/:id/source` | GET | ページソース取得 |
-| `/wd/hub/session/:id/screenshot` | GET | スクリーンショット |
-| `/wd/hub/session/:id/execute/sync` | POST | スクリプト実行 |
-| `/wd/hub/session/:id/element` | POST | 要素検索 |
-| `/wd/hub/session/:id/element/:eid/click` | POST | 要素クリック |
-| `/wd/hub/session/:id/element/:eid/value` | POST | テキスト入力 |
-
----
-
-## MCP (Model Context Protocol)
-
-#### MCP情報取得
-
-**GET** `/mcp/info`
-
-> 📝 **Note:** MCPツールの詳細は [MCP_TOOLS.md](./MCP_TOOLS.md) を参照してください。
-
-**レスポンス:**
-```json
-{
-  "name": "WebView Bridge",
-  "version": "0.1.0",
-  "capabilities": ["tools", "resources"]
-}
-```
-
-#### ツール一覧
-
-**GET** `/mcp/tools`
-
-**レスポンス:**
-```json
-{
-  "tools": [
-    {
-      "name": "navigate",
-      "description": "Navigate to a URL",
-      "inputSchema": {...}
-    },
-    ...
-  ]
-}
-```
-
-#### ツール実行
-
-**POST** `/mcp/tools/call`
-
-```json
-{
-  "name": "navigate",
-  "arguments": {
-    "url": "https://example.com"
-  }
-}
-```
-
----
-
-## CDP (Chrome DevTools Protocol)
-
-| エンドポイント | メソッド | 説明 |
-|---------------|----------|------|
-| `/json/version` | GET | ブラウザバージョン情報 |
-| `/json/list` または `/json` | GET | ターゲット一覧 |
-| `/cdp/command` | POST | CDPコマンド実行 |
-
-#### CDPコマンド例
-
-**POST** `/cdp/command`
-
-```json
-{
-  "sessionId": "abc123",
-  "method": "Page.navigate",
-  "params": {
-    "url": "https://example.com"
-  }
-}
-```
-
----
-
-## エラーレスポンス
-
-エラー時は適切なHTTPステータスコードと共にエラー情報が返されます：
-
-```json
-{
-  "error": "Session not found"
-}
-```
-
-| ステータスコード | 説明 |
-|-----------------|------|
-| 400 | リクエスト不正 |
-| 404 | リソースが見つからない |
-| 500 | サーバー内部エラー |
-| 504 | タイムアウト |
-
----
-
-## 使用例
-
-### Python
-
-```python
-import requests
-
-# セッション作成
-session = requests.post("http://localhost:3030/create", 
-    json={"profile": "default"}).json()
-sid = session["id"]
-
-# ページ遷移
-requests.post(f"http://localhost:3030/navigate/{sid}", 
-    json={"url": "https://example.com"})
-
-# スクリプト実行
-result = requests.post(f"http://localhost:3030/execute/{sid}", 
-    json={"script": "return document.title"}).json()
-print(result["result"])
-
-# セッション終了
-requests.delete(f"http://localhost:3030/close/{sid}")
-```
-
-### JavaScript
-
-```javascript
-// セッション作成
-const session = await fetch("http://localhost:3030/create", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ profile: "default" })
-}).then(r => r.json());
-
-const sid = session.id;
-
-// ページ遷移
-await fetch(`http://localhost:3030/navigate/${sid}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ url: "https://example.com" })
-});
-
-// スクリプト実行
-const result = await fetch(`http://localhost:3030/execute/${sid}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ script: "return document.title" })
-}).then(r => r.json());
-
-console.log(result.result);
-
-// セッション終了
-await fetch(`http://localhost:3030/close/${sid}`, { method: "DELETE" });
-```
-
-### PowerShell
-
-```powershell
-# セッション作成
-$session = Invoke-RestMethod -Uri "http://localhost:3030/create" `
-    -Method Post -Body '{"profile":"default"}' -ContentType "application/json"
-$sid = $session.id
-
-# ページ遷移
-Invoke-RestMethod -Uri "http://localhost:3030/navigate/$sid" `
-    -Method Post -Body '{"url":"https://example.com"}' -ContentType "application/json"
-
-# スクリプト実行
-$result = Invoke-RestMethod -Uri "http://localhost:3030/execute/$sid" `
-    -Method Post -Body '{"script":"return document.title"}' -ContentType "application/json"
-Write-Host $result.result
-
-# セッション終了
-Invoke-RestMethod -Uri "http://localhost:3030/close/$sid" -Method Delete
-```
+## エラーコード
+
+| コード | 名前 | HTTP | 説明 |
+|--------|------|------|------|
+| WBP2_001 | SESSION_NOT_FOUND | 404 | セッションが見つからない |
+| WBP2_002 | SESSION_BUSY | 409 | セッションが使用中 |
+| WBP2_003 | SESSION_CLOSED | 410 | セッションが閉じている |
+| WBP2_090 | INVALID_REQUEST | 400 | リクエスト不正 |
+| WBP2_091 | MISSING_PARAMETER | 400 | 必須パラメータ不足 |
+| WBP2_099 | INTERNAL_ERROR | 500 | 内部エラー |

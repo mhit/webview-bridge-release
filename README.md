@@ -2,6 +2,8 @@
 
 **AIやスクリプトからインターネットを自然に使う**
 
+> **v3.5 — OpenClaw (CDP Native)**: Chrome DevTools Protocol直接制御により、ネットワーク監視・フルページキャプチャ・要素取得の精度が劇的に向上。
+
 ## 🎯 なぜWebView Bridge?
 
 ### 問題：既存ツールの非効率性
@@ -67,16 +69,17 @@ agent(goal="Amazonでワイヤレスマウスを検索")
 
 ## 🚀 主要機能
 
-### MCPツール
+### MCPツール（9ツール）
 | ツール | 説明 |
 |--------|------|
-| `session` | セッション管理（作成/解放/一覧） |
-| `navigate` | ページ遷移（wait条件付き） |
+| `session` | セッション管理（作成/解放/一覧/デバイスエミュレーション） |
+| `navigate` | ページ遷移（DOM安定+ネットワーク完了のスマート待機） |
 | `capture` | スクリーンショット、要素取得、AI要約、**チャレンジ検出** |
-| `interact` | クリック/タイプ/スクロール/待機 |
-| `extract` | 構造化データ抽出 |
+| `interact` | クリック/タイプ/スクロール/待機（human_mode対応） |
+| `extract` | 構造化データ抽出（**スマート待機**で動的ページにも対応） |
 | `execute` | JavaScript実行 |
 | `media` | YouTube字幕/ダウンロード、画像収集 |
+| `network` | 🆕 **ネットワーク監視**（リクエスト/レスポンス/ヘッダー捕捉） |
 | `agent` | 🔥 Agenticモード（後述） |
 
 ### 🛡️ 自動堅牢化（Robustness層）
@@ -100,8 +103,8 @@ AI: interact(click="#submit-button")
 |------|------|
 | **要素待機** | 存在・可視・クリック可能を自動チェック |
 | **自動スクロール** | 要素が画面外なら自動で表示位置へ |
-| **DOM安定待機** | SPAでDOMが安定するまで待機 |
-| **ネットワーク待機** | リクエスト完了まで待機可能 |
+| **DOM+Network安定待機** | DOMミューテーション停止 **かつ** XHR/fetch完了まで待機 |
+| **extract スマート待機** | 要素が0件なら最大5秒自動リトライ、失敗時に診断情報出力 |
 | **自動リトライ** | 失敗時に指定回数リトライ |
 | **エラー時スクショ** | デバッグ用に自動保存可能 |
 
@@ -192,18 +195,49 @@ model = "gemma3:12b"       # ローカルLLM
 ## 📐 アーキテクチャ
 
 ```
-AI (Claude/Gemini)           WebView Bridge (Windows)
-┌─────────────────┐          ┌─────────────────────────┐
-│  MCP Client     │◀──MCP──▶│  MCP Server             │
-│                 │          │  ├─ Session Manager     │
-└─────────────────┘          │  ├─ Robustness Layer    │
-                             │  └─ WebView2 Pool       │
-                             └───────────┬─────────────┘
-                                         │
-                             ┌───────────▼─────────────┐
-                             │  Edge WebView2 Runtime  │
-                             └─────────────────────────┘
+AI (Claude/Gemini/OpenClaw)    WebView Bridge v3.5 (Windows)
+┌─────────────────┐            ┌──────────────────────────────┐
+│  MCP Client     │◀──MCP──▶  │  MCP Server (9 tools)        │
+│                 │            │  ├─ Session Manager          │
+└─────────────────┘            │  ├─ Robustness Layer         │
+                               │  ├─ CDP Controller ← 🆕     │
+                               │  │   ├─ Network Monitor      │
+                               │  │   ├─ Screenshot Engine    │
+                               │  │   └─ DOM Evaluator        │
+                               │  └─ WebView2 Pool            │
+                               └────────────┬─────────────────┘
+                                            │ CDP (DevTools Protocol)
+                               ┌────────────▼─────────────────┐
+                               │  Edge WebView2 Runtime       │
+                               └──────────────────────────────┘
 ```
+
+### 🆕 OpenClaw — CDP Native 移行のベネフィット
+
+v3.5でChrome DevTools Protocol (CDP) への直接制御に移行。従来のJS Eval方式と比較して：
+
+| 機能 | 従来 (JS Eval) | OpenClaw (CDP) |
+|------|---------------|----------------|
+| **スクリーンショット** | WebView2 API経由、ビューポートのみ | CDP `Page.captureScreenshot`、**フルページ対応** |
+| **ネットワーク監視** | 不可能 | `Network.requestWillBeSent`等で全通信を捕捉 |
+| **要素取得** | DOM操作のみ | CDP経由で安定した実行コンテキスト |
+| **ページ安定判定** | DOMミューテーションのみ | DOM + XHR/fetch追跡の**AND条件** |
+| **extract精度** | 動的ページで空振り多発 | **スマート待機**で確実に取得 |
+| **パス出力** | OS依存の絶対パス | `browser://` URI（OS非依存） |
+
+#### スクリーンショットURI
+
+スクリーンショットはOS非依存の `browser://` URIで返却：
+
+```
+browser://screenshots/{session}/{filename}
+
+例: browser://screenshots/my-session/cap_20260208_012300.png
+```
+
+- **AIのコンテキストにはURIのみ**（base64埋め込み無し）
+- HTTPで取得: `GET /v2/media/screenshots/{session}/{filename}`
+- MCP `resources/list` で一覧取得可能
 
 ## 🔧 使い方
 

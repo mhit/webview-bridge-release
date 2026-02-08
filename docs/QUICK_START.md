@@ -1,186 +1,157 @@
-# WebView Bridge クイックスタート
+# クイックスタート
 
-5分でWebView Bridgeを使い始める！
+WebView Bridge を5分で始める。
 
 ## 前提条件
 
-- Windows 10/11
-- Rust (cargo) インストール済み
-- AIプロバイダー設定（Ollama or Gemini API）
+- **Windows 10/11** (WebView2 ランタイムが必要)
+- **Rust** (edition 2024 / nightly 推奨)
+- **WebView2 Runtime** - 通常 Edge と共にインストール済み
 
-## Step 1: ビルド＆起動（2分）
+## ビルド & 起動
 
 ```bash
-# リポジトリクローン
-git clone https://github.com/user/webview-bridge
-cd webview-bridge
-
-# リリースビルド
+# ビルド
 cargo build --release
 
-# 起動
+# 起動（デフォルト: 0.0.0.0:9400）
 cargo run --release
+
+# ポート指定
+cargo run --release -- --port 3030
+
+# バインドアドレス指定
+cargo run --release -- --bind 127.0.0.1 --port 9400
 ```
 
-起動成功時の出力:
+起動すると以下が表示される:
+
 ```
-Loaded config from: C:\Users\{user}\.webview-bridge\config.toml
-Config loaded: AI enabled=true, provider=ollama, model=gpt-oss:20b
-[SessionManagerV2] Loaded 0 sessions from disk
+WebView Bridge Server v2 starting...
+listening on 0.0.0.0:9400 with 4 command processors
+API: http://0.0.0.0:9400/
 ```
 
-## Step 2: 設定確認（1分）
+## config.toml 設定
 
-`~/.webview-bridge/config.toml` を編集:
+データディレクトリ（`%APPDATA%/webview-bridge/` 等）に `config.toml` を配置:
 
 ```toml
 [server]
-host = "127.0.0.1"
-port = 3030
+bind = "0.0.0.0"
+port = 9400
+max_sessions = 10
 
 [ai]
 enabled = true
-provider = "ollama"     # Ollama使用時
-model = "gpt-oss:20b"   # お使いのモデル
+provider = "ollama"       # "ollama" or "gemini"
+model = "gemma3:12b"      # ローカルLLM
+# api_key = "your-key"    # Gemini使用時に必要
 
-# Gemini使用時
-# provider = "gemini"
-# model = "gemini-2.0-flash"
-# api_key = "your-api-key"
+[session]
+# セッションのデフォルト設定
+
+[media]
+# メディア/ダウンロード設定
 ```
 
-## Step 3: 動作確認（2分）
+## MCP クライアントからの接続
 
-### REST API テスト
+### Claude Desktop / OpenClaw
 
-```powershell
-# ヘルスチェック
-Invoke-RestMethod http://localhost:3030/health
-# → "OK"
-
-# MCPツール一覧
-Invoke-RestMethod http://localhost:3030/mcp/tools
-```
-
-### MCP経由で操作
-
-AIエージェント（Claude Desktop、OpenClaw等）から:
-
-```
-DuckDuckGoを開いてRustを検索して
-```
-
-裏で実行されるMCPコール:
-```json
-// 1. セッション作成
-{"tool": "session", "arguments": {"acquire": "default"}}
-
-// 2. ページ遷移
-{"tool": "navigate", "arguments": {"url": "https://duckduckgo.com"}}
-
-// 3. 検索
-{"tool": "interact", "arguments": {
-  "actions": [
-    {"type": "type", "target": "#searchbox_input", "value": "Rust"},
-    {"type": "click", "target": "button[type=submit]"}
-  ]
-}}
-
-// 4. 結果確認
-{"tool": "capture", "arguments": {"summarize": true}}
-```
-
-## よく使うパターン
-
-### Bot対策サイト（Amazon等）
+MCP設定ファイルに以下を追加:
 
 ```json
 {
-  "tool": "interact",
-  "arguments": {
-    "actions": [
-      {"type": "type", "target": "#twotabsearchtextbox", "value": "Anker", "instant": true}
-    ],
-    "options": {
-      "human_mode": true
+  "mcpServers": {
+    "webview-bridge": {
+      "command": "webview-bridge-rust.exe",
+      "args": ["--mcp-stdio"]
     }
   }
 }
 ```
 
-**ポイント:**
-- `human_mode: true` → 人間らしい動き（ベジェ曲線、タイポ等）
-- `instant: true` → サジェスト回避
+### REST API 直接利用
 
-### 自律型Agent
+```bash
+# ヘルスチェック
+curl http://localhost:9400/health
 
-```json
-{
-  "tool": "agent",
-  "arguments": {
+# セッション作成
+curl -X POST http://localhost:9400/session/acquire \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-session"}'
+```
+
+### MCP エンドポイント
+
+```bash
+# MCPツール呼び出し
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "navigate", "session": "my-session", "url": "https://example.com"}'
+
+# 利用可能ツール一覧
+curl http://localhost:9400/mcp/tools
+```
+
+## 最初のブラウザ操作
+
+### 1. セッション作成 → ページ遷移 → スクリーンショット
+
+```bash
+# セッション作成
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "session", "acquire": "demo"}'
+
+# Googleに遷移
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "navigate", "session": "demo", "url": "https://www.google.com"}'
+
+# スクリーンショット取得
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "capture", "session": "demo", "screenshot": true}'
+```
+
+### 2. 検索操作（複数アクションを1回で）
+
+```bash
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "interact",
+    "session": "demo",
+    "actions": [
+      {"type": "type", "target": "textarea[name=q]", "value": "WebView Bridge"},
+      {"type": "click", "target": "input[name=btnK]"},
+      {"type": "wait", "condition": "network_idle", "timeout_ms": 5000}
+    ]
+  }'
+```
+
+### 3. Agenticモード（AI自律操作）
+
+```bash
+curl -X POST http://localhost:9400/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "agent",
+    "session": "demo",
     "action": {
       "type": "start",
-      "goal": "Amazonでワイヤレスマウスを検索して価格順に並べる",
-      "human_mode": true,
-      "instant_type": true,
-      "max_steps": 10
+      "goal": "Amazonでワイヤレスマウスを検索して最初の5件の商品名と価格を教えて",
+      "max_steps": 15,
+      "human_mode": true
     }
-  }
-}
+  }'
 ```
-
-→ AIが自動でページ分析、クリック、入力を繰り返して目標達成！
-
-### データ抽出
-
-```json
-{
-  "tool": "extract",
-  "arguments": {
-    "selector": ".product-card",
-    "fields": {
-      "title": ".title",
-      "price": ".price",
-      "link": "a@href"
-    },
-    "limit": 20
-  }
-}
-```
-
-→ 構造化されたJSONで商品情報を取得
-
-## トラブルシューティング
-
-### Q: 「Session not found」エラー
-
-```json
-{"tool": "session", "arguments": {"acquire": "default"}}
-```
-でセッションを作成してから操作
-
-### Q: クリックが効かない
-
-1. `capture` でスクリーンショット確認
-2. セレクタが正しいか確認
-3. `human_mode: true` で試す
-
-### Q: タイプが途中で切れる
-
-`instant: true` を追加（サジェスト干渉回避）
-
-### Q: Bot検出される
-
-1. `headless: false` でウィンドウ表示
-2. `human_mode: true` で人間らしい動き
-3. 直接URL遷移を避け、クリックで遷移
 
 ## 次のステップ
 
-- [MCP_TOOLS.md](./MCP_TOOLS.md) - 全ツールの詳細
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - 内部構造
-- [API.md](./API.md) - REST API リファレンス
-
----
-
-**Happy Automating! 🚀**
+- [MCPツール詳細](MCP_TOOLS.md) - 9ツールの全パラメータ
+- [REST API](API.md) - REST APIリファレンス
+- [アーキテクチャ](ARCHITECTURE.md) - 内部構造の理解
