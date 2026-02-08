@@ -1,4 +1,4 @@
-; ============================================================
+﻿; ============================================================
 ; WebView Bridge v3.5 — NSIS Installer
 ; ============================================================
 ;
@@ -55,6 +55,10 @@ ManifestDPIAware true
 !define MUI_ABORTWARNING
 !define MUI_ABORTWARNING_TEXT "インストールを中止しますか？"
 
+; Japanese font fix — hook into MUI's onGUIInit
+!define MUI_CUSTOMFUNCTION_GUIINIT JapaneseFontFix
+!define MUI_CUSTOMFUNCTION_UNGUIINIT un.JapaneseFontFix
+
 ; ============================================================
 ; Finish Page — Launch & Startup checkboxes
 ; ============================================================
@@ -109,11 +113,10 @@ InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
 RequestExecutionLevel admin
 
 ; ============================================================
-; Japanese Font Fix — apply Yu Gothic UI to all pages
+; Japanese Font Fix — called via MUI_CUSTOMFUNCTION_GUIINIT
 ; ============================================================
 
-Function .onGUIInit
-  ; Detect Japanese locale (LANGID 0x0411 = 1041)
+Function JapaneseFontFix
   System::Call 'kernel32::GetUserDefaultUILanguage() i .r0'
   ${If} $0 == 1041
     CreateFont $1 "Yu Gothic UI" 9 400
@@ -121,7 +124,7 @@ Function .onGUIInit
   ${EndIf}
 FunctionEnd
 
-Function un.onGUIInit
+Function un.JapaneseFontFix
   System::Call 'kernel32::GetUserDefaultUILanguage() i .r0'
   ${If} $0 == 1041
     CreateFont $1 "Yu Gothic UI" 9 400
@@ -137,7 +140,7 @@ Section "Install" SecInstall
   SetOutPath "$INSTDIR"
 
   ; --- Main executable ---
-  File "target\release\${PRODUCT_EXE}"
+  File "..\target\release\${PRODUCT_EXE}"
 
   ; --- Icon ---
   SetOutPath "$INSTDIR"
@@ -145,10 +148,10 @@ Section "Install" SecInstall
 
   ; --- Documentation ---
   SetOutPath "$INSTDIR\docs"
-  File "docs\QUICK_START.md"
-  File "docs\MCP_TOOLS.md"
-  File "docs\ARCHITECTURE.md"
-  File "docs\API.md"
+  File "..\docs\QUICK_START.md"
+  File "..\docs\MCP_TOOLS.md"
+  File "..\docs\ARCHITECTURE.md"
+  File "..\docs\API.md"
 
   ; --- Sample config (only if not already exists) ---
   SetOutPath "$INSTDIR"
