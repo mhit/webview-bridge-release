@@ -40,6 +40,10 @@ token.txt
 .DS_Store
 Thumbs.db
 
+# Installer artifacts
+dist/
+installer/*.bmp
+
 # Session/Cache
 .serena
 .claude
