@@ -2,8 +2,7 @@
 //!
 //! This library provides the core functionality for the WebView Bridge server.
 //! 
-//! Protocol: WBP2 (WebView Bridge Protocol v2) ONLY
-//! See: docs/PROTOCOL_V2.md
+//! Protocol: WBP2 (WebView Bridge Protocol v2)
 
 pub mod api_v2;
 pub mod core;

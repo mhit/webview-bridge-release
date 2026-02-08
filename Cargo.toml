@@ -63,7 +63,3 @@ axum-test = "14"
 tower = { version = "0.4", features = ["util"] }
 hyper = { version = "1", features = ["full"] }
 http-body-util = "0.1"
-
-[[bench]]
-name = "api_benchmark"
-harness = false

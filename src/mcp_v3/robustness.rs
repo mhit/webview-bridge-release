@@ -399,45 +399,106 @@ pub fn generate_type_with_events_script_ex(_selector: &str, _text: &str, _clear:
     }
 */
 
-/// Wait for DOM stability (no mutations for specified duration)
+/// Wait for DOM stability AND network idle (no mutations + no network for specified duration)
 pub fn generate_wait_for_stable_script(stable_duration_ms: u64, timeout_ms: u64) -> String {
     format!(r#"
 (async function() {{
     const stableDuration = {};
+    const networkIdleDuration = Math.min(stableDuration, 300);
     const timeout = {};
     const startTime = Date.now();
     let lastMutationTime = Date.now();
+    let lastNetworkTime = Date.now();
+    let pendingRequests = 0;
 
+    // 1. DOM Mutation Observer
     const observer = new MutationObserver(() => {{
         lastMutationTime = Date.now();
     }});
-
-    observer.observe(document.body, {{
+    observer.observe(document.body || document.documentElement, {{
         childList: true,
         subtree: true,
         attributes: true,
         characterData: true
     }});
 
+    // 2. Network Activity Tracking (XHR + Fetch hook)
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+    const origXhrSend = XMLHttpRequest.prototype.send;
+    const origFetch = window.fetch;
+
+    XMLHttpRequest.prototype.open = function() {{
+        this._wbpTracked = true;
+        return origXhrOpen.apply(this, arguments);
+    }};
+    XMLHttpRequest.prototype.send = function() {{
+        if (this._wbpTracked) {{
+            pendingRequests++;
+            lastNetworkTime = Date.now();
+            this.addEventListener('loadend', () => {{
+                pendingRequests = Math.max(0, pendingRequests - 1);
+                lastNetworkTime = Date.now();
+            }});
+        }}
+        return origXhrSend.apply(this, arguments);
+    }};
+    window.fetch = function() {{
+        pendingRequests++;
+        lastNetworkTime = Date.now();
+        return origFetch.apply(this, arguments).then(r => {{
+            pendingRequests = Math.max(0, pendingRequests - 1);
+            lastNetworkTime = Date.now();
+            return r;
+        }}).catch(e => {{
+            pendingRequests = Math.max(0, pendingRequests - 1);
+            lastNetworkTime = Date.now();
+            throw e;
+        }});
+    }};
+
+    // 3. PerformanceObserver for resource loading
+    let lastResourceTime = Date.now();
+    try {{
+        const perfObserver = new PerformanceObserver((list) => {{
+            lastResourceTime = Date.now();
+            lastNetworkTime = Date.now();
+        }});
+        perfObserver.observe({{ type: 'resource', buffered: false }});
+    }} catch(e) {{}}
+
+    // Cleanup function
+    const cleanup = () => {{
+        observer.disconnect();
+        XMLHttpRequest.prototype.open = origXhrOpen;
+        XMLHttpRequest.prototype.send = origXhrSend;
+        window.fetch = origFetch;
+    }};
+
     while ((Date.now() - startTime) < timeout) {{
-        const timeSinceLastMutation = Date.now() - lastMutationTime;
-        if (timeSinceLastMutation >= stableDuration) {{
-            observer.disconnect();
+        const now = Date.now();
+        const domStable = (now - lastMutationTime) >= stableDuration;
+        const networkIdle = pendingRequests === 0 && (now - lastNetworkTime) >= networkIdleDuration;
+
+        if (domStable && networkIdle) {{
+            cleanup();
             return JSON.stringify({{
                 success: true,
                 stable: true,
-                elapsed: Date.now() - startTime
+                elapsed: now - startTime,
+                domStableMs: now - lastMutationTime,
+                networkIdleMs: now - lastNetworkTime
             }});
         }}
         await new Promise(r => setTimeout(r, 100));
     }}
 
-    observer.disconnect();
+    cleanup();
     return JSON.stringify({{
         success: false,
         stable: false,
-        error: "Timeout waiting for DOM stability",
-        elapsed: Date.now() - startTime
+        error: "Timeout waiting for DOM+Network stability",
+        elapsed: Date.now() - startTime,
+        pendingRequests: pendingRequests
     }});
 }})();
 "#, stable_duration_ms, timeout_ms)
@@ -1072,8 +1133,29 @@ pub fn generate_wait_for_condition_script(condition: &str, value: Option<&str>, 
             value.unwrap_or("").replace('"', "\\\"")
         ),
         "network_idle" => {
-            // Simplified: just wait for no pending fetches
-            r#"true"#.to_string()
+            // Track pending XHR/fetch requests and wait for all to complete
+            format!(r#"(() => {{
+                // Install tracking hooks if not already installed
+                if (!window.__wbpNetTrack) {{
+                    window.__wbpNetTrack = {{ pending: 0, lastActivity: Date.now() }};
+                    const origFetch = window.fetch;
+                    window.fetch = function() {{
+                        window.__wbpNetTrack.pending++;
+                        window.__wbpNetTrack.lastActivity = Date.now();
+                        return origFetch.apply(this, arguments)
+                            .then(r => {{ window.__wbpNetTrack.pending = Math.max(0, window.__wbpNetTrack.pending - 1); window.__wbpNetTrack.lastActivity = Date.now(); return r; }})
+                            .catch(e => {{ window.__wbpNetTrack.pending = Math.max(0, window.__wbpNetTrack.pending - 1); window.__wbpNetTrack.lastActivity = Date.now(); throw e; }});
+                    }};
+                    const origSend = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.send = function() {{
+                        window.__wbpNetTrack.pending++;
+                        window.__wbpNetTrack.lastActivity = Date.now();
+                        this.addEventListener('loadend', () => {{ window.__wbpNetTrack.pending = Math.max(0, window.__wbpNetTrack.pending - 1); window.__wbpNetTrack.lastActivity = Date.now(); }});
+                        return origSend.apply(this, arguments);
+                    }};
+                }}
+                return window.__wbpNetTrack.pending === 0 && (Date.now() - window.__wbpNetTrack.lastActivity) > 500;
+            }})()"#)
         },
         _ => "true".to_string(),
     };

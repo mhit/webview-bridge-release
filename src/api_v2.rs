@@ -1,7 +1,6 @@
 //! WBP2 API v2 Endpoints
 //!
 //! REST API endpoints for WebView Bridge Protocol v2
-//! See: docs/PROTOCOL_V2.md
 
 use axum::{
     extract::{Path, Query, State},
@@ -42,8 +41,13 @@ pub fn get_session_manager_v2() -> &'static SessionManagerV2 {
     SESSION_MANAGER_V2.get().expect("SessionManagerV2 not initialized")
 }
 
-/// Get the core session manager
+/// Get the core session manager (internal)
 fn get_core_session_manager() -> Option<&'static Arc<crate::core::SessionManager>> {
+    CORE_SESSION_MANAGER.get()
+}
+
+/// Get the core session manager (public, for cleanup from main)
+pub fn get_core_session_manager_pub() -> Option<&'static Arc<crate::core::SessionManager>> {
     CORE_SESSION_MANAGER.get()
 }
 
@@ -51,7 +55,7 @@ fn get_core_session_manager() -> Option<&'static Arc<crate::core::SessionManager
 // WBP2 Error Response
 // ============================================================================
 
-/// WBP2 Error codes (see PROTOCOL_V2.md Section 18.5)
+/// WBP2 Error codes
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub enum Wbp2Error {
@@ -175,7 +179,7 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/media/analyze", post(media_analyze))
         .route("/media/files/:ref", get(media_files_list))
         .route("/media/screenshots", get(media_screenshots_list))
-        .route("/media/screenshots/:filename", get(media_screenshots_get))
+        .route("/media/screenshots/:session/:filename", get(media_screenshots_get))
         .route("/media/persist", post(media_persist))
         .route("/media/extend", post(media_extend_ttl))
         // AI API
@@ -215,984 +219,10 @@ pub fn create_v2_router(state: V2AppState) -> Router {
 
 /// GET / - Admin Dashboard
 async fn root_handler() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebView Bridge - Admin Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-primary: #0f0f1a;
-            --bg-secondary: #1a1a2e;
-            --bg-card: rgba(255,255,255,0.03);
-            --border-color: rgba(255,255,255,0.08);
-            --accent-primary: #00d4ff;
-            --accent-secondary: #7c3aed;
-            --accent-success: #10b981;
-            --accent-warning: #f59e0b;
-            --accent-danger: #ef4444;
-            --text-primary: #f0f0f5;
-            --text-secondary: #8888a0;
-            --text-muted: #555570;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Inter', -apple-system, sans-serif; 
-            background: var(--bg-primary); 
-            min-height: 100vh; 
-            color: var(--text-primary);
-        }
-        
-        /* Layout */
-        .app { display: flex; min-height: 100vh; }
-        .sidebar { 
-            width: 260px; 
-            background: var(--bg-secondary); 
-            border-right: 1px solid var(--border-color);
-            padding: 1.5rem;
-            position: fixed;
-            height: 100vh;
-            overflow-y: auto;
-        }
-        .main { margin-left: 260px; flex: 1; padding: 2rem; }
-        
-        /* Logo */
-        .logo { 
-            display: flex; 
-            align-items: center; 
-            gap: 0.75rem; 
-            margin-bottom: 2rem;
-            padding-bottom: 1.5rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .logo-icon { font-size: 2rem; }
-        .logo-text { 
-            font-size: 1.1rem; 
-            font-weight: 600;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .logo-version { font-size: 0.7rem; color: var(--text-muted); }
-        
-        /* Navigation */
-        .nav-section { margin-bottom: 1.5rem; }
-        .nav-title { 
-            font-size: 0.7rem; 
-            text-transform: uppercase; 
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-            margin-bottom: 0.75rem;
-        }
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-bottom: 0.25rem;
-        }
-        .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
-        .nav-item.active { 
-            background: linear-gradient(135deg, rgba(0,212,255,0.15), rgba(124,58,237,0.15));
-            color: var(--accent-primary);
-            border: 1px solid rgba(0,212,255,0.2);
-        }
-        .nav-icon { font-size: 1.1rem; width: 24px; text-align: center; }
-        
-        /* Cards */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-            backdrop-filter: blur(10px);
-        }
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        .card-title { font-size: 1rem; font-weight: 600; }
-        .card-subtitle { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
-        
-        /* Forms */
-        .form-group { margin-bottom: 1.25rem; }
-        .form-label { 
-            display: block; 
-            font-size: 0.8rem; 
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-        .form-input {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: rgba(0,0,0,0.3);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.9rem;
-            transition: border-color 0.2s;
-        }
-        .form-input:focus { 
-            outline: none; 
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px rgba(0,212,255,0.1);
-        }
-        .form-input::placeholder { color: var(--text-muted); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .form-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem; }
-        
-        /* Toggle */
-        .toggle-group { display: flex; align-items: center; gap: 0.75rem; }
-        .toggle {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .toggle.active { background: var(--accent-primary); }
-        .toggle::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
-            background: white;
-            border-radius: 50%;
-            transition: transform 0.2s;
-        }
-        .toggle.active::after { transform: translateX(20px); }
-        
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .btn-primary {
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            color: white;
-        }
-        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-        .btn-secondary {
-            background: rgba(255,255,255,0.05);
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-        }
-        .btn-secondary:hover { background: rgba(255,255,255,0.1); }
-        .btn-danger {
-            background: rgba(239,68,68,0.15);
-            color: var(--accent-danger);
-            border: 1px solid rgba(239,68,68,0.3);
-        }
-        .btn-group { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
-        
-        /* Status */
-        .status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-        .status-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 1.25rem;
-        }
-        .status-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem; }
-        .status-value { font-size: 1.5rem; font-weight: 600; }
-        .status-value.success { color: var(--accent-success); }
-        .status-value.warning { color: var(--accent-warning); }
-        
-        /* Sessions table */
-        .table { width: 100%; border-collapse: collapse; }
-        .table th, .table td { 
-            text-align: left; 
-            padding: 1rem; 
-            border-bottom: 1px solid var(--border-color);
-        }
-        .table th { 
-            font-size: 0.75rem; 
-            text-transform: uppercase; 
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-        .badge-success { background: rgba(16,185,129,0.15); color: var(--accent-success); }
-        .badge-warning { background: rgba(245,158,11,0.15); color: var(--accent-warning); }
-        .badge-neutral { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
-        
-        /* Toast */
-        .toast {
-            position: fixed;
-            bottom: 2rem;
-            right: 2rem;
-            padding: 1rem 1.5rem;
-            border-radius: 12px;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s;
-        }
-        .toast.show { transform: translateY(0); opacity: 1; }
-        .toast.success { border-color: var(--accent-success); }
-        .toast.error { border-color: var(--accent-danger); }
-        
-        /* Page sections */
-        .page { display: none; }
-        .page.active { display: block; }
-        
-        /* Header */
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-        }
-        .page-title { font-size: 1.5rem; font-weight: 600; }
-        .page-subtitle { font-size: 0.9rem; color: var(--text-muted); margin-top: 0.25rem; }
-        
-        /* API Key mask */
-        .api-key-field {
-            position: relative;
-        }
-        .api-key-field input {
-            padding-right: 3rem;
-        }
-        .api-key-toggle {
-            position: absolute;
-            right: 0.75rem;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            font-size: 1rem;
-        }
-        
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .sidebar { width: 70px; padding: 1rem 0.5rem; }
-            .logo-text, .logo-version, .nav-text, .nav-title { display: none; }
-            .main { margin-left: 70px; }
-            .status-grid { grid-template-columns: repeat(2, 1fr); }
-            .form-row { grid-template-columns: 1fr; }
-        }
-    </style>
-</head>
-<body>
-    <div class="app">
-        <aside class="sidebar">
-            <div class="logo">
-                <span class="logo-icon">🌐</span>
-                <div>
-                    <div class="logo-text">WebView Bridge</div>
-                    <div class="logo-version">v0.1.0 Admin</div>
-                </div>
-            </div>
-            
-            <nav>
-                <div class="nav-section">
-                    <div class="nav-title">監視</div>
-                    <div class="nav-item active" data-page="dashboard">
-                        <span class="nav-icon">📊</span>
-                        <span class="nav-text">ダッシュボード</span>
-                    </div>
-                    <div class="nav-item" data-page="sessions">
-                        <span class="nav-icon">🔄</span>
-                        <span class="nav-text">セッション</span>
-                    </div>
-                </div>
-                
-                <div class="nav-section">
-                    <div class="nav-title">設定</div>
-                    <div class="nav-item" data-page="ai-settings">
-                        <span class="nav-icon">🤖</span>
-                        <span class="nav-text">AI設定</span>
-                    </div>
-                    <div class="nav-item" data-page="server-settings">
-                        <span class="nav-icon">⚙️</span>
-                        <span class="nav-text">サーバー設定</span>
-                    </div>
-                    <div class="nav-item" data-page="media-settings">
-                        <span class="nav-icon">📁</span>
-                        <span class="nav-text">メディア設定</span>
-                    </div>
-                </div>
-                
-                <div class="nav-section">
-                    <div class="nav-title">ツール</div>
-                    <div class="nav-item" data-page="api-tester">
-                        <span class="nav-icon">🧪</span>
-                        <span class="nav-text">APIテスター</span>
-                    </div>
-                </div>
-            </nav>
-        </aside>
-        
-        <main class="main">
-            <!-- Dashboard -->
-            <div id="page-dashboard" class="page active">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">ダッシュボード</h1>
-                        <p class="page-subtitle">システム状態の概要</p>
-                    </div>
-                    <button class="btn btn-secondary" onclick="refreshDashboard()">🔄 更新</button>
-                </div>
-                
-                <div class="status-grid">
-                    <div class="status-card">
-                        <div class="status-label">ステータス</div>
-                        <div class="status-value success" id="server-status">稼働中</div>
-                    </div>
-                    <div class="status-card">
-                        <div class="status-label">アクティブ セッション</div>
-                        <div class="status-value" id="active-sessions">0</div>
-                    </div>
-                    <div class="status-card">
-                        <div class="status-label">AI機能</div>
-                        <div class="status-value" id="ai-status">-</div>
-                    </div>
-                    <div class="status-card">
-                        <div class="status-label">稼働時間</div>
-                        <div class="status-value" id="uptime">-</div>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">最近のセッション</div>
-                    </div>
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>名前</th>
-                                <th>ステータス</th>
-                                <th>プロファイル</th>
-                                <th>現在のURL</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sessions-table">
-                            <tr><td colspan="4" style="text-align:center;color:var(--text-muted);">読み込み中...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <!-- Sessions -->
-            <div id="page-sessions" class="page">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">セッション管理</h1>
-                        <p class="page-subtitle">ブラウザセッションの管理</p>
-                    </div>
-                    <button class="btn btn-primary" onclick="createSession()">＋ 新規セッション</button>
-                </div>
-                
-                <div class="card">
-                    <table class="table" id="full-sessions-table">
-                        <thead>
-                            <tr>
-                                <th>名前</th>
-                                <th>ID</th>
-                                <th>ステータス</th>
-                                <th>認証状態</th>
-                                <th>アクション</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <!-- AI Settings -->
-            <div id="page-ai-settings" class="page">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">AI設定</h1>
-                        <p class="page-subtitle">Gemini API と AI機能の設定</p>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">AI プロバイダー</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <div class="toggle-group">
-                            <div class="toggle" id="ai-enabled" onclick="toggleAI()"></div>
-                            <label>AI機能を有効化</label>
-                        </div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">プロバイダー</label>
-                            <select class="form-input" id="ai-provider" onchange="onProviderChange()">
-                                <option value="gemini">Google Gemini</option>
-                                <option value="ollama">Ollama (ローカルLLM)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">モデル</label>
-                            <select class="form-input" id="ai-model">
-                                <option value="gemini-2.0-flash">gemini-2.0-flash (推奨)</option>
-                                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                            </select>
-                            <button class="btn btn-secondary" style="margin-top:0.5rem" onclick="refreshModels()">🔄 モデル更新</button>
-                        </div>
-                    </div>
-                    
-                    <div id="ollama-settings" style="display:none">
-                        <div class="form-group">
-                            <label class="form-label">Ollama ホスト</label>
-                            <input type="text" class="form-input" id="ollama-host" placeholder="http://localhost:11434">
-                            <div class="form-hint">環境変数 OLLAMA_HOST でも設定可能</div>
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">API キー</label>
-                        <div class="api-key-field">
-                            <input type="password" class="form-input" id="ai-api-key" placeholder="AIza...">
-                            <button class="api-key-toggle" onclick="toggleApiKeyVisibility()">👁️</button>
-                        </div>
-                        <div class="form-hint">設定ファイルに保存されます: %APPDATA%\webview-bridge\config.toml</div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">タイムアウト (ms)</label>
-                            <input type="number" class="form-input" id="ai-timeout" value="30000">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">日次予算 (USD) - オプション</label>
-                            <input type="number" class="form-input" id="ai-budget" step="0.1" placeholder="例: 1.0">
-                        </div>
-                    </div>
-                    
-                    <div class="btn-group">
-                        <button class="btn btn-primary" onclick="saveAiSettings()">💾 設定を保存</button>
-                        <button class="btn btn-secondary" onclick="testAiConnection()">🔌 接続テスト</button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Server Settings -->
-            <div id="page-server-settings" class="page">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">サーバー設定</h1>
-                        <p class="page-subtitle">HTTPサーバーとセッションの設定</p>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">サーバー</div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">バインドアドレス</label>
-                            <input type="text" class="form-input" id="server-bind" value="0.0.0.0">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">ポート</label>
-                            <input type="number" class="form-input" id="server-port" value="9400">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">最大同時セッション数</label>
-                        <input type="number" class="form-input" id="max-sessions" value="10">
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">セッションデフォルト</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <div class="toggle-group">
-                            <div class="toggle" id="default-headless" onclick="this.classList.toggle('active')"></div>
-                            <label>デフォルトでヘッドレスモード</label>
-                        </div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">ウィンドウ幅</label>
-                            <input type="number" class="form-input" id="default-width" value="1280">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">ウィンドウ高さ</label>
-                            <input type="number" class="form-input" id="default-height" value="720">
-                        </div>
-                    </div>
-                    
-                    <div class="btn-group">
-                        <button class="btn btn-primary" onclick="saveServerSettings()">💾 設定を保存</button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Media Settings -->
-            <div id="page-media-settings" class="page">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">メディア設定</h1>
-                        <p class="page-subtitle">ダウンロードとスクリーンショットの設定</p>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">保存先</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">ダウンロードフォルダ</label>
-                        <input type="text" class="form-input" id="download-dir" placeholder="空欄の場合はデフォルト">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">スクリーンショットフォルダ</label>
-                        <input type="text" class="form-input" id="screenshots-dir" placeholder="空欄の場合はデフォルト">
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">最大ダウンロードサイズ (bytes)</label>
-                            <input type="number" class="form-input" id="max-download-size" value="0" placeholder="0 = 無制限">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">デフォルト動画品質</label>
-                            <select class="form-input" id="default-quality">
-                                <option value="best">best</option>
-                                <option value="hd">hd (720p)</option>
-                                <option value="sd">sd (480p)</option>
-                                <option value="low">low</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="btn-group">
-                        <button class="btn btn-primary" onclick="saveMediaSettings()">💾 設定を保存</button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- API Tester -->
-            <div id="page-api-tester" class="page">
-                <div class="page-header">
-                    <div>
-                        <h1 class="page-title">APIテスター</h1>
-                        <p class="page-subtitle">APIエンドポイントのクイックテスト</p>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">セッション名</label>
-                            <input type="text" class="form-input" id="test-session" value="test">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">URL</label>
-                            <input type="text" class="form-input" id="test-url" placeholder="https://example.com">
-                        </div>
-                    </div>
-                    
-                    <div class="btn-group" style="flex-wrap: wrap;">
-                        <button class="btn btn-primary" onclick="testAcquire()">1. セッション取得</button>
-                        <button class="btn btn-secondary" onclick="testNavigate()">2. ナビゲート</button>
-                        <button class="btn btn-secondary" onclick="testScreenshot()">3. スクリーンショット</button>
-                        <button class="btn btn-secondary" onclick="testAiAnalyze()">4. AI分析</button>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">結果</div>
-                    </div>
-                    <pre id="test-result" style="background:rgba(0,0,0,0.3);padding:1rem;border-radius:8px;overflow:auto;max-height:400px;font-size:0.85rem;">Ready...</pre>
-                    <img id="test-screenshot" style="max-width:100%;margin-top:1rem;border-radius:8px;display:none;">
-                </div>
-            </div>
-        </main>
-    </div>
-    
-    <div class="toast" id="toast">
-        <span id="toast-icon">✓</span>
-        <span id="toast-message">保存しました</span>
-    </div>
-    
-    <script>
-        // === Navigation ===
-        document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => {
-                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                document.getElementById('page-' + item.dataset.page).classList.add('active');
-            });
-        });
-        
-        // === API Helper ===
-        const api = async (path, method = 'GET', body = null) => {
-            const opts = { method, headers: {'Content-Type': 'application/json'} };
-            if (body) opts.body = JSON.stringify(body);
-            const res = await fetch(path, opts);
-            return res.json();
-        };
-        
-        const showToast = (msg, type = 'success') => {
-            const toast = document.getElementById('toast');
-            document.getElementById('toast-message').textContent = msg;
-            document.getElementById('toast-icon').textContent = type === 'success' ? '✓' : '✕';
-            toast.className = 'toast ' + type + ' show';
-            setTimeout(() => toast.classList.remove('show'), 3000);
-        };
-        
-        // === Dashboard ===
-        const refreshDashboard = async () => {
-            try {
-                const [health, sessions, config] = await Promise.all([
-                    api('/health'),
-                    api('/session/list'),
-                    api('/v2/config')
-                ]);
-                
-                document.getElementById('server-status').textContent = health.status === 'ok' ? '稼働中' : 'エラー';
-                document.getElementById('active-sessions').textContent = sessions.sessions?.length || 0;
-                document.getElementById('ai-status').textContent = config.ai?.enabled ? '有効' : '無効';
-                document.getElementById('ai-status').className = 'status-value ' + (config.ai?.enabled ? 'success' : 'warning');
-                
-                const tbody = document.getElementById('sessions-table');
-                if (sessions.sessions?.length > 0) {
-                    tbody.innerHTML = sessions.sessions.slice(0, 5).map(s => `
-                        <tr>
-                            <td><strong>${s.name}</strong></td>
-                            <td><span class="badge badge-success">Active</span></td>
-                            <td>${s.profile || 'default'}</td>
-                            <td style="color:var(--text-muted);font-size:0.85rem;">${s.current_url || '-'}</td>
-                        </tr>
-                    `).join('');
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">セッションなし</td></tr>';
-                }
-                
-                // Load config into settings pages
-                loadConfigToUI(config);
-            } catch (e) {
-                console.error(e);
-            }
-        };
-        
-        const loadConfigToUI = (config) => {
-            if (config.ai) {
-                document.getElementById('ai-enabled').classList.toggle('active', config.ai.enabled);
-                document.getElementById('ai-provider').value = config.ai.provider || 'gemini';
-                document.getElementById('ai-model').value = config.ai.model || 'gemini-2.0-flash';
-                if (config.ai.api_key) document.getElementById('ai-api-key').value = config.ai.api_key;
-                document.getElementById('ai-timeout').value = config.ai.timeout_ms || 30000;
-                if (config.ai.daily_budget_usd) document.getElementById('ai-budget').value = config.ai.daily_budget_usd;
-                // Trigger provider change to show/hide Ollama settings
-                setTimeout(() => onProviderChange(), 100);
-            }
-            if (config.server) {
-                document.getElementById('server-bind').value = config.server.bind || '0.0.0.0';
-                document.getElementById('server-port').value = config.server.port || 9400;
-                document.getElementById('max-sessions').value = config.server.max_sessions || 10;
-            }
-            if (config.session) {
-                document.getElementById('default-headless').classList.toggle('active', config.session.default_headless);
-                document.getElementById('default-width').value = config.session.default_width || 1280;
-                document.getElementById('default-height').value = config.session.default_height || 720;
-            }
-            if (config.media) {
-                document.getElementById('download-dir').value = config.media.download_dir || '';
-                document.getElementById('screenshots-dir').value = config.media.screenshots_dir || '';
-                document.getElementById('max-download-size').value = config.media.max_download_size || 0;
-                document.getElementById('default-quality').value = config.media.default_video_quality || 'hd';
-            }
-        };
-        
-        // === Settings ===
-        const toggleAI = () => document.getElementById('ai-enabled').classList.toggle('active');
-        
-        const onProviderChange = () => {
-            const provider = document.getElementById('ai-provider').value;
-            const ollamaSettings = document.getElementById('ollama-settings');
-            const apiKeyField = document.getElementById('ai-api-key').parentElement.parentElement;
-            
-            if (provider === 'ollama') {
-                ollamaSettings.style.display = 'block';
-                apiKeyField.style.display = 'none';
-                refreshModels();
-            } else {
-                ollamaSettings.style.display = 'none';
-                apiKeyField.style.display = 'block';
-                // Reset to Gemini models
-                const modelSelect = document.getElementById('ai-model');
-                modelSelect.innerHTML = `
-                    <option value="gemini-2.0-flash">gemini-2.0-flash (推奨)</option>
-                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                `;
-            }
-        };
-        
-        const refreshModels = async () => {
-            const provider = document.getElementById('ai-provider').value;
-            const modelSelect = document.getElementById('ai-model');
-            const currentValue = modelSelect.value;
-            
-            if (provider === 'ollama') {
-                // Ollama: Call Ollama API directly
-                const ollamaHost = document.getElementById('ollama-host').value || 'http://localhost:11434';
-                try {
-                    const res = await fetch(ollamaHost + '/api/tags');
-                    const data = await res.json();
-                    if (data.models && data.models.length > 0) {
-                        const models = data.models.map(m => m.name);
-                        modelSelect.innerHTML = models.map(m => 
-                            `<option value="${m}">${m}</option>`
-                        ).join('');
-                        if (models.includes(currentValue)) {
-                            modelSelect.value = currentValue;
-                        }
-                        showToast(`${models.length} Ollamaモデルを取得`);
-                    } else {
-                        modelSelect.innerHTML = '<option value="">モデルなし</option>';
-                        showToast('Ollamaにモデルがありません', 'warning');
-                    }
-                } catch (e) {
-                    modelSelect.innerHTML = '<option value="">接続エラー</option>';
-                    showToast('Ollama接続失敗: ' + ollamaHost, 'error');
-                }
-            } else {
-                // Gemini: Use static list
-                modelSelect.innerHTML = `
-                    <option value="gemini-2.0-flash">gemini-2.0-flash (推奨)</option>
-                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                `;
-                if (['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'].includes(currentValue)) {
-                    modelSelect.value = currentValue;
-                }
-            }
-        };
-        
-        const toggleApiKeyVisibility = () => {
-            const input = document.getElementById('ai-api-key');
-            input.type = input.type === 'password' ? 'text' : 'password';
-        };
-        
-        const saveAiSettings = async () => {
-            const data = {
-                ai: {
-                    enabled: document.getElementById('ai-enabled').classList.contains('active'),
-                    provider: document.getElementById('ai-provider').value,
-                    model: document.getElementById('ai-model').value,
-                    api_key: document.getElementById('ai-api-key').value || null,
-                    timeout_ms: parseInt(document.getElementById('ai-timeout').value),
-                    daily_budget_usd: parseFloat(document.getElementById('ai-budget').value) || null
-                }
-            };
-            
-            try {
-                await api('/v2/config', 'POST', data);
-                showToast('AI設定を保存しました');
-            } catch (e) {
-                showToast('保存に失敗しました', 'error');
-            }
-        };
-        
-        const testAiConnection = async () => {
-            const provider = document.getElementById('ai-provider').value;
-            showToast('接続テスト中...');
-            
-            if (provider === 'ollama') {
-                // Ollama: Test directly
-                const ollamaHost = document.getElementById('ollama-host').value || 'http://localhost:11434';
-                const model = document.getElementById('ai-model').value;
-                try {
-                    // First check if Ollama is running
-                    const tagsRes = await fetch(ollamaHost + '/api/tags');
-                    if (!tagsRes.ok) throw new Error('Ollama not running');
-                    
-                    // Try a simple generation
-                    const genRes = await fetch(ollamaHost + '/api/generate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            model: model,
-                            prompt: 'Say "OK" in one word.',
-                            stream: false,
-                            options: { num_predict: 10 }
-                        })
-                    });
-                    const data = await genRes.json();
-                    if (data.response) {
-                        showToast('Ollama接続OK: ' + model, 'success');
-                    } else if (data.error) {
-                        showToast('Ollamaエラー: ' + data.error, 'error');
-                    }
-                } catch (e) {
-                    showToast('Ollama接続失敗: ' + e.message, 'error');
-                }
-            } else {
-                // Gemini: Use server API
-                try {
-                    const res = await api('/v2/ai/test', 'POST');
-                    showToast(res.success ? 'Gemini接続OK' : 'Gemini接続失敗', res.success ? 'success' : 'error');
-                } catch (e) {
-                    showToast('接続テスト失敗', 'error');
-                }
-            }
-        };
-        
-        const saveServerSettings = async () => {
-            const data = {
-                server: {
-                    bind: document.getElementById('server-bind').value,
-                    port: parseInt(document.getElementById('server-port').value),
-                    max_sessions: parseInt(document.getElementById('max-sessions').value)
-                },
-                session: {
-                    default_headless: document.getElementById('default-headless').classList.contains('active'),
-                    default_width: parseInt(document.getElementById('default-width').value),
-                    default_height: parseInt(document.getElementById('default-height').value)
-                }
-            };
-            
-            try {
-                await api('/v2/config', 'POST', data);
-                showToast('サーバー設定を保存しました');
-            } catch (e) {
-                showToast('保存に失敗しました', 'error');
-            }
-        };
-        
-        const saveMediaSettings = async () => {
-            const data = {
-                media: {
-                    download_dir: document.getElementById('download-dir').value || null,
-                    screenshots_dir: document.getElementById('screenshots-dir').value || null,
-                    max_download_size: parseInt(document.getElementById('max-download-size').value) || 0,
-                    default_video_quality: document.getElementById('default-quality').value
-                }
-            };
-            
-            try {
-                await api('/v2/config', 'POST', data);
-                showToast('メディア設定を保存しました');
-            } catch (e) {
-                showToast('保存に失敗しました', 'error');
-            }
-        };
-        
-        // === API Tester ===
-        const showResult = (data) => {
-            document.getElementById('test-result').textContent = JSON.stringify(data, null, 2);
-        };
-        
-        const testAcquire = async () => {
-            const name = document.getElementById('test-session').value;
-            showResult(await api('/session/acquire', 'POST', { name, create_if_missing: true, headless: false }));
-        };
-        
-        const testNavigate = async () => {
-            const session = document.getElementById('test-session').value;
-            const url = document.getElementById('test-url').value;
-            showResult(await api('/navigate', 'POST', { session, url }));
-        };
-        
-        const testScreenshot = async () => {
-            const session = document.getElementById('test-session').value;
-            const data = await api('/screenshot', 'POST', { session });
-            showResult({ success: data.success, size: data.image?.length || 0 });
-            if (data.image) {
-                const img = document.getElementById('test-screenshot');
-                img.src = 'data:image/png;base64,' + data.image;
-                img.style.display = 'block';
-            }
-        };
-        
-        const testAiAnalyze = async () => {
-            const session = document.getElementById('test-session').value;
-            showResult({ status: 'analyzing...', session });
-            try {
-                const res = await fetch('/v2/mcp', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        jsonrpc: '2.0',
-                        id: 1,
-                        method: 'tools/call',
-                        params: {
-                            name: 'ai_analyze',
-                            arguments: { session, query: 'Describe what you see on this page' }
-                        }
-                    })
-                });
-                showResult(await res.json());
-            } catch (e) {
-                showResult({ error: e.message });
-            }
-        };
-        
-        const createSession = () => {
-            const name = prompt('セッション名:');
-            if (name) {
-                api('/session/acquire', 'POST', { name, create_if_missing: true })
-                    .then(() => { showToast('セッション作成完了'); refreshDashboard(); });
-            }
-        };
-        
-        // Initial load
-        refreshDashboard();
-        setInterval(refreshDashboard, 30000);
-    </script>
-</body>
-</html>"#)
+    Html(include_str!("dashboard.html"))
 }
+
+
 
 /// GET /health - Health check
 async fn health_check() -> impl IntoResponse {
@@ -1437,6 +467,9 @@ async fn session_acquire(
 #[derive(serde::Deserialize)]
 struct ReleaseRequest {
     name: String,
+    /// If true, close the WebView window and stop the session process
+    #[serde(default)]
+    close_window: bool,
 }
 
 /// POST /v2/session/release
@@ -1445,31 +478,73 @@ async fn session_release(
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
     
-    match manager.release(&request.name) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "message": format!("Session '{}' released", request.name)
-            })),
-        ),
-        Err(e) => {
-            let (code, name) = if e.contains("not found") {
-                ("WBP2_001", "SESSION_NOT_FOUND")
-            } else {
-                ("WBP2_099", "INTERNAL_ERROR")
-            };
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({
-                    "success": false,
-                    "error": {
-                        "code": code,
-                        "name": name,
-                        "message": e
+    if request.close_window {
+        // Close WebView window + release session
+        match manager.close_session(&request.name) {
+            Ok(session_id) => {
+                // Also close in core SessionManager
+                if let Some(id) = session_id {
+                    if let Some(core_mgr) = get_core_session_manager() {
+                        let _ = core_mgr.remove_session(&id).await;
                     }
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "message": format!("Session '{}' stopped and window closed", request.name),
+                        "closed": true
+                    })),
+                )
+            },
+            Err(e) => {
+                let (code, name) = if e.contains("not found") {
+                    ("WBP2_001", "SESSION_NOT_FOUND")
+                } else {
+                    ("WBP2_099", "INTERNAL_ERROR")
+                };
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": code,
+                            "name": name,
+                            "message": e
+                        }
+                    })),
+                )
+            }
+        }
+    } else {
+        // Legacy behavior: just mark as not acquired
+        match manager.release(&request.name) {
+            Ok(()) => (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "message": format!("Session '{}' released", request.name),
+                    "closed": false
                 })),
-            )
+            ),
+            Err(e) => {
+                let (code, name) = if e.contains("not found") {
+                    ("WBP2_001", "SESSION_NOT_FOUND")
+                } else {
+                    ("WBP2_099", "INTERNAL_ERROR")
+                };
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": code,
+                            "name": name,
+                            "message": e
+                        }
+                    })),
+                )
+            }
         }
     }
 }
@@ -3978,26 +3053,37 @@ async fn config_storage(
     )
 }
 
-/// GET /v2/media/screenshots - List saved screenshots
+/// GET /v2/media/screenshots - List saved screenshots across all sessions
 async fn media_screenshots_list() -> impl IntoResponse {
-    let screenshots_dir = dirs::data_local_dir()
+    let profiles_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("webview-bridge")
-        .join("media")
-        .join("screenshots");
+        .join(".webview-bridge")
+        .join("profiles");
     
     let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&screenshots_dir) {
-        for entry in entries.flatten() {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        files.push(serde_json::json!({
-                            "filename": name,
-                            "size_bytes": metadata.len(),
-                            "url": format!("/v2/media/screenshots/{}", name),
-                            "mcp_uri": format!("browser://screenshots/{}", name)
-                        }));
+    // Scan all session profile directories
+    if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
+        for session_entry in sessions.flatten() {
+            if let Ok(meta) = session_entry.metadata() {
+                if meta.is_dir() {
+                    let session_name = session_entry.file_name().to_string_lossy().to_string();
+                    let screenshots_dir = session_entry.path().join("screenshots");
+                    if let Ok(entries) = std::fs::read_dir(&screenshots_dir) {
+                        for entry in entries.flatten() {
+                            if let Ok(file_meta) = entry.metadata() {
+                                if file_meta.is_file() {
+                                    if let Some(name) = entry.file_name().to_str() {
+                                        files.push(serde_json::json!({
+                                            "filename": name,
+                                            "session": session_name,
+                                            "size_bytes": file_meta.len(),
+                                            "url": format!("/v2/media/screenshots/{}/{}", session_name, name),
+                                            "uri": format!("browser://screenshots/{}/{}", session_name, name)
+                                        }));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4008,41 +3094,49 @@ async fn media_screenshots_list() -> impl IntoResponse {
         StatusCode::OK,
         Json(serde_json::json!({
             "screenshots": files,
-            "count": files.len(),
-            "directory": screenshots_dir.to_string_lossy()
+            "count": files.len()
         })),
     )
 }
 
-/// GET /v2/media/screenshots/:filename - Get a screenshot file
+/// GET /v2/media/screenshots/:session/:filename - Get a screenshot file
 async fn media_screenshots_get(
-    Path(filename): Path<String>,
+    Path((session, filename)): Path<(String, String)>,
 ) -> impl IntoResponse {
     use axum::body::Body;
     use axum::http::header;
     
     // Security: prevent path traversal
-    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') 
+        || session.contains("..") || session.contains('/') || session.contains('\\') {
         return (
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "application/json")],
-            Body::from(r#"{"error": "Invalid filename"}"#),
+            Body::from(r#"{"error": "Invalid path"}"#),
         ).into_response();
     }
     
-    let screenshots_dir = dirs::data_local_dir()
+    let screenshots_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("webview-bridge")
-        .join("media")
+        .join(".webview-bridge")
+        .join("profiles")
+        .join(&session)
         .join("screenshots");
     
     let filepath = screenshots_dir.join(&filename);
     
     match std::fs::read(&filepath) {
         Ok(data) => {
+            let content_type = if filename.ends_with(".webp") {
+                "image/webp"
+            } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                "image/jpeg"
+            } else {
+                "image/png"
+            };
             (
                 StatusCode::OK,
-                [(header::CONTENT_TYPE, "image/png")],
+                [(header::CONTENT_TYPE, content_type)],
                 Body::from(data),
             ).into_response()
         }
@@ -4498,13 +3592,45 @@ async fn mcp_v3_handler(
             }
         }
         
-        "resources/list" => McpResponse {
-            jsonrpc: "2.0".to_string(),
-            id,
-            result: Some(serde_json::json!({
-                "resources": []
-            })),
-            error: None,
+        "resources/list" => {
+            // Dynamically list screenshots as MCP resources
+            let profiles_dir = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".webview-bridge")
+                .join("profiles");
+            
+            let mut resources = Vec::new();
+            if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
+                for session_entry in sessions.flatten() {
+                    if session_entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+                        let session_name = session_entry.file_name().to_string_lossy().to_string();
+                        let screenshots_dir = session_entry.path().join("screenshots");
+                        if let Ok(entries) = std::fs::read_dir(&screenshots_dir) {
+                            for entry in entries.flatten() {
+                                if let Some(name) = entry.file_name().to_str() {
+                                    if name.ends_with(".png") || name.ends_with(".webp") || name.ends_with(".jpg") {
+                                        resources.push(serde_json::json!({
+                                            "uri": format!("browser://screenshots/{}/{}", session_name, name),
+                                            "name": name,
+                                            "description": format!("Screenshot from session '{}'", session_name),
+                                            "mimeType": "image/png"
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            McpResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(serde_json::json!({
+                    "resources": resources
+                })),
+                error: None,
+            }
         },
         
         "ping" => McpResponse {

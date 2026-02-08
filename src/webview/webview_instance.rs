@@ -47,6 +47,12 @@ thread_local! {
     pub static PENDING_CDP_COOKIES: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
     static NAVIGATION_COMPLETION: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
     static PENDING_SCRIPT_COUNT: RefCell<std::sync::atomic::AtomicUsize> = RefCell::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // Network Monitoring
+    pub static NETWORK_LOGS_MAP: RefCell<HashMap<String, crate::core::NetworkLogEntry>> = RefCell::new(HashMap::new());
+    pub static NETWORK_MONITORING_ENABLED: RefCell<bool> = RefCell::new(false);
+    pub static MAX_NETWORK_LOGS: RefCell<usize> = RefCell::new(100);
+    pub static NETWORK_EVENT_TOKENS: RefCell<HashMap<String, windows::Win32::System::WinRT::EventRegistrationToken>> = RefCell::new(HashMap::new());
 }
 
 /// Anti-bot detection script that runs on every page load
@@ -198,6 +204,126 @@ impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpCookieH
             PENDING_CDP_COOKIES.with(|map| {
                 map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
             });
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------
+// Network Event Handlers
+// ----------------------------------------------------------------
+#[windows::core::implement(ICoreWebView2DevToolsProtocolEventReceivedEventHandler)]
+struct NetworkRequestReceivedHandler;
+
+impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkRequestReceivedHandler {
+    fn Invoke(
+        &self,
+        _sender: &Option<ICoreWebView2>,
+        args: &Option<ICoreWebView2DevToolsProtocolEventReceivedEventArgs>,
+    ) -> WinResult<()> {
+        if let Some(args) = args {
+            let json_str = unsafe {
+                let mut pwstr = windows::core::PWSTR::null();
+                args.ParameterObjectAsJson(&mut pwstr)?;
+                let s = pwstr.to_string().unwrap_or_default();
+                if !pwstr.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(pwstr.0 as *const std::ffi::c_void);
+                }
+                s
+            };
+            
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                let enabled = NETWORK_MONITORING_ENABLED.with(|e| *e.borrow());
+                if !enabled { return Ok(()); }
+
+                let request_id = json["requestId"].as_str().unwrap_or_default().to_string();
+                let url = json["request"]["url"].as_str().unwrap_or_default().to_string();
+                let method = json["request"]["method"].as_str().unwrap_or_default().to_string();
+                let timestamp = json["wallTime"].as_f64().unwrap_or(0.0);
+                
+                let mut headers = HashMap::new();
+                if let Some(h) = json["request"]["headers"].as_object() {
+                    for (k, v) in h {
+                        headers.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                    }
+                }
+                
+                let post_data = json["request"]["postData"].as_str().map(|s| s.to_string());
+                
+                let entry = crate::core::NetworkLogEntry {
+                    request_id: request_id.clone(),
+                    request: crate::core::NetworkRequest {
+                        url,
+                        method,
+                        headers,
+                        timestamp,
+                        post_data,
+                    },
+                    response: None,
+                };
+                
+                NETWORK_LOGS_MAP.with(|map| {
+                    let mut m = map.borrow_mut();
+                    let max = MAX_NETWORK_LOGS.with(|m| *m.borrow());
+                    if m.len() >= max {
+                        let key = m.keys().next().cloned();
+                        if let Some(k) = key { m.remove(&k); }
+                    }
+                    m.insert(request_id, entry);
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[windows::core::implement(ICoreWebView2DevToolsProtocolEventReceivedEventHandler)]
+struct NetworkResponseReceivedHandler;
+
+impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkResponseReceivedHandler {
+    fn Invoke(
+        &self,
+        _sender: &Option<ICoreWebView2>,
+        args: &Option<ICoreWebView2DevToolsProtocolEventReceivedEventArgs>,
+    ) -> WinResult<()> {
+        if let Some(args) = args {
+            let json_str = unsafe {
+                let mut pwstr = windows::core::PWSTR::null();
+                args.ParameterObjectAsJson(&mut pwstr)?;
+                let s = pwstr.to_string().unwrap_or_default();
+                if !pwstr.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(pwstr.0 as *const std::ffi::c_void);
+                }
+                s
+            };
+             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                let request_id = json["requestId"].as_str().unwrap_or_default();
+                
+                 NETWORK_LOGS_MAP.with(|map| {
+                    let mut m = map.borrow_mut();
+                    if let Some(entry) = m.get_mut(request_id) {
+                        let url = json["response"]["url"].as_str().unwrap_or_default().to_string();
+                        let status = json["response"]["status"].as_i64().unwrap_or(0) as i32;
+                        let mime_type = json["response"]["mimeType"].as_str().unwrap_or_default().to_string();
+                        let timestamp = json["timestamp"].as_f64().unwrap_or(0.0);
+                        
+                        let mut headers = HashMap::new();
+                        if let Some(h) = json["response"]["headers"].as_object() {
+                            for (k, v) in h {
+                                headers.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                            }
+                        }
+
+                        entry.response = Some(crate::core::NetworkResponse {
+                            url,
+                            status,
+                            headers,
+                            mime_type,
+                            timestamp,
+                        });
+                    }
+                });
+            }
         }
         Ok(())
     }
@@ -1794,6 +1920,11 @@ impl WebViewInstance {
         self.controller.is_some()
     }
 
+    /// Check if the underlying window handle is still valid (not destroyed by user)
+    pub fn is_window_valid(&self) -> bool {
+        self.window.is_valid()
+    }
+
     /// Get page snapshot (HTML, ARIA, or text)
     pub fn snapshot(&self, format: &str) -> Result<String, String> {
         log_webview_start("WebViewInstance::snapshot", &format!("format={}", format));
@@ -2308,6 +2439,106 @@ impl WebViewInstance {
         } else {
             log_webview_error("WebViewInstance::extract", "WebView not ready");
             Err("WebView not ready".to_string())
+        }
+    }
+    pub fn manage_network(&self, action: crate::core::NetworkAction) -> Result<String, String> {
+        log_webview_start("WebViewInstance::manage_network", &format!("action={:?}", action));
+
+        match action {
+            crate::core::NetworkAction::Enable { max_logs } => {
+                let max = max_logs.unwrap_or(100);
+                MAX_NETWORK_LOGS.with(|m| *m.borrow_mut() = max);
+                NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = true);
+                
+                if let Some(controller) = &self.controller {
+                    unsafe {
+                        let webview = controller.CoreWebView2().map_err(|e| format!("{:?}", e))?;
+                        
+                        // Register event handlers via GetDevToolsProtocolEventReceiver
+                        let req_receiver = webview.GetDevToolsProtocolEventReceiver(
+                            &HSTRING::from("Network.requestWillBeSent"),
+                        ).map_err(|e| format!("{:?}", e))?;
+                        let mut token_req: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
+                        req_receiver.add_DevToolsProtocolEventReceived(
+                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(NetworkRequestReceivedHandler),
+                            &mut token_req,
+                        ).map_err(|e| format!("{:?}", e))?;
+                        
+                        let res_receiver = webview.GetDevToolsProtocolEventReceiver(
+                            &HSTRING::from("Network.responseReceived"),
+                        ).map_err(|e| format!("{:?}", e))?;
+                        let mut token_res: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
+                        res_receiver.add_DevToolsProtocolEventReceived(
+                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(NetworkResponseReceivedHandler),
+                            &mut token_res,
+                        ).map_err(|e| format!("{:?}", e))?;
+                        
+                        NETWORK_EVENT_TOKENS.with(|map| {
+                            let mut m = map.borrow_mut();
+                            m.insert("requestWillBeSent".to_string(), token_req);
+                            m.insert("responseReceived".to_string(), token_res);
+                        });
+                        
+                        // Enable Network domain
+                         webview.CallDevToolsProtocolMethod(
+                            &HSTRING::from("Network.enable"),
+                            &HSTRING::from("{}"),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        ).map_err(|e| format!("{:?}", e))?;
+                    }
+                }
+                Ok("Network monitoring enabled".to_string())
+            },
+             crate::core::NetworkAction::Disable => {
+                 NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = false);
+                 
+                  if let Some(controller) = &self.controller {
+                    unsafe {
+                        let webview = controller.CoreWebView2().map_err(|e| format!("{:?}", e))?;
+                        
+                         // Disable Network domain
+                         webview.CallDevToolsProtocolMethod(
+                            &HSTRING::from("Network.disable"),
+                            &HSTRING::from("{}"),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        ).map_err(|e| format!("{:?}", e))?;
+                        
+                        // Unregister event handlers via GetDevToolsProtocolEventReceiver
+                        NETWORK_EVENT_TOKENS.with(|map| {
+                            let mut m = map.borrow_mut();
+                            if let Some(token) = m.remove("requestWillBeSent") {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Network.requestWillBeSent")) {
+                                    let _ = receiver.remove_DevToolsProtocolEventReceived(token);
+                                }
+                            }
+                            if let Some(token) = m.remove("responseReceived") {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Network.responseReceived")) {
+                                    let _ = receiver.remove_DevToolsProtocolEventReceived(token);
+                                }
+                            }
+                        });
+                    }
+                }
+                 Ok("Network monitoring disabled".to_string())
+             },
+             crate::core::NetworkAction::GetLogs { filter } => {
+                let logs = NETWORK_LOGS_MAP.with(|map| {
+                    let m = map.borrow();
+                    let mut vec: Vec<crate::core::NetworkLogEntry> = m.values().cloned().collect();
+                    // Filters
+                    if let Some(f) = filter {
+                        vec.retain(|entry| entry.request.url.contains(&f));
+                    }
+                    // Sort by timestamp
+                    vec.sort_by(|a, b| a.request.timestamp.partial_cmp(&b.request.timestamp).unwrap_or(std::cmp::Ordering::Equal));
+                    vec
+                });
+                serde_json::to_string(&logs).map_err(|e| format!("{:?}", e))
+             },
+             crate::core::NetworkAction::ClearLogs => {
+                 NETWORK_LOGS_MAP.with(|map| map.borrow_mut().clear());
+                 Ok("Logs cleared".to_string())
+             }
         }
     }
 }

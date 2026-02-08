@@ -68,6 +68,12 @@ pub async fn route_tool(
                 Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid agent params: {}", e)),
             }
         }
+        "network" => {
+            match serde_json::from_value::<NetworkRequest>(params) {
+                Ok(req) => handle_network(req, state).await,
+                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid network params: {}", e)),
+            }
+        }
         _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: {}", tool)),
     }
 }
@@ -165,9 +171,9 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
             execute_script(&req.session, script, state, req.timeout_ms).await
         }
         WaitForCondition::NetworkIdle => {
-            // Simplified: just wait a bit for network to settle
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            Ok("networkidle".to_string())
+            // Wait for network to truly settle (no pending XHR/fetch for 500ms)
+            let script = generate_wait_for_condition_script("network_idle", None, req.timeout_ms);
+            execute_script(&req.session, script, state, req.timeout_ms).await
         }
         WaitForCondition::Selector => {
             if let Some(selector) = &req.wait_selector {
@@ -577,6 +583,11 @@ async fn execute_action(
     }
 }
 
+/// Convert a screenshot path to a compact browser:// URI for MCP responses
+fn to_screenshot_uri(session: &str, filename: &str) -> String {
+    format!("browser://screenshots/{}/{}", session, filename)
+}
+
 async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, String> {
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     
@@ -611,7 +622,7 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
             std::fs::write(&screenshot_path, &bytes)
                 .map_err(|e| format!("Failed to save screenshot: {}", e))?;
             tracing::info!("[take_screenshot] Saved {} bytes to {:?}", bytes.len(), screenshot_path);
-            Ok(screenshot_path.to_string_lossy().to_string())
+            Ok(to_screenshot_uri(session, &filename))
         }
         Ok(Ok(Err(e))) => Err(format!("Screenshot failed: {}", e)),
         Ok(Err(_)) => Err("Channel closed".to_string()),
@@ -968,8 +979,8 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                             // Save to file
                             match std::fs::write(&screenshot_path, &bytes) {
                                 Ok(_) => {
-                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n保存先: {}\nサイズ: {} bytes", 
-                                        screenshot_path.display(), bytes.len()));
+                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n{}　({} bytes)", 
+                                        to_screenshot_uri(&req.session, &filename), bytes.len()));
                                 }
                                 Err(e) => {
                                     text.push_str(&format!("\n【スクリーンショット保存失敗】{}", e));
@@ -1187,29 +1198,40 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
 // ============================================================================
 
 async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolResponse {
-    // Wait for minimum element count if specified
-    if let Some(min_count) = req.wait_for_count {
-        let wait_script = format!(r#"
-            (async function() {{
-                const timeout = {};
-                const startTime = Date.now();
-                while ((Date.now() - startTime) < timeout) {{
-                    const count = document.querySelectorAll("{}").length;
-                    if (count >= {}) {{
-                        return JSON.stringify({{ success: true, count: count }});
-                    }}
-                    await new Promise(r => setTimeout(r, 100));
+    // Smart wait: always ensure elements exist before extraction
+    // If wait_for_count is specified, use that; otherwise auto-wait for at least 1 element
+    let min_count = req.wait_for_count.unwrap_or(1);
+    let auto_wait_timeout = if req.wait_for_count.is_some() {
+        req.wait_timeout_ms
+    } else {
+        5000 // Default 5s auto-wait for elements to appear
+    };
+    
+    let wait_script = format!(r#"
+        (async function() {{
+            const timeout = {};
+            const startTime = Date.now();
+            while ((Date.now() - startTime) < timeout) {{
+                const count = document.querySelectorAll("{}").length;
+                if (count >= {}) {{
+                    return JSON.stringify({{ success: true, count: count }});
                 }}
-                return JSON.stringify({{ success: false, count: document.querySelectorAll("{}").length }});
-            }})();
-        "#, req.wait_timeout_ms, req.selector.replace('"', "\\\""), min_count, req.selector.replace('"', "\\\""));
-        
-        let _ = execute_script(&req.session, wait_script, state, req.wait_timeout_ms + 1000).await;
+                await new Promise(r => setTimeout(r, 200));
+            }}
+            return JSON.stringify({{ success: false, count: document.querySelectorAll("{}").length }});
+        }})();
+    "#, auto_wait_timeout, req.selector.replace('"', "\\\""), min_count, req.selector.replace('"', "\\\""));
+    
+    let wait_result = execute_script(&req.session, wait_script, state, auto_wait_timeout + 1000).await;
+    
+    // Log wait result for diagnostics
+    if let Ok(ref wr) = wait_result {
+        tracing::info!("[extract] Element wait result: {}", wr);
     }
     
     // Handle scroll for more if enabled
     if req.scroll_for_more {
-        for _ in 0..req.scroll_max {
+        for i in 0..req.scroll_max {
             // Scroll to bottom
             let scroll_script = r#"
                 window.scrollTo(0, document.body.scrollHeight);
@@ -1217,8 +1239,9 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
             "#;
             let _ = execute_script(&req.session, scroll_script.to_string(), state, 5000).await;
             
-            // Wait for new content
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Wait for new content (increasing delay for lazy-load pages)
+            let delay = 500 + (i as u64 * 200);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
     
@@ -1235,11 +1258,36 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
             let count = parsed["count"].as_u64().unwrap_or(0);
             let data = parsed["data"].clone();
             
-            McpToolResponse::success_text(format!(
-                "Extracted {} items:\n{}",
-                count,
-                serde_json::to_string_pretty(&data).unwrap_or_default()
-            ))
+            // If still 0 items, provide diagnostic info
+            if count == 0 {
+                // Try to get page info for debugging
+                let diag_script = format!(r#"
+                    JSON.stringify({{
+                        readyState: document.readyState,
+                        bodyChildCount: document.body ? document.body.children.length : 0,
+                        totalElements: document.querySelectorAll('*').length,
+                        matchingSelector: document.querySelectorAll('{}').length,
+                        url: window.location.href
+                    }})
+                "#, req.selector.replace('"', "\\\""));
+                let diag = execute_script(&req.session, diag_script, state, 3000).await
+                    .unwrap_or_else(|_| "diagnostic unavailable".to_string());
+                
+                tracing::warn!("[extract] 0 items extracted. Diagnostics: {}", diag);
+                
+                McpToolResponse::success_text(format!(
+                    "Extracted 0 items (selector: '{}')\nDiagnostics: {}\nHint: The page may need more time to load dynamic content. Try using interact with wait{{condition:'element',value:'{}'}} before extract.",
+                    req.selector,
+                    diag,
+                    req.selector
+                ))
+            } else {
+                McpToolResponse::success_text(format!(
+                    "Extracted {} items:\n{}",
+                    count,
+                    serde_json::to_string_pretty(&data).unwrap_or_default()
+                ))
+            }
         }
         Err(e) => McpToolResponse::error("EXTRACT_FAILED", &e),
     }
@@ -1263,7 +1311,9 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                         "last_accessed": s.last_accessed,
                         "active": s.active,
                         "acquired": s.acquired,
-                        "expired": s.expired
+                        "expired": s.expired,
+                        "ttl_hours": s.ttl_hours,
+                        "expires_at": s.expires_at
                     }))
                     .collect();
                 return McpToolResponse::success_json(serde_json::json!({
@@ -1284,7 +1334,7 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             create_if_missing: true,
             headless: req.headless,
             auth_check: None,
-            ttl_hours: 168,  // 1 week (0 = no expiration)
+            ttl_hours: req.ttl_hours,  // 168 = 1 week (default), 0 = no expiration
             auto_extend: true,
             restore: req.restore,
         };
@@ -2267,6 +2317,45 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
 }
 
 // ============================================================================
+// 9. Network
+// ============================================================================
+
+async fn handle_network(req: NetworkRequest, state: &V2AppState) -> McpToolResponse {
+    use crate::mcp_v3::types::NetworkRequestAction;
+    
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&req.session) {
+        Some(h) => h,
+        None => return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session)),
+    };
+
+    let action = match req.action {
+        NetworkRequestAction::Enable { max_logs } => crate::core::NetworkAction::Enable { max_logs },
+        NetworkRequestAction::Disable => crate::core::NetworkAction::Disable,
+        NetworkRequestAction::GetLogs { filter } => crate::core::NetworkAction::GetLogs { filter },
+        NetworkRequestAction::ClearLogs => crate::core::NetworkAction::ClearLogs,
+    };
+
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::ManageNetwork {
+        id: handle.id.clone(),
+        action,
+        resp_tx: tx,
+    };
+
+    if state.cmd_tx.send(cmd).is_err() {
+        return McpToolResponse::error("COMMAND_FAILED", "Failed to send network command");
+    }
+
+    match tokio::time::timeout(Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(result))) => McpToolResponse::success_text(result), 
+        Ok(Ok(Err(e))) => McpToolResponse::error("NETWORK_ERROR", &e),
+        Ok(Err(_)) => McpToolResponse::error("CHANNEL_CLOSED", "Network channel closed"),
+        Err(_) => McpToolResponse::error("TIMEOUT", "Network command timed out"),
+    }
+}
+
+// ============================================================================
 // MCP Tool List
 // ============================================================================
 
@@ -2375,6 +2464,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "import": { "type": "string", "description": "Import cookies from browser profile" },
                     "headless": { "type": "boolean", "description": "false=visible window (recommended for bot-protected sites), true=hidden window. Default: false" },
                     "restore": { "type": "boolean", "default": true, "description": "Restore last URL on session resume" },
+                    "ttl_hours": { "type": "integer", "default": 168, "description": "Session TTL in hours. Default: 168 (1 week). Set to 0 for persistent/no-expiration sessions." },
                     "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"], "description": "Browser to import cookies from" },
                     "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import (e.g. ['amazon.co.jp'])" },
                     "device": { "type": "string", "description": "Device preset name (e.g., 'iPhone 14', 'Pixel 7'). Sets viewport, user-agent, and enables touch simulation." },
@@ -2432,6 +2522,27 @@ pub fn get_mcp_tools() -> serde_json::Value {
                             "human_mode": { "type": "boolean", "description": "Enable human-like behavior: delays and natural movements (recommended for bot-protected sites)" },
                             "instant_type": { "type": "boolean", "description": "Use instant mode for typing (avoids autocomplete interference on Amazon, Google, etc.)" }
                         }
+                    }
+                },
+                "required": ["action"]
+            }
+        },
+        {
+            "name": "network",
+            "description": "Monitor and intercept network requests/responses (CDP Network domain). Use to capture API calls, headers, and payloads.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "default": "default", "description": "Session name (default: 'default')" },
+                    "action": {
+                        "type": "object",
+                        "description": "Network monitoring action to perform",
+                        "properties": {
+                            "type": { "type": "string", "enum": ["enable", "disable", "get_logs", "clear_logs"], "description": "Action type: enable=start capturing, disable=stop capturing, get_logs=retrieve captured logs, clear_logs=delete all logs" },
+                            "max_logs": { "type": "integer", "description": "Max logs to keep (last N)", "default": 100 },
+                            "filter": { "type": "string", "description": "Filter logs by URL substring" }
+                        },
+                        "required": ["type"]
                     }
                 },
                 "required": ["action"]

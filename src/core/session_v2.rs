@@ -1,7 +1,6 @@
 //! WBP2 Session Management v2
 //!
 //! Named session management with persistence and auth state tracking.
-//! See: docs/PROTOCOL_V2.md Section 3.1
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -75,7 +74,7 @@ pub struct NamedSessionMeta {
     pub auto_restore: bool,
 }
 
-fn default_ttl_hours() -> u64 { 168 } // 1 week
+fn default_ttl_hours() -> u64 { 168 } // 1 week default
 fn default_auto_restore() -> bool { true } // Auto-restore last URL by default
 
 /// Named session state (in-memory, includes runtime handle)
@@ -317,11 +316,11 @@ impl SessionManagerV2 {
                 
                 // If handle is None (session loaded from disk), we need to create a new window
                 if session.handle.is_none() {
-                    // Create session options (v1 compatible)
                     let options = SessionOptions {
                         profile: session.meta.profile.clone(),
                         headless: request.headless,
                         user_agent: None,
+                        window_title: Some(request.name.clone()),
                     };
                     
                     // Create the actual session window
@@ -368,11 +367,11 @@ impl SessionManagerV2 {
             }
         }
         
-        // Create session options (v1 compatible)
         let options = SessionOptions {
             profile: profile_name.clone(),
             headless: request.headless,
             user_agent: None,
+            window_title: Some(request.name.clone()),
         };
         
         // Create the actual session
@@ -482,6 +481,48 @@ impl SessionManagerV2 {
         Ok(())
     }
     
+    /// Close a session's WebView window and clear its handle
+    /// This actually stops the WebView process while keeping the session metadata
+    pub fn close_session(&self, name: &str) -> Result<Option<String>, String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        
+        // Get the handle's session ID for closing the core WebView
+        let session_id = session.handle.as_ref().map(|h| h.id.clone());
+        
+        // Clear the handle so the session becomes inactive
+        session.handle = None;
+        session.acquired = false;
+        session.meta.last_accessed = chrono_now_iso8601();
+        
+        drop(sessions);
+        self.save_sessions()?;
+        
+        Ok(session_id)
+    }
+    
+    /// Clear the handle for a session identified by its core session ID (v1 UUID)
+    /// Called by session thread when window is destroyed by user
+    pub fn clear_handle_by_id(&self, session_id: &str) {
+        if let Ok(mut sessions) = self.sessions.write() {
+            for (_name, session) in sessions.iter_mut() {
+                if let Some(ref handle) = session.handle {
+                    if handle.id == session_id {
+                        tracing::info!("[SessionV2] Window closed by user, clearing handle for session with id={}", session_id);
+                        session.handle = None;
+                        session.acquired = false;
+                        session.meta.last_accessed = chrono_now_iso8601();
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = self.save_sessions();
+    }
+    
     /// Suspend a session (close WebView but keep metadata for later resume)
     /// Returns the session ID that was closed, if any
     pub fn suspend_session(&self, name: &str) -> Result<Option<String>, String> {
@@ -512,8 +553,8 @@ impl SessionManagerV2 {
     }
     
     /// Auto-suspend idle sessions that haven't been used for the specified duration
-    /// Returns list of suspended session names
-    pub fn auto_suspend_idle(&self, idle_seconds: u64) -> Vec<String> {
+    /// Returns list of (session_name, session_id) for WebView cleanup
+    pub fn auto_suspend_idle(&self, idle_seconds: u64) -> Vec<(String, String)> {
         let now = chrono::Utc::now();
         let mut suspended = Vec::new();
         
@@ -549,15 +590,16 @@ impl SessionManagerV2 {
                 .collect()
         };
         
-        // Suspend each session
+        // Suspend each session, collecting session IDs for WebView cleanup
         for name in sessions_to_suspend {
-            if let Ok(Some(_)) = self.suspend_session(&name) {
-                suspended.push(name);
+            if let Ok(Some(session_id)) = self.suspend_session(&name) {
+                suspended.push((name, session_id));
             }
         }
         
         if !suspended.is_empty() {
-            tracing::info!("[SessionManagerV2] Auto-suspended {} idle sessions: {:?}", suspended.len(), suspended);
+            tracing::info!("[SessionManagerV2] Auto-suspended {} idle sessions: {:?}", 
+                suspended.len(), suspended.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>());
         }
         
         suspended
@@ -965,9 +1007,10 @@ impl SessionManagerV2 {
     
     /// Cleanup idle sessions that haven't been accessed recently
     /// 
-    /// Uses LRU (Least Recently Used) strategy based on last_accessed
-    pub fn cleanup_idle(&self, _max_idle_seconds: u64) -> Vec<String> {
-        let _now = chrono_now_iso8601();
+    /// Destroys sessions whose last_accessed exceeds max_idle_seconds.
+    /// Acquired sessions are never cleaned up.
+    pub fn cleanup_idle(&self, max_idle_seconds: u64) -> Vec<String> {
+        let now = chrono::Utc::now();
         let mut removed = Vec::new();
         
         // Get list of sessions to remove
@@ -984,10 +1027,15 @@ impl SessionManagerV2 {
                         return false;
                     }
                     
-                    // Check if session is idle (simplified - in production parse ISO8601)
-                    // For now, just remove sessions that are not acquired
-                    // A proper implementation would parse timestamps
-                    !s.acquired && s.handle.is_none()
+                    // Parse last_accessed timestamp and check idle duration
+                    if let Ok(last_accessed) = chrono::DateTime::parse_from_rfc3339(&s.meta.last_accessed) {
+                        let last_accessed_utc = last_accessed.with_timezone(&chrono::Utc);
+                        let idle_duration = now.signed_duration_since(last_accessed_utc);
+                        idle_duration.num_seconds() as u64 >= max_idle_seconds
+                    } else {
+                        // Can't parse timestamp — consider it stale
+                        true
+                    }
                 })
                 .map(|s| s.meta.name.clone())
                 .collect()
@@ -1001,7 +1049,7 @@ impl SessionManagerV2 {
         }
         
         if !removed.is_empty() {
-            tracing::info!("[SessionManagerV2] Cleaned up {} idle sessions", removed.len());
+            tracing::info!("[SessionManagerV2] Cleaned up {} idle sessions: {:?}", removed.len(), removed);
         }
         
         removed

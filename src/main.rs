@@ -167,6 +167,9 @@ async fn run_http_server(config: Config) {
         cmd_tx: unbounded_tx,
     };
 
+    // Clone cmd_tx before v2_state is moved into router
+    let cmd_tx_cleanup = v2_state.cmd_tx.clone();
+
     // Create routers
     let event_hub = Arc::new(crate::core::websocket::EventHub::new());
     let ws_router = crate::core::websocket::create_ws_router(event_hub.clone());
@@ -179,16 +182,42 @@ async fn run_http_server(config: Config) {
     tracing::info!("API: http://{}/", addr);
     tracing::info!("MCP: webview-bridge-rust.exe --mcp-stdio (requires server running)");
 
-    // Start auto-suspend timer (suspends idle sessions after 5 minutes)
+    // Start auto-cleanup timer (suspends idle sessions + cleans expired)
     let idle_timeout_secs = 300u64; // 5 minutes
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60)); // Check every minute
         loop {
             interval.tick().await;
             let manager = crate::api_v2::get_session_manager_v2();
+            
+            // 1. Suspend idle sessions and close their WebView windows
             let suspended = manager.auto_suspend_idle(idle_timeout_secs);
+            for (session_name, session_id) in &suspended {
+                // Close the actual WebView window
+                let (tx, _rx) = tokio::sync::oneshot::channel();
+                let _ = cmd_tx_cleanup.send(crate::core::AppCommand::CloseSession {
+                    id: session_id.clone(),
+                    resp_tx: tx,
+                });
+                tracing::info!("[AutoCleanup] Closed WebView for suspended session '{}' (id={})", session_name, session_id);
+            }
             if !suspended.is_empty() {
-                tracing::info!("[AutoSuspend] Suspended {} idle sessions", suspended.len());
+                tracing::info!("[AutoCleanup] Suspended {} idle sessions", suspended.len());
+            }
+            
+            // 2. Cleanup TTL-expired sessions
+            if let Ok(expired_ids) = manager.cleanup_expired() {
+                for session_id in &expired_ids {
+                    // Close the WebView window
+                    let (tx, _rx) = tokio::sync::oneshot::channel();
+                    let _ = cmd_tx_cleanup.send(crate::core::AppCommand::CloseSession {
+                        id: session_id.clone(),
+                        resp_tx: tx,
+                    });
+                }
+                if !expired_ids.is_empty() {
+                    tracing::info!("[AutoCleanup] Cleaned up {} expired sessions", expired_ids.len());
+                }
             }
         }
     });
@@ -282,6 +311,10 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
         }
         AppCommand::PressKeyCdp { id, key, resp_tx } => {
             let result = manager.press_key_cdp(&id, key).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::ManageNetwork { id, action, resp_tx } => {
+            let result = manager.manage_network(&id, action).await;
             let _ = resp_tx.send(result);
         }
     }

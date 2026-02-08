@@ -224,6 +224,7 @@ pub enum CaptureInclude {
 }
 
 fn default_true() -> bool { true }
+fn default_ttl_hours_session() -> u64 { 168 } // 1 week default
 
 // ============================================================================
 // 4. Extract
@@ -270,6 +271,8 @@ pub struct SessionRequest {
     pub headless: bool,
     #[serde(default = "default_true")]
     pub restore: bool,
+    #[serde(default = "default_ttl_hours_session")]
+    pub ttl_hours: u64,  // 168 = 1 week (default), 0 = no expiration (infinite/persistent)
     // import options
     #[serde(default)]
     pub browser: Option<String>,
@@ -399,6 +402,32 @@ pub enum AgentAction {
     Resume,
     Status,
     Cancel,
+}
+
+// ============================================================================
+// 9. Network
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkRequest {
+    #[serde(default = "default_session")]
+    pub session: String,
+    pub action: NetworkRequestAction,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NetworkRequestAction {
+    Enable { 
+        #[serde(default)]
+        max_logs: Option<usize> 
+    },
+    Disable,
+    GetLogs { 
+        #[serde(default)]
+        filter: Option<String> 
+    },
+    ClearLogs,
 }
 
 // ============================================================================

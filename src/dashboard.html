@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebView Bridge — OpenClaw Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg0: #08080f;
+            --bg1: #0e0e1a;
+            --bg2: #16162a;
+            --bg3: #1e1e36;
+            --card: rgba(255, 255, 255, 0.025);
+            --card-h: rgba(255, 255, 255, 0.055);
+            --bdr: rgba(255, 255, 255, 0.06);
+            --bdr-a: rgba(0, 212, 255, 0.3);
+            --acc: #00d4ff;
+            --acc2: #7c3aed;
+            --grn: #10b981;
+            --ylw: #f59e0b;
+            --red: #ef4444;
+            --org: #f97316;
+            --txt: #f0f0f5;
+            --tx2: #8888a0;
+            --tx3: #555570;
+            --glass: rgba(255, 255, 255, 0.03);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg0);
+            color: var(--txt);
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--acc);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .app {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sb {
+            width: 220px;
+            background: var(--bg1);
+            border-right: 1px solid var(--bdr);
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            padding: 1.1rem 0.6rem;
+        }
+
+        .mn {
+            margin-left: 220px;
+            flex: 1;
+            padding: 1.25rem 1.75rem;
+            max-width: 1440px;
+        }
+
+        .logo {
+            padding: 0 0.4rem 1rem;
+            border-bottom: 1px solid var(--bdr);
+            margin-bottom: 0.75rem;
+        }
+
+        .logo-n {
+            font-size: 0.95rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--acc), var(--acc2));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-v {
+            font-size: 0.6rem;
+            color: var(--tx3);
+            margin-top: 2px;
+        }
+
+        .ng {
+            margin-bottom: 0.75rem;
+        }
+
+        .nl {
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--tx3);
+            padding: 0 0.6rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .nb {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.6rem;
+            border-radius: 7px;
+            color: var(--tx2);
+            cursor: pointer;
+            transition: all 0.12s;
+            font-size: 0.8rem;
+            margin-bottom: 1px;
+        }
+
+        .nb:hover {
+            background: var(--card-h);
+            color: var(--txt);
+        }
+
+        .nb.on {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(124, 58, 237, 0.1));
+            color: var(--acc);
+            border: 1px solid rgba(0, 212, 255, 0.12);
+        }
+
+        .nb .i {
+            width: 18px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .nb .bc {
+            margin-left: auto;
+            background: var(--acc);
+            color: #000;
+            font-size: 0.6rem;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        .sp {
+            margin-top: auto;
+            padding: 0.5rem;
+            border-radius: 8px;
+            background: var(--card);
+            border: 1px solid var(--bdr);
+            font-size: 0.7rem;
+        }
+
+        .sp .dt {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: pu 2s ease infinite;
+        }
+
+        .dg {
+            background: var(--grn);
+            box-shadow: 0 0 6px var(--grn);
+        }
+
+        .dr {
+            background: var(--red);
+            box-shadow: 0 0 6px var(--red);
+        }
+
+        @keyframes pu {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .5
+            }
+        }
+
+        /* Pages */
+        .pg {
+            display: none;
+            animation: fi .2s ease;
+        }
+
+        .pg.on {
+            display: block;
+        }
+
+        @keyframes fi {
+            from {
+                opacity: 0;
+                transform: translateY(6px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        .ph {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .ph h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .ph p {
+            font-size: 0.75rem;
+            color: var(--tx3);
+            margin-top: 2px;
+        }
+
+        /* Stats */
+        .sts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .st {
+            background: var(--card);
+            border: 1px solid var(--bdr);
+            border-radius: 10px;
+            padding: 0.9rem;
+            transition: border-color .2s;
+        }
+
+        .st:hover {
+            border-color: var(--bdr-a);
+        }
+
+        .st-l {
+            font-size: 0.65rem;
+            color: var(--tx3);
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+
+        .st-v {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-top: 0.2rem;
+        }
+
+        .st-s {
+            font-size: 0.65rem;
+            color: var(--tx2);
+            margin-top: 0.2rem;
+        }
+
+        /* Card */
+        .cd {
+            background: var(--card);
+            border: 1px solid var(--bdr);
+            border-radius: 12px;
+            padding: 1.1rem;
+            margin-bottom: 1.1rem;
+        }
+
+        .ch {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .ch h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        /* Table */
+        .tb {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .tb th {
+            text-align: left;
+            padding: 0.55rem 0.75rem;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+            color: var(--tx3);
+            font-weight: 500;
+            border-bottom: 1px solid var(--bdr);
+        }
+
+        .tb td {
+            padding: 0.55rem 0.75rem;
+            border-bottom: 1px solid var(--bdr);
+            vertical-align: middle;
+        }
+
+        .tb tr {
+            transition: background .12s;
+        }
+
+        .tb tr:hover {
+            background: var(--card-h);
+        }
+
+        .tb tr.ck {
+            cursor: pointer;
+        }
+
+        /* Badge */
+        .bd {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+
+        .bg {
+            background: rgba(16, 185, 129, .15);
+            color: var(--grn);
+        }
+
+        .by {
+            background: rgba(245, 158, 11, .15);
+            color: var(--ylw);
+        }
+
+        .br {
+            background: rgba(239, 68, 68, .15);
+            color: var(--red);
+        }
+
+        .bb {
+            background: rgba(0, 212, 255, .15);
+            color: var(--acc);
+        }
+
+        .bx {
+            background: rgba(255, 255, 255, .08);
+            color: var(--tx2);
+        }
+
+        .bp {
+            background: rgba(124, 58, 237, .15);
+            color: var(--acc2);
+        }
+
+        /* Buttons */
+        .bn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.4rem 0.75rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all .12s;
+            font-family: inherit;
+            white-space: nowrap;
+        }
+
+        .bn:active {
+            transform: scale(.97);
+        }
+
+        .bn-p {
+            background: linear-gradient(135deg, var(--acc), var(--acc2));
+            color: #fff;
+        }
+
+        .bn-p:hover {
+            opacity: .9;
+        }
+
+        .bn-s {
+            background: rgba(255, 255, 255, .05);
+            color: var(--tx2);
+            border: 1px solid var(--bdr);
+        }
+
+        .bn-s:hover {
+            background: rgba(255, 255, 255, .1);
+            color: var(--txt);
+        }
+
+        .bn-d {
+            background: rgba(239, 68, 68, .12);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, .2);
+        }
+
+        .bn-d:hover {
+            background: rgba(239, 68, 68, .2);
+        }
+
+        .bn-g {
+            background: rgba(16, 185, 129, .12);
+            color: var(--grn);
+            border: 1px solid rgba(16, 185, 129, .2);
+        }
+
+        .bn-g:hover {
+            background: rgba(16, 185, 129, .2);
+        }
+
+        .bn-w {
+            background: rgba(245, 158, 11, .12);
+            color: var(--ylw);
+            border: 1px solid rgba(245, 158, 11, .2);
+        }
+
+        .bn-w:hover {
+            background: rgba(245, 158, 11, .2);
+        }
+
+        .bn-sm {
+            padding: 0.28rem 0.55rem;
+            font-size: 0.7rem;
+        }
+
+        .bg-r {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        /* Forms */
+        .fg {
+            margin-bottom: 0.85rem;
+        }
+
+        .fg label {
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: var(--tx2);
+            margin-bottom: 0.35rem;
+        }
+
+        .fi {
+            width: 100%;
+            padding: 0.5rem 0.7rem;
+            background: rgba(0, 0, 0, .3);
+            border: 1px solid var(--bdr);
+            border-radius: 6px;
+            color: var(--txt);
+            font-size: 0.8rem;
+            font-family: inherit;
+            transition: border-color .2s;
+        }
+
+        .fi:focus {
+            outline: none;
+            border-color: var(--acc);
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, .07);
+        }
+
+        .fi::placeholder {
+            color: var(--tx3);
+        }
+
+        select.fi {
+            cursor: pointer;
+        }
+
+        .fr {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .fh {
+            font-size: 0.65rem;
+            color: var(--tx3);
+            margin-top: 0.25rem;
+        }
+
+        /* Toggle */
+        .tg {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            background: rgba(255, 255, 255, .1);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background .2s;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .tg.on {
+            background: var(--acc);
+        }
+
+        .tg::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform .2s;
+        }
+
+        .tg.on::after {
+            transform: translateX(16px);
+        }
+
+        /* Detail panel */
+        .dp {
+            position: fixed;
+            top: 0;
+            right: -500px;
+            width: 460px;
+            height: 100vh;
+            background: var(--bg1);
+            border-left: 1px solid var(--bdr);
+            z-index: 100;
+            transition: right .3s ease;
+            overflow-y: auto;
+            padding: 1.25rem;
+        }
+
+        .dp.op {
+            right: 0;
+        }
+
+        .dp .cb {
+            position: absolute;
+            top: .75rem;
+            right: .75rem;
+            background: none;
+            border: none;
+            color: var(--tx2);
+            cursor: pointer;
+            font-size: 1.1rem;
+        }
+
+        .ds {
+            margin-bottom: 1rem;
+        }
+
+        .ds h4 {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+            color: var(--tx3);
+            margin-bottom: 0.4rem;
+        }
+
+        .dr_ {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.35rem 0;
+            font-size: 0.8rem;
+        }
+
+        .dr_ .dk {
+            color: var(--tx2);
+        }
+
+        .dr_ .dv {
+            color: var(--txt);
+            font-weight: 500;
+            word-break: break-all;
+            max-width: 280px;
+            text-align: right;
+        }
+
+        /* Screenshot */
+        .sg {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .sc {
+            background: var(--card);
+            border: 1px solid var(--bdr);
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all .2s;
+        }
+
+        .sc:hover {
+            border-color: var(--acc);
+            transform: translateY(-2px);
+        }
+
+        .sc img {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+            border-bottom: 1px solid var(--bdr);
+        }
+
+        .si {
+            padding: 0.45rem 0.6rem;
+        }
+
+        .sn {
+            font-size: 0.7rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sm {
+            font-size: 0.6rem;
+            color: var(--tx3);
+            margin-top: 1px;
+        }
+
+        /* Lightbox */
+        .lb {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, .92);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .lb.sh {
+            display: flex;
+        }
+
+        .lb img {
+            max-width: 95%;
+            max-height: 95%;
+            border-radius: 6px;
+        }
+
+        /* Toast */
+        .tst {
+            position: fixed;
+            bottom: 1.25rem;
+            right: 1.25rem;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            background: var(--bg2);
+            border: 1px solid var(--bdr);
+            box-shadow: 0 6px 24px rgba(0, 0, 0, .4);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transform: translateY(60px);
+            opacity: 0;
+            transition: all .3s;
+            z-index: 300;
+            font-size: 0.8rem;
+        }
+
+        .tst.sh {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .tst.ok {
+            border-color: var(--grn);
+        }
+
+        .tst.er {
+            border-color: var(--red);
+        }
+
+        .ov {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, .5);
+            z-index: 99;
+        }
+
+        .ov.sh {
+            display: block;
+        }
+
+        .emp {
+            text-align: center;
+            padding: 2.5rem 1rem;
+            color: var(--tx3);
+        }
+
+        .emp .i {
+            font-size: 2rem;
+            margin-bottom: 0.4rem;
+        }
+
+        /* Dialog */
+        .dlg {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--bg2);
+            border: 1px solid var(--bdr);
+            border-radius: 14px;
+            padding: 1.5rem;
+            z-index: 150;
+            min-width: 380px;
+            max-width: 480px;
+        }
+
+        .dlg.sh {
+            display: block;
+        }
+
+        .dlg h3 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, .1);
+            border-radius: 3px;
+        }
+
+        @media(max-width:900px) {
+            .sb {
+                width: 52px;
+                padding: .75rem .2rem;
+            }
+
+            .sb .nl,
+            .sb .logo-n,
+            .sb .logo-v,
+            .sb .nb span:not(.i),
+            .sb .sp span:not(.dt) {
+                display: none;
+            }
+
+            .mn {
+                margin-left: 52px;
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <aside class="sb">
+            <div class="logo">
+                <div class="logo-n">🌐 WebView Bridge</div>
+                <div class="logo-v">v3.5 — OpenClaw (CDP)</div>
+            </div>
+            <div class="ng">
+                <div class="nl">監視</div>
+                <div class="nb on" data-p="dash"><span class="i">📊</span><span>ダッシュボード</span></div>
+                <div class="nb" data-p="sess"><span class="i">🔄</span><span>セッション</span><span class="bc"
+                        id="n-sc">0</span></div>
+                <div class="nb" data-p="ss"><span class="i">📸</span><span>スクリーンショット</span></div>
+                <div class="nb" data-p="dl"><span class="i">📥</span><span>ダウンロード</span></div>
+            </div>
+            <div class="ng">
+                <div class="nl">設定</div>
+                <div class="nb" data-p="ai"><span class="i">🤖</span><span>AI設定</span></div>
+                <div class="nb" data-p="srv"><span class="i">⚙️</span><span>サーバー</span></div>
+                <div class="nb" data-p="med"><span class="i">📁</span><span>メディア</span></div>
+            </div>
+            <div class="ng">
+                <div class="nl">ツール</div>
+                <div class="nb" data-p="test"><span class="i">🧪</span><span>APIテスター</span></div>
+                <div class="nb" data-p="mcp"><span class="i">🔗</span><span>MCPツール</span></div>
+            </div>
+            <div class="sp" id="sp"><span class="dt dg"></span><span>稼働中</span></div>
+        </aside>
+
+        <main class="mn">
+            <!-- DASHBOARD -->
+            <div id="pg-dash" class="pg on">
+                <div class="ph">
+                    <div>
+                        <h1>ダッシュボード</h1>
+                        <p>システム状態の概要</p>
+                    </div><button class="bn bn-s" onclick="loadAll()">🔄 更新</button>
+                </div>
+                <div class="sts">
+                    <div class="st">
+                        <div class="st-l">ステータス</div>
+                        <div class="st-v" id="d-st" style="color:var(--grn)">—</div>
+                    </div>
+                    <div class="st">
+                        <div class="st-l">セッション (Active / Total)</div>
+                        <div class="st-v" id="d-se">—</div>
+                    </div>
+                    <div class="st">
+                        <div class="st-l">AI機能</div>
+                        <div class="st-v" id="d-ai">—</div>
+                    </div>
+                    <div class="st">
+                        <div class="st-l">スクリーンショット</div>
+                        <div class="st-v" id="d-ss">—</div>
+                    </div>
+                    <div class="st">
+                        <div class="st-l">MCP ツール</div>
+                        <div class="st-v" style="color:var(--acc)">9</div>
+                        <div class="st-s">CDP Native</div>
+                    </div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>セッション一覧</h3><button class="bn bn-sm bn-s" onclick="go('sess')">すべて表示 →</button>
+                    </div>
+                    <table class="tb">
+                        <thead>
+                            <tr>
+                                <th>名前</th>
+                                <th>状態</th>
+                                <th>プロファイル</th>
+                                <th>最終アクセス</th>
+                                <th>TTL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="d-st-b">
+                            <tr>
+                                <td colspan="5" class="emp">読み込み中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>最近のスクリーンショット</h3><button class="bn bn-sm bn-s" onclick="go('ss')">すべて表示 →</button>
+                    </div>
+                    <div class="sg" id="d-sg"></div>
+                </div>
+            </div>
+
+            <!-- SESSIONS -->
+            <div id="pg-sess" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>セッション管理</h1>
+                        <p>すべてのブラウザセッション</p>
+                    </div>
+                    <div class="bg-r">
+                        <button class="bn bn-p" onclick="dlgAcquire()">＋ 新規 / 起動</button>
+                        <button class="bn bn-s" onclick="loadSess()">🔄 更新</button>
+                        <button class="bn bn-d bn-sm" onclick="doCleanup()">🧹 クリーンアップ</button>
+                    </div>
+                </div>
+                <div class="cd">
+                    <table class="tb">
+                        <thead>
+                            <tr>
+                                <th>名前</th>
+                                <th>状態</th>
+                                <th>プロファイル</th>
+                                <th>最終アクセス</th>
+                                <th>TTL</th>
+                                <th style="min-width:220px">アクション</th>
+                            </tr>
+                        </thead>
+                        <tbody id="s-tb"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SCREENSHOTS -->
+            <div id="pg-ss" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>スクリーンショット</h1>
+                        <p>セッション別のキャプチャ画像</p>
+                    </div><button class="bn bn-s" onclick="loadSS()">🔄 更新</button>
+                </div>
+                <div id="ss-c"></div>
+            </div>
+
+            <!-- DOWNLOADS -->
+            <div id="pg-dl" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>ダウンロード</h1>
+                        <p>メディアファイルとストレージ</p>
+                    </div>
+                    <div class="bg-r"><button class="bn bn-s" onclick="loadDL()">🔄 更新</button><button
+                            class="bn bn-d bn-sm" onclick="clnStorage()">🧹 クリーンアップ</button></div>
+                </div>
+                <div class="sts" id="dl-s"></div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>ジョブ一覧</h3>
+                    </div>
+                    <table class="tb">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>種別</th>
+                                <th>状態</th>
+                                <th>ファイル</th>
+                                <th>サイズ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dl-t"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- AI -->
+            <div id="pg-ai" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>AI設定</h1>
+                        <p>LLMプロバイダーとモデル</p>
+                    </div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>プロバイダー設定</h3>
+                    </div>
+                    <div class="fg" style="display:flex;align-items:center;gap:.6rem">
+                        <div class="tg" id="ai-on" onclick="this.classList.toggle('on')"></div><label
+                            style="margin:0">AI機能を有効化</label>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>プロバイダー</label><select class="fi" id="ai-pv" onchange="onPv()">
+                                <option value="gemini">Google Gemini</option>
+                                <option value="ollama">Ollama</option>
+                            </select></div>
+                        <div class="fg"><label>モデル</label><select class="fi" id="ai-md">
+                                <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                            </select></div>
+                    </div>
+                    <div id="ol-c" style="display:none">
+                        <div class="fg"><label>Ollama ホスト</label><input class="fi" id="ol-h"
+                                placeholder="http://localhost:11434"></div>
+                    </div>
+                    <div class="fg" id="ai-k-w"><label>API キー</label>
+                        <div style="position:relative"><input type="password" class="fi" id="ai-k"
+                                placeholder="AIza..."><button
+                                onclick="let e=$('ai-k');e.type=e.type==='password'?'text':'password'"
+                                style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--tx3);cursor:pointer">👁️</button>
+                        </div>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>タイムアウト (ms)</label><input type="number" class="fi" id="ai-to"
+                                value="30000"></div>
+                        <div class="fg"><label>日次予算 (USD)</label><input type="number" class="fi" id="ai-bg" step="0.1"
+                                placeholder="1.0"></div>
+                    </div>
+                    <div class="bg-r"><button class="bn bn-p" onclick="saveAI()">💾 保存</button><button class="bn bn-s"
+                            onclick="testAI()">🔌 接続テスト</button></div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>使用状況</h3>
+                    </div>
+                    <div id="ai-us">—</div>
+                </div>
+            </div>
+
+            <!-- SERVER -->
+            <div id="pg-srv" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>サーバー設定</h1>
+                        <p>HTTPサーバーとセッションデフォルト</p>
+                    </div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>サーバー</h3>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>バインドアドレス</label><input class="fi" id="sv-b" value="0.0.0.0"></div>
+                        <div class="fg"><label>ポート</label><input type="number" class="fi" id="sv-p" value="9400"></div>
+                    </div>
+                    <div class="fg"><label>最大同時セッション数</label><input type="number" class="fi" id="sv-m" value="20"></div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>セッション デフォルト</h3>
+                    </div>
+                    <div class="fg" style="display:flex;align-items:center;gap:.6rem">
+                        <div class="tg" id="sv-hl" onclick="this.classList.toggle('on')"></div><label
+                            style="margin:0">デフォルトでヘッドレス</label>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>幅 (px)</label><input type="number" class="fi" id="sv-w" value="1280">
+                        </div>
+                        <div class="fg"><label>高さ (px)</label><input type="number" class="fi" id="sv-h" value="720">
+                        </div>
+                    </div>
+                    <div class="bg-r"><button class="bn bn-p" onclick="saveSrv()">💾 保存</button></div>
+                </div>
+            </div>
+
+            <!-- MEDIA -->
+            <div id="pg-med" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>メディア設定</h1>
+                        <p>ダウンロード・スクリーンショットの保存先</p>
+                    </div>
+                </div>
+                <div class="cd">
+                    <div class="fg"><label>ダウンロードフォルダ</label><input class="fi" id="md-d" placeholder="デフォルト"></div>
+                    <div class="fg"><label>スクリーンショットフォルダ</label><input class="fi" id="md-s" placeholder="デフォルト"></div>
+                    <div class="fr">
+                        <div class="fg"><label>最大DLサイズ (bytes)</label><input type="number" class="fi" id="md-m"
+                                value="0"></div>
+                        <div class="fg"><label>動画品質</label><select class="fi" id="md-q">
+                                <option value="best">best</option>
+                                <option value="hd">hd</option>
+                                <option value="sd">sd</option>
+                            </select></div>
+                    </div>
+                    <div class="bg-r"><button class="bn bn-p" onclick="saveMed()">💾 保存</button></div>
+                </div>
+            </div>
+
+            <!-- API TESTER -->
+            <div id="pg-test" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>APIテスター</h1>
+                        <p>エンドポイントのクイックテスト</p>
+                    </div>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>クイック操作</h3>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>セッション名</label><input class="fi" id="t-n" value="test"></div>
+                        <div class="fg"><label>URL</label><input class="fi" id="t-u" placeholder="https://example.com">
+                        </div>
+                    </div>
+                    <div class="bg-r" style="margin-bottom:1rem">
+                        <button class="bn bn-g" onclick="tAcq()">1. Acquire</button>
+                        <button class="bn bn-s" onclick="tNav()">2. Navigate</button>
+                        <button class="bn bn-s" onclick="tCap()">3. Capture</button>
+                        <button class="bn bn-s" onclick="tExec()">4. JS Execute</button>
+                        <button class="bn bn-w" onclick="tRel()">5. Release</button>
+                    </div>
+                    <div class="ch">
+                        <h3>カスタムリクエスト</h3>
+                    </div>
+                    <div class="fr">
+                        <div class="fg"><label>メソッド</label><select class="fi" id="t-m">
+                                <option>GET</option>
+                                <option>POST</option>
+                                <option>DELETE</option>
+                            </select></div>
+                        <div class="fg"><label>パス</label><input class="fi" id="t-p" placeholder="/health"></div>
+                    </div>
+                    <div class="fg"><label>リクエストボディ (JSON)</label><textarea class="fi" id="t-b" rows="3"
+                            placeholder='{"key":"value"}'></textarea></div>
+                    <button class="bn bn-p" onclick="tCustom()">🚀 送信</button>
+                </div>
+                <div class="cd">
+                    <div class="ch">
+                        <h3>レスポンス</h3>
+                    </div>
+                    <pre id="t-r"
+                        style="background:rgba(0,0,0,.3);padding:.75rem;border-radius:6px;overflow:auto;max-height:500px;font-size:.75rem;white-space:pre-wrap;color:var(--txt)">Ready...</pre>
+                </div>
+            </div>
+
+            <!-- MCP TOOLS -->
+            <div id="pg-mcp" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>MCPツール</h1>
+                        <p>利用可能なMCPツール一覧と定義</p>
+                    </div><button class="bn bn-s" onclick="loadMCP()">🔄 更新</button>
+                </div>
+                <div id="mcp-l"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="ov" id="ov" onclick="cDet()"></div>
+    <div class="dp" id="dp"><button class="cb" onclick="cDet()">✕</button>
+        <div id="dc"></div>
+    </div>
+
+    <!-- Acquire Dialog -->
+    <div class="ov" id="ov2" onclick="cDlg()"></div>
+    <div class="dlg" id="dlg-acq">
+        <h3>セッション起動</h3>
+        <div class="fg"><label>セッション名</label><input class="fi" id="acq-n" placeholder="my-session"></div>
+        <div class="fg" style="display:flex;align-items:center;gap:.6rem">
+            <div class="tg on" id="acq-vis" onclick="this.classList.toggle('on')"></div><label
+                style="margin:0">ウィンドウ表示（可視モード）</label>
+        </div>
+        <div class="bg-r" style="margin-top:1rem"><button class="bn bn-p" onclick="doAcquire()">起動</button><button
+                class="bn bn-s" onclick="cDlg()">キャンセル</button></div>
+    </div>
+
+    <!-- Clone Dialog -->
+    <div class="dlg" id="dlg-cln">
+        <h3>セッションクローン</h3>
+        <div class="fg"><label>コピー元</label><input class="fi" id="cln-s" readonly></div>
+        <div class="fg"><label>新しい名前</label><input class="fi" id="cln-n" placeholder="copy-of-session"></div>
+        <div class="bg-r" style="margin-top:1rem"><button class="bn bn-p" onclick="doClone()">クローン</button><button
+                class="bn bn-s" onclick="cDlg()">キャンセル</button></div>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="lb" id="lbx" onclick="this.classList.remove('sh')"><img id="lb-i"></div>
+
+    <!-- Toast -->
+    <div class="tst" id="tst"><span id="tst-i">✓</span><span id="tst-m"></span></div>
+
+    <script>
+        const $ = s => document.getElementById(s);
+        const api = async (p, m = 'GET', b = null) => {
+            const o = { method: m, headers: { 'Content-Type': 'application/json' } };
+            if (b) o.body = JSON.stringify(b);
+            try { const r = await fetch(p, o); return await r.json(); }
+            catch (e) { return { error: e.message }; }
+        };
+        const toast = (msg, t = 'ok') => { $('tst-m').textContent = msg; $('tst-i').textContent = t === 'ok' ? '✓' : '✕'; $('tst').className = 'tst ' + t + ' sh'; setTimeout(() => $('tst').classList.remove('sh'), 3000); };
+        const ft = iso => { if (!iso) return '—'; try { return new Date(iso).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+        const fb = b => { if (!b) return '0 B'; const k = 1024, u = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(b) / Math.log(k)); return (b / Math.pow(k, i)).toFixed(1) + ' ' + u[i]; };
+        const sortSess = (a, b) => { const p = s => s.acquired ? 0 : s.active ? 1 : 2; return p(a) - p(b) || new Date(b.last_accessed || 0) - new Date(a.last_accessed || 0); };
+
+        // Nav
+        document.querySelectorAll('.nb[data-p]').forEach(b => b.addEventListener('click', () => go(b.dataset.p)));
+        function go(p) {
+            document.querySelectorAll('.nb').forEach(b => b.classList.remove('on'));
+            document.querySelector(`.nb[data-p="${p}"]`)?.classList.add('on');
+            document.querySelectorAll('.pg').forEach(pg => pg.classList.remove('on'));
+            $('pg-' + p)?.classList.add('on');
+            if (p === 'sess') loadSess(); if (p === 'ss') loadSS(); if (p === 'dl') loadDL(); if (p === 'mcp') loadMCP();
+        }
+
+        // Badge
+        function sBd(s) {
+            if (s.expired) return '<span class="bd br">期限切れ</span>';
+            if (s.acquired) return '<span class="bd bg">🟢 Acquired</span>';
+            if (s.active) return '<span class="bd bb">Active</span>';
+            return '<span class="bd bx">💤 Suspended</span>';
+        }
+
+        function fTTL(s) {
+            if (s.ttl_hours === 0 || s.ttl_hours === undefined && !s.expires_at) return '<span class="bd bg">∞ 永続</span>';
+            return `<span class="bd bx">${s.ttl_hours || 168}h</span>`;
+        }
+
+        // =================== DASHBOARD ===================
+        let SC = [];
+        async function loadAll() {
+            const [h, sl, cfg, ssd] = await Promise.all([api('/health'), api('/session/list'), api('/v2/config'), api('/media/screenshots')]);
+            // Status
+            $('d-st').textContent = h.status === 'ok' ? '稼働中' : 'エラー';
+            $('d-st').style.color = h.status === 'ok' ? 'var(--grn)' : 'var(--red)';
+            // Sessions
+            SC = (sl.sessions || []).sort(sortSess);
+            const act = SC.filter(s => s.acquired || s.active).length;
+            $('d-se').textContent = `${act} / ${SC.length}`;
+            $('n-sc').textContent = SC.length;
+            // AI
+            $('d-ai').textContent = cfg.ai?.enabled ? '有効' : '無効';
+            $('d-ai').style.color = cfg.ai?.enabled ? 'var(--grn)' : 'var(--ylw)';
+            // Screenshots
+            $('d-ss').textContent = ssd.count || 0;
+            // Session table (sorted, top 15)
+            const tb = $('d-st-b');
+            if (SC.length > 0) {
+                tb.innerHTML = SC.slice(0, 15).map(s => `<tr class="ck" onclick="showDet('${s.name}')">
+            <td><strong>${s.name}</strong></td><td>${sBd(s)}</td>
+            <td style="color:var(--tx2)">${s.profile || 'default'}</td>
+            <td style="color:var(--tx3);font-size:.75rem">${ft(s.last_accessed)}</td>
+            <td>${fTTL(s)}</td></tr>`).join('')
+                    + (SC.length > 15 ? `<tr><td colspan="5" style="text-align:center;color:var(--tx3);font-size:.75rem">… 他 ${SC.length - 15}件 →</td></tr>` : '');
+            } else { tb.innerHTML = '<tr><td colspan="5" class="emp"><div class="i">🔄</div>セッションなし</td></tr>'; }
+            // Screenshots
+            const sg = $('d-sg');
+            const ssl = ssd.screenshots || [];
+            if (ssl.length > 0) {
+                sg.innerHTML = ssl.slice(0, 6).map(s => `<div class="sc" onclick="olb('/media/screenshots/${s.session}/${s.filename}')">
+            <img src="/media/screenshots/${s.session}/${s.filename}" loading="lazy">
+            <div class="si"><div class="sn">${s.filename}</div><div class="sm">${s.session} · ${fb(s.size_bytes)}</div></div></div>`).join('');
+            } else { sg.innerHTML = '<div class="emp"><div class="i">📸</div>スクリーンショットなし</div>'; }
+            // Load config
+            lCfg(cfg);
+        }
+
+        // =================== SESSIONS ===================
+        async function loadSess() {
+            const d = await api('/session/list');
+            SC = (d.sessions || []).sort(sortSess);
+            $('n-sc').textContent = SC.length;
+            const tb = $('s-tb');
+            if (!SC.length) { tb.innerHTML = '<tr><td colspan="6" class="emp"><div class="i">🔄</div>セッションなし</td></tr>'; return; }
+            tb.innerHTML = SC.map(s => {
+                const isUp = s.acquired || s.active;
+                return `<tr>
+        <td><a href="#" onclick="event.preventDefault();showDet('${s.name}')"><strong>${s.name}</strong></a></td>
+        <td>${sBd(s)}</td>
+        <td style="color:var(--tx2)">${s.profile || 'default'}</td>
+        <td style="font-size:.75rem;color:var(--tx3)">${ft(s.last_accessed)}</td>
+        <td>${fTTL(s)}</td>
+        <td><div class="bg-r">
+            ${isUp ? `<button class="bn bn-sm bn-w" onclick="doRelease('${s.name}')" title="停止(非表示+解放)">⏹ 停止</button><button class="bn bn-sm bn-s" onclick="doToggleVis('${s.name}',true)" title="ウィンドウ表示">👁</button><button class="bn bn-sm bn-s" onclick="doToggleVis('${s.name}',false)" title="ウィンドウ非表示">👁‍🗨</button>`
+                        : `<button class="bn bn-sm bn-g" onclick="doStart('${s.name}')" title="起動(表示モード)">▶ 起動</button>`}
+            <button class="bn bn-sm bn-s" onclick="dlgClone('${s.name}')" title="クローン">📋</button>
+            <button class="bn bn-sm bn-d" onclick="doDestroy('${s.name}')" title="プロファイル削除">🗑</button>
+        </div></td></tr>`;
+            }).join('');
+        }
+
+        async function doStart(name) {
+            toast('起動中: ' + name + '...');
+            const r = await api('/session/acquire', 'POST', { name, create_if_missing: true, headless: false });
+            if (r.success) {
+                toast(name + ' を起動しました');
+                loadSess(); loadAll();
+            } else { toast(r.error?.message || '起動失敗', 'er'); }
+        }
+        async function doRelease(name) {
+            // close_window: true でWebViewプロセスを閉じてからリリース
+            const r = await api('/session/release', 'POST', { name, close_window: true });
+            if (r.success) { toast(name + ' を停止しました（ウィンドウ閉鎖）'); loadSess(); loadAll(); }
+            else { toast(r.error?.message || '停止失敗', 'er'); }
+        }
+        async function doToggleVis(name, visible) {
+            const r = await api('/session/visibility', 'POST', { name, visible });
+            if (r.success) { toast(name + (visible ? ' を表示しました' : ' を非表示にしました')); }
+            else { toast(r.error?.message || '表示切替失敗', 'er'); }
+        }
+        async function doDestroy(name) {
+            if (!confirm(`"${name}" のプロファイルを完全に削除しますか？\n（セッションデータ・プロファイルフォルダも削除されます）`)) return;
+            const r = await api('/session/destroy?name=' + encodeURIComponent(name), 'DELETE');
+            if (r.success) { toast(name + ' を削除しました'); loadSess(); loadAll(); }
+            else { toast(r.error?.message || '削除失敗', 'er'); }
+        }
+        async function doCleanup() {
+            if (!confirm('未使用セッションをすべてクリーンアップしますか？')) return;
+            const r = await api('/session/cleanup', 'POST', { mode: 'all' });
+            toast('クリーンアップ完了: ' + (r.cleaned || 0) + '件'); loadSess(); loadAll();
+        }
+
+        // Acquire dialog
+        function dlgAcquire() { $('dlg-acq').classList.add('sh'); $('ov2').classList.add('sh'); $('acq-n').focus(); }
+        function cDlg() { document.querySelectorAll('.dlg').forEach(d => d.classList.remove('sh')); $('ov2').classList.remove('sh'); }
+        async function doAcquire() {
+            const name = $('acq-n').value.trim(); if (!name) { toast('名前を入力', 'er'); return; }
+            const vis = $('acq-vis').classList.contains('on');
+            const r = await api('/session/acquire', 'POST', { name, create_if_missing: true, headless: !vis });
+            cDlg();
+            if (r.success) { toast(name + ' を起動しました'); loadSess(); loadAll(); }
+            else { toast(r.error?.message || '起動失敗', 'er'); }
+        }
+
+        // Clone dialog
+        function dlgClone(name) { $('cln-s').value = name; $('cln-n').value = 'copy-of-' + name; $('dlg-cln').classList.add('sh'); $('ov2').classList.add('sh'); $('cln-n').focus(); }
+        async function doClone() {
+            const src = $('cln-s').value, nn = $('cln-n').value.trim();
+            if (!nn) { toast('名前を入力', 'er'); return; }
+            const r = await api('/session/clone', 'POST', { source: src, new_name: nn });
+            cDlg();
+            if (r.success) { toast(`"${src}" → "${nn}" にクローンしました`); loadSess(); loadAll(); }
+            else { toast(r.error?.message || 'クローン失敗', 'er'); }
+        }
+
+        // Detail panel
+        async function showDet(name) {
+            const [s, h] = await Promise.all([api('/session/' + encodeURIComponent(name)), api('/session/state/history?name=' + encodeURIComponent(name))]);
+            let ss = [];
+            try { const d = await api('/media/screenshots'); ss = (d.screenshots || []).filter(x => x.session === name); } catch { }
+            let html = `<h2 style="margin-bottom:1rem;font-size:1.05rem">${name}</h2>`;
+            html += `<div class="ds"><h4>基本情報</h4>
+        <div class="dr_"><span class="dk">状態</span><span class="dv">${sBd(s)}</span></div>
+        <div class="dr_"><span class="dk">プロファイル</span><span class="dv">${s.profile || 'default'}</span></div>
+        <div class="dr_"><span class="dk">最終アクセス</span><span class="dv">${ft(s.last_accessed)}</span></div>
+        <div class="dr_"><span class="dk">作成日時</span><span class="dv">${ft(s.created_at)}</span></div>
+        <div class="dr_"><span class="dk">TTL</span><span class="dv">${s.ttl_hours || 168}h</span></div>
+        <div class="dr_"><span class="dk">有効期限</span><span class="dv">${s.expires_at ? ft(s.expires_at) : '—'} ${s.expired ? '⚠️ 期限切れ' : ''}</span></div>
+        <div class="dr_"><span class="dk">現在のURL</span><span class="dv" style="font-size:.75rem">${s.last_url || '—'}</span></div></div>`;
+            const hist = h.history || s.navigation_history || [];
+            if (hist.length) {
+                html += `<div class="ds"><h4>閲覧履歴 (${hist.length}件)</h4>`;
+                html += hist.slice(-15).reverse().map(u => `<div style="padding:.25rem 0;font-size:.7rem;color:var(--tx2);word-break:break-all;border-bottom:1px solid var(--bdr)">${u}</div>`).join('');
+                html += '</div>';
+            }
+            if (ss.length) {
+                html += `<div class="ds"><h4>スクリーンショット (${ss.length}件)</h4><div class="sg" style="grid-template-columns:repeat(2,1fr)">`;
+                html += ss.slice(-6).map(x => `<div class="sc" onclick="olb('/media/screenshots/${x.session}/${x.filename}')"><img src="/media/screenshots/${x.session}/${x.filename}" loading="lazy"><div class="si"><div class="sn">${x.filename}</div><div class="sm">${fb(x.size_bytes)}</div></div></div>`).join('');
+                html += '</div></div>';
+            }
+            html += `<div class="bg-r" style="margin-top:1.25rem">
+        ${s.acquired || s.active ? `<button class="bn bn-w" onclick="doRelease('${name}');cDet()">⏹ 停止（非表示+解放）</button><button class="bn bn-s" onclick="doToggleVis('${name}',true)">👁 表示</button><button class="bn bn-s" onclick="doToggleVis('${name}',false)">👁‍🗨 非表示</button>` : `<button class="bn bn-g" onclick="doStart('${name}');cDet()">▶ 起動（表示モード）</button>`}
+        <button class="bn bn-s" onclick="dlgClone('${name}');cDet()">📋 クローン</button>
+        <button class="bn bn-d" onclick="doDestroy('${name}');cDet()">🗑 プロファイル削除</button></div>`;
+            $('dc').innerHTML = html; $('dp').classList.add('op'); $('ov').classList.add('sh');
+        }
+        function cDet() { $('dp').classList.remove('op'); $('ov').classList.remove('sh'); }
+
+        // =================== SCREENSHOTS ===================
+        async function loadSS() {
+            const d = await api('/media/screenshots');
+            const l = d.screenshots || [];
+            const c = $('ss-c');
+            if (!l.length) { c.innerHTML = '<div class="emp"><div class="i">📸</div>スクリーンショットなし</div>'; return; }
+            const g = {}; l.forEach(s => { (g[s.session] = g[s.session] || []).push(s); });
+            let h = '';
+            for (const [se, items] of Object.entries(g)) {
+                h += `<div class="cd"><div class="ch"><h3>📁 ${se} (${items.length}件)</h3></div><div class="sg">`;
+                h += items.map(s => `<div class="sc" onclick="olb('/media/screenshots/${s.session}/${s.filename}')"><img src="/media/screenshots/${s.session}/${s.filename}" loading="lazy"><div class="si"><div class="sn">${s.filename}</div><div class="sm">${fb(s.size_bytes)}</div></div></div>`).join('');
+                h += '</div></div>';
+            }
+            c.innerHTML = h;
+        }
+        function olb(src) { $('lb-i').src = src; $('lbx').classList.add('sh'); }
+
+        // =================== DOWNLOADS ===================
+        async function loadDL() {
+            try {
+                const [st, jb] = await Promise.all([api('/storage/status'), api('/jobs')]);
+                $('dl-s').innerHTML = `<div class="st"><div class="st-l">使用容量</div><div class="st-v">${fb(st.total_size || 0)}</div></div>
+            <div class="st"><div class="st-l">ファイル数</div><div class="st-v">${st.file_count || 0}</div></div>
+            <div class="st"><div class="st-l">ジョブ数</div><div class="st-v">${(jb.jobs || []).length}</div></div>`;
+                const jl = jb.jobs || []; const tb = $('dl-t');
+                if (!jl.length) { tb.innerHTML = '<tr><td colspan="5" class="emp"><div class="i">📥</div>ジョブなし</td></tr>'; return; }
+                tb.innerHTML = jl.map(j => `<tr>
+            <td style="font-size:.7rem;font-family:monospace">${(j.id || '').substr(0, 8)}…</td>
+            <td><span class="bd bb">${j.type || 'dl'}</span></td>
+            <td>${j.status === 'completed' ? '<span class="bd bg">完了</span>' : j.status === 'error' ? '<span class="bd br">エラー</span>' : '<span class="bd by">' + j.status + '</span>'}</td>
+            <td style="font-size:.75rem;color:var(--tx2)">${j.filename || '—'}</td>
+            <td>${fb(j.size || 0)}</td></tr>`).join('');
+            } catch { $('dl-s').innerHTML = ''; $('dl-t').innerHTML = '<tr><td colspan="5" class="emp">取得失敗</td></tr>'; }
+        }
+        async function clnStorage() { const r = await api('/storage/cleanup', 'POST', { dry_run: false }); toast('クリーンアップ完了'); loadDL(); }
+
+        // =================== CONFIG ===================
+        function lCfg(c) {
+            if (c.ai) {
+                $('ai-on').classList.toggle('on', c.ai.enabled);
+                $('ai-pv').value = c.ai.provider || 'gemini';
+                const ms = $('ai-md');
+                if (c.ai.model) { let f = false; for (let o of ms.options) if (o.value === c.ai.model) { f = true; break; } if (!f) ms.innerHTML += `<option value="${c.ai.model}">${c.ai.model}</option>`; ms.value = c.ai.model; }
+                if (c.ai.api_key) $('ai-k').value = c.ai.api_key;
+                $('ai-to').value = c.ai.timeout_ms || 30000;
+                if (c.ai.daily_budget_usd) $('ai-bg').value = c.ai.daily_budget_usd;
+                onPv();
+            }
+            if (c.server) { $('sv-b').value = c.server.bind || '0.0.0.0'; $('sv-p').value = c.server.port || 9400; $('sv-m').value = c.server.max_sessions || 20; }
+            if (c.session) { $('sv-hl').classList.toggle('on', c.session.default_headless); $('sv-w').value = c.session.default_width || 1280; $('sv-h').value = c.session.default_height || 720; }
+            if (c.media) { $('md-d').value = c.media.download_dir || ''; $('md-s').value = c.media.screenshots_dir || ''; $('md-m').value = c.media.max_download_size || 0; $('md-q').value = c.media.default_video_quality || 'hd'; }
+        }
+        function onPv() { const p = $('ai-pv').value; $('ol-c').style.display = p === 'ollama' ? 'block' : 'none'; $('ai-k-w').style.display = p === 'ollama' ? 'none' : 'block'; }
+        async function saveAI() {
+            await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
+            toast('AI設定を保存しました');
+        }
+        async function testAI() {
+            toast('テスト中…');
+            try { const r = await api('/v2/ai/test', 'POST'); toast(r.success ? '接続OK: ' + r.response : '失敗: ' + (r.error || ''), r.success ? 'ok' : 'er'); }
+            catch (e) { toast('テスト失敗', 'er'); }
+        }
+        async function saveSrv() {
+            await api('/v2/config', 'POST', { server: { bind: $('sv-b').value, port: parseInt($('sv-p').value), max_sessions: parseInt($('sv-m').value) }, session: { default_headless: $('sv-hl').classList.contains('on'), default_width: parseInt($('sv-w').value), default_height: parseInt($('sv-h').value) } });
+            toast('サーバー設定を保存しました');
+        }
+        async function saveMed() {
+            await api('/v2/config', 'POST', { media: { download_dir: $('md-d').value || null, screenshots_dir: $('md-s').value || null, max_download_size: parseInt($('md-m').value) || 0, default_video_quality: $('md-q').value } });
+            toast('メディア設定を保存しました');
+        }
+
+        // =================== API TESTER ===================
+        const tR = d => { $('t-r').textContent = typeof d === 'string' ? d : JSON.stringify(d, null, 2); };
+        async function tAcq() { tR(await api('/session/acquire', 'POST', { name: $('t-n').value, create_if_missing: true, headless: false })); }
+        async function tNav() { const u = $('t-u').value; if (!u) { toast('URLを入力', 'er'); return; } tR(await api('/navigate', 'POST', { session: $('t-n').value, url: u })); }
+        async function tCap() { tR(await api('/screenshot', 'POST', { session: $('t-n').value })); }
+        async function tExec() {
+            const sc = prompt('JavaScript:', 'document.title');
+            if (!sc) return;
+            tR(await api('/execute', 'POST', { session: $('t-n').value, script: sc }));
+        }
+        async function tRel() { tR(await api('/session/release', 'POST', { name: $('t-n').value })); }
+        async function tCustom() {
+            const m = $('t-m').value, p = $('t-p').value;
+            if (!p) { toast('パスを入力', 'er'); return; }
+            let b = null;
+            const bs = $('t-b').value.trim();
+            if (bs) { try { b = JSON.parse(bs); } catch (e) { toast('JSONパースエラー', 'er'); return; } }
+            tR(await api(p, m, b));
+        }
+
+        // =================== MCP TOOLS ===================
+        async function loadMCP() {
+            try {
+                const d = await api('/mcp/tools');
+                const tools = d.tools || d || [];
+                if (!tools.length) { $('mcp-l').innerHTML = '<div class="emp"><div class="i">🔗</div>ツールなし</div>'; return; }
+                $('mcp-l').innerHTML = tools.map(t => {
+                    let params = '';
+                    try {
+                        const s = t.inputSchema || t.input_schema || {};
+                        const props = s.properties || {};
+                        const req = new Set(s.required || []);
+                        params = Object.entries(props).map(([k, v]) => {
+                            const isReq = req.has(k);
+                            const type = v.type || (v.enum ? 'enum' : 'any');
+                            const desc = v.description || '';
+                            const enumVals = v.enum ? ` [${v.enum.join(', ')}]` : '';
+                            return `<tr><td style="color:var(--acc);font-family:monospace">${k}${isReq ? '<span style="color:var(--red)"> *</span>' : ''}</td><td><span class="bd bx">${type}</span>${enumVals}</td><td style="color:var(--tx2);font-size:.7rem">${desc}</td></tr>`;
+                        }).join('');
+                        if (params) params = `<table class="tb" style="margin-top:.5rem"><thead><tr><th>パラメータ</th><th>型</th><th>説明</th></tr></thead><tbody>${params}</tbody></table>`;
+                    } catch { }
+                    return `<div class="cd"><div class="ch"><h3><span class="bd bp" style="font-size:.8rem">${t.name || 'unknown'}</span></h3></div>
+                <p style="font-size:.8rem;color:var(--tx2);margin-bottom:.5rem">${(t.description || '').replace(/\n/g, '<br>')}</p>
+                ${params}</div>`;
+                }).join('');
+            } catch (e) { $('mcp-l').innerHTML = `<div class="emp"><div class="i">❌</div>取得失敗: ${e.message}</div>`; }
+        }
+
+        // Init
+        loadAll();
+        setInterval(loadAll, 30000);
+    </script>
+</body>
+
+</html>

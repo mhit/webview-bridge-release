@@ -187,6 +187,13 @@ impl WebViewWindow {
         }
     }
 
+    /// Check if the window handle is still valid (not destroyed)
+    pub fn is_valid(&self) -> bool {
+        unsafe {
+            IsWindow(self.hwnd).as_bool()
+        }
+    }
+
     unsafe extern "system" fn wnd_proc(
         hwnd: HWND,
         msg: u32,

@@ -19,6 +19,10 @@ pub mod screenshot_v2;
 pub mod session_v2;
 pub mod wait_v2;
 pub mod websocket;
+pub mod network;
+
+// Export Network Types
+pub use network::*;
 
 // Export WM_CHECK_QUEUE for use in other modules
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
@@ -139,6 +143,12 @@ pub enum AppCommand {
         key: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
     },
+    // Network Monitoring
+    ManageNetwork {
+        id: String,
+        action: NetworkAction,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 /// Session thread command enum
@@ -245,6 +255,10 @@ pub enum SessionCommand {
         key: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
     },
+    ManageNetwork {
+        action: NetworkAction,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 /// Action item for Act API (OpenClaw compatible)
@@ -271,6 +285,9 @@ pub struct SessionOptions {
     pub profile: String,
     pub headless: bool,
     pub user_agent: Option<String>,
+    /// Window title (defaults to session ID if not set)
+    #[serde(default)]
+    pub window_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -396,8 +413,11 @@ impl SessionManager {
         let user_data_folder = format!("./profiles/{}", options.profile);
 
         // Create WebViewInstance
+        let title = options.window_title.as_deref()
+            .map(|t| format!("WB: {}", t))
+            .unwrap_or_else(|| format!("WebView Bridge - {}", id));
         let mut webview = match crate::webview::webview_instance::WebViewInstance::new(
-            &format!("WebView Bridge - {}", id),
+            &title,
             !options.headless,
         ) {
             Ok(wv) => {
@@ -870,9 +890,23 @@ impl SessionManager {
                             let result = webview.press_key_cdp(&key);
                             let _ = resp_tx.send(result);
                         }
+                        SessionCommand::ManageNetwork { action, resp_tx } => {
+                             tracing::debug!("[Session:{}] ManageNetwork: {:?}", id, action);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                             let result = webview.manage_network(action);
+                             let _ = resp_tx.send(result);
+                        }
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
+                    // Check if window was closed by user (X button)
+                    if !webview.is_window_valid() {
+                        tracing::info!("[Session:{}] Window destroyed by user, exiting thread", id);
+                        break;
+                    }
                     // No commands, use shorter sleep for better responsiveness
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
@@ -882,6 +916,10 @@ impl SessionManager {
                 }
             }
         }
+
+        // Notify SessionManagerV2 that this session is no longer active
+        // This handles the case where user closes the window via X button
+        crate::api_v2::get_session_manager_v2().clear_handle_by_id(&id);
 
         tracing::info!("[Session:{}] Thread exiting", id);
     }
@@ -1345,6 +1383,28 @@ impl SessionManager {
         match rx.await {
             Ok(result) => result,
             Err(_) => Err("PressKeyCdp response channel closed".to_string()),
+        }
+    }
+
+    /// Manage network monitoring for a session
+    pub async fn manage_network(&self, id: &str, action: NetworkAction) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::ManageNetwork { 
+            action,
+            resp_tx: tx 
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("ManageNetwork response channel closed".to_string()),
         }
     }
 
