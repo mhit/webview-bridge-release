@@ -180,7 +180,7 @@ HTTP サーバーのバインドアドレス・ポート・最大セッション
 ### 前提条件
 
 - **Windows 10/11** (64-bit)
-- **WebView2 Runtime** - 通常 Microsoft Edge と共にインストール済み
+- **WebView2 Runtime** - 通常 Microsoft Edge と共にインストール済み。未インストールの場合、インストーラが `winget` 経由で自動インストールを試みます。
 
 ---
 
