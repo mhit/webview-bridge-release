@@ -14,6 +14,7 @@ WebView Bridge v3.5 (OpenClaw) の内部構造。
 │  HTTP Server (Axum)                                          │
 │  ├─ REST API (api_v2.rs)     POST /navigate, /click, ...    │
 │  ├─ MCP Endpoint             POST /mcp                       │
+│  ├─ Dashboard (SPA)          GET / (管理UI)                  │
 │  └─ WebSocket                /ws (リアルタイムイベント)        │
 └───────────────────────────┬─────────────────────────────────┘
                             │
@@ -92,6 +93,53 @@ WebView Bridge v3.5 (OpenClaw) の内部構造。
 3. **コマンドプロセッサ** — 4ワーカーが並列で受信・実行
 4. **WebView操作** — `SessionManager` → `WebViewInstance` → CDP
 5. **レスポンス返却** — `oneshot::channel` で呼び出し元に結果を返す
+
+## ダッシュボードアーキテクチャ
+
+### Single-File SPA
+
+ダッシュボードは `src/dashboard.html` (約2,400行) に CSS/HTML/JS を統合した単一ファイルです。
+
+- **ビルド時**: `include_str!("dashboard.html")` で `api_v2.rs` にバイナリ埋め込み
+- **起動時**: `{{AUTH_TOKEN}}` プレースホルダを実トークンに置換して配信
+- **クライアント側**: `window.__WB_TOKEN` でAPI認証を自動処理
+
+### 構成
+
+```
+src/dashboard.html (2,400行)
+├── CSS    (1-900行)   デザインシステム、レスポンシブ、アニメーション
+├── HTML   (900-1635行) 11ページ、ダイアログ、ライトボックス
+└── JS     (1670-2400行) 50+関数、API連携、状態管理
+```
+
+### ページ構成 (11ページ)
+
+| ID | ページ |
+|----|--------|
+| `pg-dash` | システム概要 |
+| `pg-sess` | セッション管理 |
+| `pg-ss` | スクリーンショット |
+| `pg-dl` | ダウンロード |
+| `pg-ai` | AI設定 |
+| `pg-srv` | サーバー設定 |
+| `pg-med` | メディア管理 |
+| `pg-test` | APIテスター |
+| `pg-mcp` | MCPツール |
+| `pg-auto` | オートメーション |
+| `pg-aitool` | AIツール |
+
+### 状態管理
+
+- `SC` (Session Cache): セッション一覧のグローバルキャッシュ
+- `fillAllSessSelects()`: 11個のセッション選択ドロップダウンを同期
+- `loadAll()`: 6並列API fetch + 排他制御 (`_loading`フラグ)
+- 10秒間隔のポーリング（`visibilitychange`でタブ非表示時は停止）
+
+### イベント処理
+
+- Event Delegation: `data-action` 属性による動的要素のクリック処理
+- 非同期ハンドラ: `async/await` + `try/catch` でエラー安全
 
 ## CDP 統合
 

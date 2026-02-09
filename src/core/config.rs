@@ -39,7 +39,7 @@ impl Default for AppConfig {
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Bind address (default: 0.0.0.0)
+    /// Bind address (default: 127.0.0.1)
     #[serde(default = "default_bind")]
     pub bind: String,
     
@@ -52,7 +52,7 @@ pub struct ServerConfig {
     pub max_sessions: usize,
 }
 
-fn default_bind() -> String { "0.0.0.0".to_string() }
+fn default_bind() -> String { "127.0.0.1".to_string() }
 fn default_port() -> u16 { 9400 }
 fn default_max_sessions() -> usize { 10 }
 

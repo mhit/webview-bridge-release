@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 use crate::core::{AppCommand, SessionManager, SessionOptions};
-use crate::api_v2::{create_v2_router, init_session_manager_v2, V2AppState};
+use crate::api_v2::{create_v2_router, init_auth_token, init_session_manager_v2, V2AppState};
+use rand::Rng;
 
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
 
@@ -26,7 +27,7 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            bind: "0.0.0.0".parse().unwrap(),
+            bind: "127.0.0.1".parse().unwrap(),
             port: 9400,
         }
     }
@@ -45,7 +46,7 @@ fn parse_args() -> Option<Config> {
                 println!("Usage: webview-bridge-rust.exe [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --bind <IP>       Bind address (default: 0.0.0.0)");
+                println!("  --bind <IP>       Bind address (default: 127.0.0.1)");
                 println!("  --port <PORT>     Port number (default: 9400)");
                 println!("  --help, -h        Show this help message");
                 return None;
@@ -103,7 +104,24 @@ fn main() {
     webview_bridge_rust::tray::run(port, shutdown_tx);
 }
 
+/// Generate a random 32-character alphanumeric Bearer token
+fn generate_auth_token() -> String {
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+    (0..32)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
 async fn run_http_server(config: Config, shutdown_rx: std::sync::mpsc::Receiver<()>) {
+    // Generate and register auth token
+    let token = generate_auth_token();
+    eprintln!("[AUTH] Dashboard token: {}...{}", &token[..4], &token[token.len()-4..]);
+    init_auth_token(token);
+
     // Initialize config file system first
     let app_config = crate::core::config::init_config();
     {

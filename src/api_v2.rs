@@ -3,8 +3,9 @@
 //! REST API endpoints for WebView Bridge Protocol v2
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
+    middleware::Next,
     response::{Html, IntoResponse},
     routing::{delete, get, post},
     Json, Router,
@@ -25,6 +26,17 @@ use crate::core::SessionOptions;
 
 static SESSION_MANAGER_V2: OnceLock<SessionManagerV2> = OnceLock::new();
 static CORE_SESSION_MANAGER: OnceLock<Arc<crate::core::SessionManager>> = OnceLock::new();
+static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// Initialize the auth token (called from main at startup)
+pub fn init_auth_token(token: String) {
+    let _ = AUTH_TOKEN.set(token);
+}
+
+/// Get the auth token
+fn get_auth_token() -> Option<&'static str> {
+    AUTH_TOKEN.get().map(|s| s.as_str())
+}
 
 /// Initialize the v2 session manager
 pub fn init_session_manager_v2(data_dir: PathBuf, max_sessions: usize) {
@@ -133,6 +145,49 @@ pub struct V2AppState {
     pub cmd_tx: mpsc::UnboundedSender<AppCommand>,
 }
 
+/// Auth middleware: checks Bearer token on non-public routes
+async fn auth_middleware(req: Request, next: Next) -> impl IntoResponse {
+    // Public endpoints that don't require auth
+    let path = req.uri().path();
+    if matches!(path, "/" | "/favicon.ico" | "/assets/icon.png" | "/health") {
+        return next.run(req).await;
+    }
+
+    // Check Bearer token
+    if let Some(token) = get_auth_token() {
+        let auth_header = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok());
+
+        match auth_header {
+            Some(header) if header.starts_with("Bearer ") => {
+                let provided = &header[7..];
+                if provided == token {
+                    return next.run(req).await;
+                }
+            }
+            _ => {}
+        }
+
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "AUTH_001",
+                    "name": "UNAUTHORIZED",
+                    "message": "Missing or invalid Bearer token"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    // No token configured: allow all (backwards compatibility)
+    next.run(req).await
+}
+
 /// Create the v2 API router
 pub fn create_v2_router(state: V2AppState) -> Router {
     Router::new()
@@ -212,6 +267,7 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         // MCP API (Model Context Protocol - v3 consolidated 8 tools)
         .route("/mcp", post(mcp_v3_handler))
         .route("/mcp/tools", get(mcp_v3_tools_list))
+        .layer(axum::middleware::from_fn(auth_middleware))
         .with_state(state)
 }
 
@@ -219,9 +275,16 @@ pub fn create_v2_router(state: V2AppState) -> Router {
 // Root and Health Endpoints
 // ============================================================================
 
-/// GET / - Admin Dashboard
-async fn root_handler() -> Html<&'static str> {
-    Html(include_str!("dashboard.html"))
+/// GET / - Admin Dashboard (injects auth token into HTML)
+async fn root_handler() -> Html<String> {
+    let html = include_str!("dashboard.html");
+    let token_script = if let Some(token) = get_auth_token() {
+        format!("<script>window.__WB_TOKEN='{}';</script>", token)
+    } else {
+        String::new()
+    };
+    // Inject token script before </head>
+    Html(html.replace("</head>", &format!("{}</head>", token_script)))
 }
 
 /// GET /favicon.ico - Embedded application icon
@@ -268,7 +331,7 @@ async fn get_config() -> impl IntoResponse {
         },
         "ai": {
             "provider": config.ai.provider,
-            "api_key": config.ai.api_key,
+            "api_key_configured": config.ai.api_key.is_some(),
             "model": config.ai.model,
             "enabled": config.ai.enabled,
             "timeout_ms": config.ai.timeout_ms,
@@ -1282,20 +1345,20 @@ async fn click_v2(
             el.click(); 
             return JSON.stringify({{clicked:true}}); 
         }})()"#,
-        request.selector.replace('"', r#"\""#)
+        request.selector.replace('\\', r#"\\"#).replace('"', r#"\""#)
     );
-    
+
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::ExecuteScript {
         id: handle.id.clone(),
         script,
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return error_response(Wbp2Error::InternalError, "Failed to send command");
     }
-    
+
     match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
         Ok(Ok(Ok(result))) => {
             // Wait after click if specified
@@ -1353,9 +1416,9 @@ async fn type_v2(
             el.dispatchEvent(new Event('input', {{bubbles:true}})); 
             return JSON.stringify({{typed:true}}); 
         }})()"#,
-        request.selector.replace('"', r#"\""#),
+        request.selector.replace('\\', r#"\\"#).replace('"', r#"\""#),
         clear_code,
-        request.text.replace('"', r#"\""#).replace('\n', r#"\n"#)
+        request.text.replace('\\', r#"\\"#).replace('"', r#"\""#).replace('\n', r#"\n"#)
     );
     
     let (tx, rx) = oneshot::channel();
@@ -1929,7 +1992,7 @@ async fn goal_execute(
                     els.forEach(function(el) {{ results.push(el.textContent.trim()); }});
                     return JSON.stringify(results);
                 }})()
-            "#, request.target.replace('"', r#"\""#));
+            "#, request.target.replace('\\', r#"\\"#).replace('"', r#"\""#));
             
             let (tx, rx) = oneshot::channel();
             let cmd = AppCommand::ExecuteScript {
