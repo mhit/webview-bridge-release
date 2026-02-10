@@ -934,7 +934,7 @@
                 <img src="/assets/icon.png" alt="WebView Bridge" class="logo-icon">
                 <div class="logo-text">
                     <div class="logo-n">WebView Bridge</div>
-                    <div class="logo-v">v3.5 — OpenClaw (CDP)</div>
+                    <div class="logo-v">v3.6 — OpenClaw (CDP)</div>
                 </div>
             </div>
             <div class="ng">
@@ -975,7 +975,7 @@
                     </div>
                     <div class="hero-ver">
                         <span class="tag">OpenClaw CDP</span>
-                        <div class="build">v3.5</div>
+                        <div class="build">v3.6</div>
                     </div>
                 </div>
                 <div class="ph">
@@ -1200,7 +1200,7 @@
                         <h3>プロバイダー設定</h3>
                     </div>
                     <div class="fg" style="display:flex;align-items:center;gap:.6rem">
-                        <button class="tg" id="ai-on" type="button" role="switch" aria-checked="false" aria-label="AI機能を有効化"></button><label
+                        <button class="tg" id="ai-on" type="button" role="switch" aria-checked="false" aria-label="AI機能を有効化" onclick="toggleSwitch(this)"></button><label
                             style="margin:0">AI機能を有効化</label>
                     </div>
                     <div class="fr">
@@ -1253,6 +1253,25 @@
                 </div>
                 <div class="cd">
                     <div class="ch">
+                        <h3>API認証</h3>
+                    </div>
+                    <div class="fg" style="display:flex;align-items:center;gap:.6rem;margin-bottom:var(--space-3)">
+                        <button class="tg on" id="sv-auth" type="button" role="switch" aria-checked="true" aria-label="API認証を有効化" onclick="toggleSwitch(this);updAuthUI()"></button>
+                        <label style="margin:0">認証を有効化</label>
+                        <span id="sv-auth-badge" class="badge" style="font-size:var(--text-xs);padding:2px 8px;border-radius:var(--radius-sm);background:var(--grn);color:#fff">有効</span>
+                    </div>
+                    <div id="sv-tk-area">
+                        <p style="color:var(--tx2);font-size:var(--text-sm);margin-bottom:var(--space-3)">外部ツールからREST APIを利用する際に必要です。<code>Authorization: Bearer &lt;token&gt;</code></p>
+                        <div class="fg" style="display:flex;gap:.5rem;align-items:flex-end">
+                            <div style="flex:1"><label for="sv-tk">トークン</label><input class="fi" id="sv-tk" type="password" readonly style="font-family:monospace;font-size:var(--text-sm)"></div>
+                            <button type="button" class="bn bn-s" onclick="const i=$('sv-tk');i.type=i.type==='password'?'text':'password'" style="white-space:nowrap">👁 表示</button>
+                            <button type="button" class="bn bn-s" onclick="navigator.clipboard.writeText($('sv-tk').value);toast('コピーしました')">📋 コピー</button>
+                        </div>
+                    </div>
+                    <p id="sv-noauth-note" style="display:none;color:var(--ylw);font-size:var(--text-sm)">⚠ 認証無効: 保存すると全APIが認証なしでアクセス可能になります。</p>
+                </div>
+                <div class="cd">
+                    <div class="ch">
                         <h3>サーバー</h3>
                     </div>
                     <div class="fr">
@@ -1266,7 +1285,7 @@
                         <h3>セッション デフォルト</h3>
                     </div>
                     <div class="fg" style="display:flex;align-items:center;gap:.6rem">
-                        <button class="tg" id="sv-hl" type="button" role="switch" aria-checked="false" aria-label="デフォルトでヘッドレス"></button><label
+                        <button class="tg" id="sv-hl" type="button" role="switch" aria-checked="false" aria-label="デフォルトでヘッドレス" onclick="toggleSwitch(this)"></button><label
                             style="margin:0">デフォルトでヘッドレス</label>
                     </div>
                     <div class="fr">
@@ -1437,7 +1456,7 @@
                         <div class="fg"><label for="bat-ops">オペレーション (JSON配列)</label>
                             <textarea class="fi" id="bat-ops" rows="4" placeholder='[{"id":"1","method":"GET","path":"/health"},{"id":"2","method":"POST","path":"/session/list"}]'></textarea></div>
                         <div class="fg" style="display:flex;align-items:center;gap:.6rem">
-                            <button class="tg" id="bat-par" type="button" role="switch" aria-checked="false" aria-label="並列実行"></button>
+                            <button class="tg" id="bat-par" type="button" role="switch" aria-checked="false" aria-label="並列実行" onclick="toggleSwitch(this)"></button>
                             <label style="margin:0">並列実行</label>
                         </div>
                     </div>
@@ -1601,7 +1620,7 @@
                         <div class="fg"><label for="ae-schema">スキーマ (JSON, 任意)</label>
                             <textarea class="fi" id="ae-schema" rows="2" placeholder='{"name":"string","price":"number"}'></textarea></div>
                         <div class="fg" style="display:flex;align-items:center;gap:.6rem">
-                            <button class="tg on" id="ae-scroll" type="button" role="switch" aria-checked="true" aria-label="自動スクロール"></button>
+                            <button class="tg on" id="ae-scroll" type="button" role="switch" aria-checked="true" aria-label="自動スクロール" onclick="toggleSwitch(this)"></button>
                             <label style="margin:0">自動スクロール</label>
                         </div>
                     </div>
@@ -1641,7 +1660,7 @@
         <h3 id="dlg-acq-title">セッション起動</h3>
         <div class="fg"><label for="acq-n">セッション名</label><input class="fi" id="acq-n" placeholder="my-session"></div>
         <div class="fg" style="display:flex;align-items:center;gap:.6rem">
-            <button class="tg on" id="acq-vis" type="button" role="switch" aria-checked="true" aria-label="ウィンドウ表示（可視モード）"></button><label
+            <button class="tg on" id="acq-vis" type="button" role="switch" aria-checked="true" aria-label="ウィンドウ表示（可視モード）" onclick="toggleSwitch(this)"></button><label
                 style="margin:0">ウィンドウ表示（可視モード）</label>
         </div>
         <div class="bg-r" style="margin-top:1rem"><button type="button" class="bn bn-p" onclick="doAcquire()">起動</button><button
@@ -1672,7 +1691,7 @@
             const o = { method: m, headers: { 'Content-Type': 'application/json' } };
             if (_token) o.headers['Authorization'] = 'Bearer ' + _token;
             if (b) o.body = JSON.stringify(b);
-            try { const r = await fetch(p, o); return await r.json(); }
+            try { const r = await fetch(p, o); if (!r.ok) return { error: `HTTP ${r.status}`, success: false }; return await r.json(); }
             catch (e) { return { error: e.message }; }
         };
         let toasts = [];
@@ -1728,12 +1747,14 @@
         }
 
         // =================== DASHBOARD ===================
-        let SC = [], _loading = false;
+        let SC = [], _loading = false, _cfgLoaded = false;
         async function loadAll() {
             if (_loading) return;
             _loading = true;
             try {
-            const [h, sl, cfg, ssd, mtools, jbs] = await Promise.all([api('/health'), api('/session/list'), api('/v2/config'), api('/media/screenshots'), api('/mcp/tools'), api('/jobs')]);
+            const results = await Promise.allSettled([api('/health'), api('/session/list'), api('/v2/config'), api('/media/screenshots'), api('/mcp/tools'), api('/jobs')]);
+            const v = i => results[i].status === 'fulfilled' ? results[i].value : {};
+            const [h, sl, cfg, ssd, mtools, jbs] = [v(0), v(1), v(2), v(3), v(4), v(5)];
             // Status
             $('d-st').textContent = h.status === 'ok' ? '稼働中' : 'エラー';
             $('d-st').style.color = h.status === 'ok' ? 'var(--grn)' : 'var(--red)';
@@ -1769,8 +1790,8 @@
             <img src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}" alt="${escAttr(s.filename)}" loading="lazy">
             <div class="si"><div class="sn">${escHtml(s.filename)}</div><div class="sm">${escHtml(s.session)} · ${fb(s.size_bytes)}</div></div></div>`).join('');
             } else { sg.innerHTML = '<div class="emp"><div class="i">📸</div>スクリーンショットなし</div>'; }
-            // Load config
-            lCfg(cfg);
+            // Load config (initial only; srv page uses loadSrv() for refresh)
+            if (!_cfgLoaded) { lCfg(cfg); _cfgLoaded = true; }
             fillAllSessSelects();
             } finally { _loading = false; }
         }
@@ -1938,14 +1959,30 @@
                 if (c.ai.daily_budget_usd) $('ai-bg').value = c.ai.daily_budget_usd;
                 onPv();
             }
-            if (c.server) { $('sv-b').value = c.server.bind || '0.0.0.0'; $('sv-p').value = c.server.port || 9400; $('sv-m').value = c.server.max_sessions || 20; }
+            if (c.server) {
+                $('sv-b').value = c.server.bind || '0.0.0.0'; $('sv-p').value = c.server.port || 9400; $('sv-m').value = c.server.max_sessions || 20;
+                const noAuth = !!c.server.no_auth;
+                $('sv-auth').classList.toggle('on', !noAuth); $('sv-auth').setAttribute('aria-checked', String(!noAuth));
+                updAuthUI();
+            }
+            $('sv-tk').value = _token || '(トークン未設定)';
             if (c.session) { $('sv-hl').classList.toggle('on', c.session.default_headless); $('sv-hl').setAttribute('aria-checked', String(!!c.session.default_headless)); $('sv-w').value = c.session.default_width || 1280; $('sv-h').value = c.session.default_height || 720; }
             if (c.media) { $('md-d').value = c.media.download_dir || ''; $('md-s').value = c.media.screenshots_dir || ''; $('md-m').value = c.media.max_download_size || 0; $('md-q').value = c.media.default_video_quality || 'hd'; }
         }
+        function updAuthUI() {
+            const on = $('sv-auth').classList.contains('on');
+            $('sv-tk-area').style.display = on ? '' : 'none';
+            $('sv-noauth-note').style.display = on ? 'none' : '';
+            $('sv-auth-badge').textContent = on ? '有効' : '無効';
+            $('sv-auth-badge').style.background = on ? 'var(--grn)' : 'var(--ylw)';
+        }
+        async function loadSrv() { const c = await api('/v2/config'); if (!c.error) lCfg(c); }
         function onPv() { const p = $('ai-pv').value; $('ol-c').style.display = p === 'ollama' ? 'block' : 'none'; $('ai-k-w').style.display = p === 'ollama' ? 'none' : 'block'; }
         async function saveAI() {
-            await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
+            const r = await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
+            if (r.error || r.success === false) { toast('AI保存失敗: ' + (r.error || '不明なエラー'), 'er'); return; }
             toast('AI設定を保存しました');
+            loadSrv();
         }
         async function testAI() {
             toast('テスト中…');
@@ -1953,12 +1990,16 @@
             catch (e) { toast('テスト失敗', 'er'); }
         }
         async function saveSrv() {
-            await api('/v2/config', 'POST', { server: { bind: $('sv-b').value, port: parseInt($('sv-p').value), max_sessions: parseInt($('sv-m').value) }, session: { default_headless: $('sv-hl').classList.contains('on'), default_width: parseInt($('sv-w').value), default_height: parseInt($('sv-h').value) } });
+            const r = await api('/v2/config', 'POST', { server: { bind: $('sv-b').value, port: parseInt($('sv-p').value), max_sessions: parseInt($('sv-m').value), no_auth: !$('sv-auth').classList.contains('on') }, session: { default_headless: $('sv-hl').classList.contains('on'), default_width: parseInt($('sv-w').value), default_height: parseInt($('sv-h').value) } });
+            if (r.error || r.success === false) { toast('保存失敗: ' + (r.error || '不明なエラー'), 'er'); return; }
             toast('サーバー設定を保存しました');
+            loadSrv();
         }
         async function saveMed() {
-            await api('/v2/config', 'POST', { media: { download_dir: $('md-d').value || null, screenshots_dir: $('md-s').value || null, max_download_size: parseInt($('md-m').value) || 0, default_video_quality: $('md-q').value } });
+            const r = await api('/v2/config', 'POST', { media: { download_dir: $('md-d').value || null, screenshots_dir: $('md-s').value || null, max_download_size: parseInt($('md-m').value) || 0, default_video_quality: $('md-q').value } });
+            if (r.error || r.success === false) { toast('メディア保存失敗: ' + (r.error || '不明なエラー'), 'er'); return; }
             toast('メディア設定を保存しました');
+            loadSrv();
         }
 
         // =================== API TESTER ===================
@@ -2377,15 +2418,6 @@
             document.querySelectorAll('.nb').forEach(b => b.removeAttribute('aria-current'));
             document.querySelector(`.nb[data-p="${p}"]`)?.setAttribute('aria-current', 'page');
         };
-
-        // Toggle switch handler
-        document.querySelectorAll('[role="switch"]').forEach(el => {
-            el.addEventListener('click', () => {
-                const isOn = el.getAttribute('aria-checked') === 'true';
-                el.setAttribute('aria-checked', String(!isOn));
-                el.classList.toggle('on', !isOn);
-            });
-        });
 
         // Init
         loadAll();

@@ -1,5 +1,5 @@
 ﻿; ============================================================
-; WebView Bridge v3.5 — NSIS Installer
+; WebView Bridge v3.6 — NSIS Installer
 ; ============================================================
 ;
 ; Build:  installer\build_installer.bat
@@ -25,7 +25,7 @@ ManifestDPIAware true
 ; ============================================================
 
 !define PRODUCT_NAME    "WebView Bridge"
-!define PRODUCT_VERSION "3.5.0"
+!define PRODUCT_VERSION "3.6.0"
 !define PRODUCT_EXE     "webview-bridge-rust.exe"
 !define PRODUCT_PUBLISHER "mhit"
 !define PRODUCT_URL     "https://github.com/mhit/webview-bridge"

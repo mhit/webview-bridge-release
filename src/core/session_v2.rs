@@ -219,7 +219,10 @@ impl SessionManagerV2 {
         if let Err(e) = manager.load_sessions() {
             eprintln!("[SessionManagerV2] Failed to load sessions: {}", e);
         }
-        
+
+        // Cleanup orphaned profile directories (left from failed deletions)
+        manager.cleanup_orphaned_profiles();
+
         manager
     }
     
@@ -260,6 +263,46 @@ impl SessionManagerV2 {
         Ok(())
     }
     
+    /// Remove profile directories that have no corresponding session in sessions.json
+    fn cleanup_orphaned_profiles(&self) {
+        let profiles_dir = crate::core::config::AppConfig::profiles_dir();
+        if !profiles_dir.exists() {
+            return;
+        }
+
+        let sessions = match self.sessions.read() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        let session_profiles: std::collections::HashSet<String> = sessions.values()
+            .map(|s| s.meta.profile.clone())
+            .collect();
+
+        drop(sessions);
+
+        if let Ok(entries) = fs::read_dir(&profiles_dir) {
+            let mut orphan_count = 0;
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_dir() {
+                        let dir_name = entry.file_name().to_string_lossy().to_string();
+                        if !session_profiles.contains(&dir_name) {
+                            if let Err(e) = fs::remove_dir_all(entry.path()) {
+                                eprintln!("[SessionManagerV2] Warning: Failed to remove orphan profile {:?}: {}", dir_name, e);
+                            } else {
+                                orphan_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if orphan_count > 0 {
+                println!("[SessionManagerV2] Cleaned up {} orphaned profile directories", orphan_count);
+            }
+        }
+    }
+
     /// Save sessions to sessions.json
     fn save_sessions(&self) -> Result<(), String> {
         let sessions = self.sessions.read()
@@ -655,67 +698,103 @@ impl SessionManagerV2 {
             .unwrap_or_default()
     }
     
-    /// Destroy a session (close and remove)
+    /// Destroy a session (close and remove, including profile directory)
     /// Returns the session ID if found, so caller can close the WebView
     pub fn destroy(&self, name: &str) -> Result<Option<String>, String> {
         let mut sessions = self.sessions.write()
             .map_err(|_| "Lock poisoned".to_string())?;
-        
+
         let session = sessions.remove(name)
             .ok_or_else(|| format!("Session '{}' not found", name))?;
-        
-        // Get the session ID to close
+
         let session_id = session.handle.map(|h| h.id);
-        
+        let profile = session.meta.profile.clone();
+
         drop(sessions);
         self.save_sessions()?;
-        
+
+        Self::delete_profile_dir(&profile);
+
         Ok(session_id)
     }
+
+    /// Delete a profile directory from disk (cookies, screenshots, cache)
+    /// Retries with delay if directory is locked (e.g. by WebView process)
+    fn delete_profile_dir(profile: &str) {
+        let profile_dir = crate::core::config::AppConfig::profile_dir(profile);
+        if !profile_dir.exists() {
+            return;
+        }
+
+        let profile_owned = profile.to_string();
+        std::thread::spawn(move || {
+            let dir = crate::core::config::AppConfig::profile_dir(&profile_owned);
+            for attempt in 0..5 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
+                }
+                match fs::remove_dir_all(&dir) {
+                    Ok(_) => {
+                        println!("[SessionManagerV2] Deleted profile directory: {}", profile_owned);
+                        return;
+                    }
+                    Err(e) if attempt < 4 => {
+                        eprintln!("[SessionManagerV2] Retry {}/4 deleting {:?}: {}", attempt + 1, dir, e);
+                    }
+                    Err(e) => {
+                        eprintln!("[SessionManagerV2] Failed to delete profile dir {:?} after 5 attempts: {}", dir, e);
+                    }
+                }
+            }
+        });
+    }
     
-    /// Destroy all inactive sessions
+    /// Destroy all inactive sessions (including profile directories)
     /// Returns list of session IDs that need to be closed
     pub fn cleanup_inactive(&self) -> Result<Vec<String>, String> {
         let mut sessions = self.sessions.write()
             .map_err(|_| "Lock poisoned".to_string())?;
-        
+
         let mut to_close = Vec::new();
-        let mut to_remove = Vec::new();
-        
+        let mut to_remove: Vec<(String, String)> = Vec::new(); // (name, profile)
+
         for (name, session) in sessions.iter() {
             if !session.acquired {
                 if let Some(ref handle) = session.handle {
                     to_close.push(handle.id.clone());
                 }
-                to_remove.push(name.clone());
+                to_remove.push((name.clone(), session.meta.profile.clone()));
             }
         }
-        
-        for name in &to_remove {
+
+        for (name, _) in &to_remove {
             sessions.remove(name);
         }
-        
+
         drop(sessions);
         let _ = self.save_sessions();
-        
+
+        for (_, profile) in &to_remove {
+            Self::delete_profile_dir(profile);
+        }
+
         println!("[SessionManagerV2] Cleaned up {} inactive sessions", to_remove.len());
-        
+
         Ok(to_close)
     }
     
-    /// Cleanup old sessions based on last_accessed time
+    /// Cleanup old sessions based on last_accessed time (including profile directories)
     /// Returns list of session IDs that need to be closed
     pub fn cleanup_old(&self, max_age_hours: u64) -> Result<Vec<String>, String> {
         let mut sessions = self.sessions.write()
             .map_err(|_| "Lock poisoned".to_string())?;
-        
+
         let now = SystemTime::now();
         let max_age = Duration::from_secs(max_age_hours * 3600);
         let mut to_close = Vec::new();
-        let mut to_remove = Vec::new();
-        
+        let mut to_remove: Vec<(String, String)> = Vec::new(); // (name, profile)
+
         for (name, session) in sessions.iter() {
-            // Parse the last_accessed timestamp
             if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&session.meta.last_accessed) {
                 let session_time = SystemTime::UNIX_EPOCH + Duration::from_secs(ts.timestamp() as u64);
                 if let Ok(elapsed) = now.duration_since(session_time) {
@@ -723,53 +802,61 @@ impl SessionManagerV2 {
                         if let Some(ref handle) = session.handle {
                             to_close.push(handle.id.clone());
                         }
-                        to_remove.push(name.clone());
+                        to_remove.push((name.clone(), session.meta.profile.clone()));
                     }
                 }
             }
         }
-        
-        for name in &to_remove {
+
+        for (name, _) in &to_remove {
             sessions.remove(name);
         }
-        
+
         drop(sessions);
         let _ = self.save_sessions();
-        
+
+        for (_, profile) in &to_remove {
+            Self::delete_profile_dir(profile);
+        }
+
         println!("[SessionManagerV2] Cleaned up {} old sessions (older than {}h)", to_remove.len(), max_age_hours);
-        
+
         Ok(to_close)
     }
     
-    /// Cleanup expired sessions (based on TTL)
+    /// Cleanup expired sessions based on TTL (including profile directories)
     /// Returns list of session IDs that need to be closed
     pub fn cleanup_expired(&self) -> Result<Vec<String>, String> {
         let mut sessions = self.sessions.write()
             .map_err(|_| "Lock poisoned".to_string())?;
-        
+
         let mut to_close = Vec::new();
-        let mut to_remove = Vec::new();
-        
+        let mut to_remove: Vec<(String, String)> = Vec::new(); // (name, profile)
+
         for (name, session) in sessions.iter() {
             if is_expired(&session.meta.expires_at) && !session.acquired {
                 if let Some(ref handle) = session.handle {
                     to_close.push(handle.id.clone());
                 }
-                to_remove.push(name.clone());
+                to_remove.push((name.clone(), session.meta.profile.clone()));
             }
         }
-        
-        for name in &to_remove {
+
+        for (name, _) in &to_remove {
             sessions.remove(name);
         }
-        
+
         drop(sessions);
         let _ = self.save_sessions();
-        
+
+        for (_, profile) in &to_remove {
+            Self::delete_profile_dir(profile);
+        }
+
         if !to_remove.is_empty() {
             println!("[SessionManagerV2] Cleaned up {} expired sessions", to_remove.len());
         }
-        
+
         Ok(to_close)
     }
     

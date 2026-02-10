@@ -149,7 +149,14 @@ pub struct V2AppState {
 async fn auth_middleware(req: Request, next: Next) -> impl IntoResponse {
     // Public endpoints that don't require auth
     let path = req.uri().path();
-    if matches!(path, "/" | "/favicon.ico" | "/assets/icon.png" | "/health") {
+    if matches!(path, "/" | "/favicon.ico" | "/assets/icon.png" | "/health")
+        || path.starts_with("/media/screenshots/")
+    {
+        return next.run(req).await;
+    }
+
+    // Check if auth is disabled via config (runtime toggle)
+    if crate::core::config::get_config().server.no_auth {
         return next.run(req).await;
     }
 
@@ -327,7 +334,8 @@ async fn get_config() -> impl IntoResponse {
         "server": {
             "bind": config.server.bind,
             "port": config.server.port,
-            "max_sessions": config.server.max_sessions
+            "max_sessions": config.server.max_sessions,
+            "no_auth": config.server.no_auth
         },
         "ai": {
             "provider": config.ai.provider,
@@ -392,6 +400,9 @@ async fn update_config(
             }
             if let Some(max) = server.get("max_sessions").and_then(|v| v.as_u64()) {
                 config.server.max_sessions = max as usize;
+            }
+            if let Some(no_auth) = server.get("no_auth").and_then(|v| v.as_bool()) {
+                config.server.no_auth = no_auth;
             }
         }
         
@@ -632,17 +643,35 @@ async fn session_release(
     }
 }
 
-/// DELETE /v2/session/destroy (or DELETE /v2/session/:name)
+/// DELETE /session/destroy?name=xxx - Destroy a session and its profile
 async fn session_destroy(
-    Path(name): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let name = match params.get("name") {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_002",
+                        "name": "MISSING_PARAMETER",
+                        "message": "Missing required query parameter: name"
+                    }
+                })),
+            );
+        }
+    };
     let manager = get_session_manager_v2();
-    
+
     match manager.destroy(&name) {
         Ok(session_id) => {
-            // Note: session_id contains the WebView session ID if we need to close it
-            // The WebView cleanup is handled by SessionManager via CloseSession command
-            if let Some(id) = session_id {
+            // Close WebView window if it was running
+            if let Some(ref id) = session_id {
+                if let Some(core_mgr) = get_core_session_manager() {
+                    let _ = core_mgr.remove_session(id).await;
+                }
                 eprintln!("[session_destroy] Destroyed session '{}' (webview id: {})", name, id);
             }
             (
@@ -3157,7 +3186,7 @@ async fn media_screenshots_list() -> impl IntoResponse {
                                             "filename": name,
                                             "session": session_name,
                                             "size_bytes": file_meta.len(),
-                                            "url": format!("/v2/media/screenshots/{}/{}", session_name, name),
+                                            "url": format!("/media/screenshots/{}/{}", session_name, name),
                                             "uri": format!("browser://screenshots/{}/{}", session_name, name)
                                         }));
                                     }

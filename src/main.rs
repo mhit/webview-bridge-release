@@ -117,19 +117,23 @@ fn generate_auth_token() -> String {
 }
 
 async fn run_http_server(config: Config, shutdown_rx: std::sync::mpsc::Receiver<()>) {
-    // Generate and register auth token
-    let token = generate_auth_token();
-    eprintln!("[AUTH] Dashboard token: {}...{}", &token[..4], &token[token.len()-4..]);
-    init_auth_token(token);
-
     // Initialize config file system first
     let app_config = crate::core::config::init_config();
     {
         let cfg = app_config.read().unwrap();
-        eprintln!("Config loaded: AI enabled={}, provider={}, model={}", 
+        eprintln!("Config loaded: AI enabled={}, provider={}, model={}",
             cfg.ai.enabled, cfg.ai.provider, cfg.ai.model);
         if cfg.ai.api_key.is_some() {
             eprintln!("AI API key: configured from file");
+        }
+
+        // Generate and register auth token (unless no_auth mode)
+        if cfg.server.no_auth {
+            eprintln!("[AUTH] Authentication disabled (no_auth=true in config)");
+        } else {
+            let token = generate_auth_token();
+            eprintln!("[AUTH] Dashboard token: {}...{}", &token[..4], &token[token.len()-4..]);
+            init_auth_token(token);
         }
     }
     

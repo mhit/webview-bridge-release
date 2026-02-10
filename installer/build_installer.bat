@@ -123,6 +123,6 @@ echo.
 echo ========================================
 echo  BUILD COMPLETE
 echo ========================================
-echo  Output: dist\WebViewBridge-3.5.0-Setup.exe
+echo  Output: dist\WebViewBridge-3.6.0-Setup.exe
 echo ========================================
 echo.

@@ -42,14 +42,18 @@ pub struct ServerConfig {
     /// Bind address (default: 127.0.0.1)
     #[serde(default = "default_bind")]
     pub bind: String,
-    
+
     /// Port number (default: 9400)
     #[serde(default = "default_port")]
     pub port: u16,
-    
+
     /// Maximum concurrent sessions
     #[serde(default = "default_max_sessions")]
     pub max_sessions: usize,
+
+    /// Disable API authentication (default: false)
+    #[serde(default)]
+    pub no_auth: bool,
 }
 
 fn default_bind() -> String { "127.0.0.1".to_string() }
@@ -62,6 +66,7 @@ impl Default for ServerConfig {
             bind: default_bind(),
             port: default_port(),
             max_sessions: default_max_sessions(),
+            no_auth: false,
         }
     }
 }
