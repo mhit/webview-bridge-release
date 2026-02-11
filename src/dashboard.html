@@ -1951,6 +1951,7 @@
                 $('ai-on').setAttribute('aria-checked', String(!!c.ai.enabled));
                 $('ai-pv').value = c.ai.provider || 'gemini';
                 if (c.ai.api_key_configured) $('ai-k').placeholder = '(設定済み)';
+                if (c.ai.ollama_host) $('ol-h').value = c.ai.ollama_host;
                 $('ai-to').value = c.ai.timeout_ms || 30000;
                 if (c.ai.daily_budget_usd) $('ai-bg').value = c.ai.daily_budget_usd;
                 $('ol-c').style.display = (c.ai.provider || 'gemini') === 'ollama' ? 'block' : 'none';
@@ -2000,15 +2001,19 @@
             if (models.length) st.textContent = `(${models.length}件)`;
         }
         async function saveAI() {
-            const r = await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
+            const r = await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, ollama_host: $('ol-h').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
             if (r.error || r.success === false) { toast('AI保存失敗: ' + (r.error || '不明なエラー'), 'er'); return; }
             toast('AI設定を保存しました');
             loadSrv();
         }
         async function testAI() {
             toast('テスト中…');
-            try { const r = await api('/v2/ai/test', 'POST'); toast(r.success ? '接続OK: ' + r.response : '失敗: ' + (r.error || ''), r.success ? 'ok' : 'er'); }
-            catch (e) { toast('テスト失敗', 'er'); }
+            try {
+                const body = { provider: $('ai-pv').value, model: $('ai-md').value };
+                if (body.provider === 'ollama') body.host = $('ol-h').value || '';
+                const r = await api('/v2/ai/test', 'POST', body);
+                toast(r.success ? '接続OK: ' + (r.message || r.response) : '失敗: ' + (r.error || ''), r.success ? 'ok' : 'er');
+            } catch (e) { toast('テスト失敗', 'er'); }
         }
         async function saveSrv() {
             const r = await api('/v2/config', 'POST', { server: { bind: $('sv-b').value, port: parseInt($('sv-p').value), max_sessions: parseInt($('sv-m').value), no_auth: !$('sv-auth').classList.contains('on') }, session: { default_headless: $('sv-hl').classList.contains('on'), default_width: parseInt($('sv-w').value), default_height: parseInt($('sv-h').value) } });

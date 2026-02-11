@@ -74,26 +74,30 @@ impl Default for ServerConfig {
 /// AI/Gemini configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiSettings {
-    /// AI provider (gemini, openai, etc.)
+    /// AI provider (gemini, ollama)
     #[serde(default = "default_provider")]
     pub provider: String,
-    
+
     /// API key for AI service
     #[serde(default)]
     pub api_key: Option<String>,
-    
+
     /// Model name (default: gemini-1.5-flash)
     #[serde(default = "default_model")]
     pub model: String,
-    
+
+    /// Ollama host URL (default: http://localhost:11434)
+    #[serde(default)]
+    pub ollama_host: Option<String>,
+
     /// Enable AI features
     #[serde(default = "default_true")]
     pub enabled: bool,
-    
+
     /// Request timeout in milliseconds
     #[serde(default = "default_ai_timeout")]
     pub timeout_ms: u64,
-    
+
     /// Daily budget limit in USD (optional)
     #[serde(default)]
     pub daily_budget_usd: Option<f32>,
@@ -110,6 +114,7 @@ impl Default for AiSettings {
             provider: default_provider(),
             api_key: None,
             model: default_model(),
+            ollama_host: None,
             enabled: true,
             timeout_ms: default_ai_timeout(),
             daily_budget_usd: None,

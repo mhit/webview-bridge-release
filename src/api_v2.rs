@@ -342,6 +342,7 @@ async fn get_config() -> impl IntoResponse {
             "provider": config.ai.provider,
             "api_key_configured": config.ai.api_key.is_some(),
             "model": config.ai.model,
+            "ollama_host": config.ai.ollama_host,
             "enabled": config.ai.enabled,
             "timeout_ms": config.ai.timeout_ms,
             "daily_budget_usd": config.ai.daily_budget_usd
@@ -388,6 +389,11 @@ async fn update_config(
             }
             if let Some(budget) = ai.get("daily_budget_usd") {
                 config.ai.daily_budget_usd = budget.as_f64().map(|f| f as f32);
+            }
+            if let Some(host) = ai.get("ollama_host") {
+                config.ai.ollama_host = host.as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
             }
         }
         
@@ -449,54 +455,75 @@ async fn update_config(
     }
 }
 
-/// POST /v2/ai/test - Test AI connection (supports both Gemini and Ollama)
-async fn test_ai_connection() -> impl IntoResponse {
-    let config = crate::core::config::get_config();
+/// Resolve Ollama host: request param > config > env > default
+fn resolve_ollama_host(override_host: Option<&str>, config: &crate::core::config::AppConfig) -> String {
+    override_host
+        .filter(|h| !h.is_empty())
+        .map(String::from)
+        .or_else(|| config.ai.ollama_host.clone())
+        .or_else(|| std::env::var("OLLAMA_HOST").ok())
+        .unwrap_or_else(|| "http://localhost:11434".to_string())
+}
 
-    if config.ai.provider == "ollama" {
+/// POST /v2/ai/test - Test AI connection (supports both Gemini and Ollama)
+/// Accepts optional JSON body: { "provider": "ollama", "host": "...", "model": "..." }
+async fn test_ai_connection(
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let config = crate::core::config::get_config();
+    let body = body.map(|b| b.0).unwrap_or(json!({}));
+
+    // Use body values if provided, otherwise fall back to saved config
+    let provider = body.get("provider").and_then(|v| v.as_str())
+        .unwrap_or(&config.ai.provider);
+    let model = body.get("model").and_then(|v| v.as_str())
+        .unwrap_or(&config.ai.model);
+    let host_override = body.get("host").and_then(|v| v.as_str());
+
+    if provider == "ollama" {
+        let host = resolve_ollama_host(host_override, &config);
         let ollama = crate::core::ai::OllamaClient {
-            base_url: std::env::var("OLLAMA_HOST")
-                .unwrap_or_else(|_| "http://localhost:11434".to_string()),
-            model: config.ai.model.clone(),
+            base_url: host.clone(),
+            model: model.to_string(),
             timeout_ms: 10000,
         };
         if !ollama.is_available() {
             return Json(json!({
                 "success": false,
-                "error": "Ollama is not running or unreachable"
+                "error": format!("Ollama is not running at {}. Check the host URL and that Ollama is started.", host)
             }));
         }
-        match ollama.call("Say 'connection successful' in exactly those words.", None) {
+        match ollama.call("Reply with only: OK", None) {
             Ok(response) => {
                 return Json(json!({
                     "success": true,
-                    "message": "Ollama connection successful",
+                    "message": format!("Ollama connection successful ({})", model),
                     "response": response
                 }));
             }
             Err(e) => {
                 return Json(json!({
                     "success": false,
-                    "error": format!("Ollama call failed: {}", e)
+                    "error": format!("Ollama call failed (model: {}): {}", model, e)
                 }));
             }
         }
     }
 
     // Gemini path
-    if config.ai.provider == "gemini" || config.ai.provider.is_empty() {
+    if provider == "gemini" || provider.is_empty() {
         if let Some(api_key) = config.get_api_key() {
             let client = crate::core::ai::GeminiClient::new(&crate::core::ai::AiConfig {
                 api_key: Some(api_key),
-                model: config.ai.model.clone(),
+                model: model.to_string(),
                 ..Default::default()
             });
             if let Some(client) = client {
-                match client.call("Say 'API connection successful' in exactly those words.", None) {
+                match client.call("Reply with only: OK", None) {
                     Ok(response) => {
                         return Json(json!({
                             "success": true,
-                            "message": "Gemini connection successful",
+                            "message": format!("Gemini connection successful ({})", model),
                             "response": response
                         }));
                     }
@@ -517,7 +544,7 @@ async fn test_ai_connection() -> impl IntoResponse {
 
     Json(json!({
         "success": false,
-        "error": format!("Unknown AI provider: '{}'. Supported: gemini, ollama", config.ai.provider)
+        "error": format!("Unknown AI provider: '{}'. Supported: gemini, ollama", provider)
     }))
 }
 
@@ -533,11 +560,10 @@ async fn ai_models_list(
 
     match provider {
         "ollama" => {
-            let host = params.get("host")
-                .filter(|h| !h.is_empty())
-                .cloned()
-                .or_else(|| std::env::var("OLLAMA_HOST").ok())
-                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let host = resolve_ollama_host(
+                params.get("host").map(|s| s.as_str()),
+                &config,
+            );
             let ollama = crate::core::ai::OllamaClient {
                 base_url: host,
                 model: config.ai.model.clone(),
