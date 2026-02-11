@@ -484,34 +484,40 @@ async fn test_ai_connection() -> impl IntoResponse {
     }
 
     // Gemini path
-    if let Some(api_key) = config.get_api_key() {
-        let client = crate::core::ai::GeminiClient::new(&crate::core::ai::AiConfig {
-            api_key: Some(api_key),
-            model: config.ai.model.clone(),
-            ..Default::default()
-        });
-        if let Some(client) = client {
-            match client.call("Say 'API connection successful' in exactly those words.", None) {
-                Ok(response) => {
-                    return Json(json!({
-                        "success": true,
-                        "message": "Gemini connection successful",
-                        "response": response
-                    }));
-                }
-                Err(e) => {
-                    return Json(json!({
-                        "success": false,
-                        "error": format!("API call failed: {}", e)
-                    }));
+    if config.ai.provider == "gemini" || config.ai.provider.is_empty() {
+        if let Some(api_key) = config.get_api_key() {
+            let client = crate::core::ai::GeminiClient::new(&crate::core::ai::AiConfig {
+                api_key: Some(api_key),
+                model: config.ai.model.clone(),
+                ..Default::default()
+            });
+            if let Some(client) = client {
+                match client.call("Say 'API connection successful' in exactly those words.", None) {
+                    Ok(response) => {
+                        return Json(json!({
+                            "success": true,
+                            "message": "Gemini connection successful",
+                            "response": response
+                        }));
+                    }
+                    Err(e) => {
+                        return Json(json!({
+                            "success": false,
+                            "error": format!("Gemini API call failed: {}", e)
+                        }));
+                    }
                 }
             }
         }
+        return Json(json!({
+            "success": false,
+            "error": "Gemini API key not configured. Set it in AI設定 or GEMINI_API_KEY env var."
+        }));
     }
 
     Json(json!({
         "success": false,
-        "error": "API key not configured"
+        "error": format!("Unknown AI provider: '{}'. Supported: gemini, ollama", config.ai.provider)
     }))
 }
 
@@ -552,10 +558,10 @@ async fn ai_models_list(
                 })),
             }
         }
-        _ => {
+        "gemini" => {
             Json(json!({
-                "provider": provider,
-                "available": true,
+                "provider": "gemini",
+                "available": config.get_api_key().is_some(),
                 "models": [
                     "gemini-2.0-flash",
                     "gemini-1.5-flash",
@@ -563,6 +569,14 @@ async fn ai_models_list(
                     "gemini-pro-vision"
                 ],
                 "current_model": config.ai.model
+            }))
+        }
+        _ => {
+            Json(json!({
+                "provider": provider,
+                "available": false,
+                "models": [],
+                "error": format!("Unknown provider: {}. Supported: gemini, ollama", provider)
             }))
         }
     }
