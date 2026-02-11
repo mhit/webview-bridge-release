@@ -449,24 +449,53 @@ async fn update_config(
     }
 }
 
-/// POST /v2/ai/test - Test AI connection
+/// POST /v2/ai/test - Test AI connection (supports both Gemini and Ollama)
 async fn test_ai_connection() -> impl IntoResponse {
     let config = crate::core::config::get_config();
-    
+
+    if config.ai.provider == "ollama" {
+        let ollama = crate::core::ai::OllamaClient {
+            base_url: std::env::var("OLLAMA_HOST")
+                .unwrap_or_else(|_| "http://localhost:11434".to_string()),
+            model: config.ai.model.clone(),
+            timeout_ms: 10000,
+        };
+        if !ollama.is_available() {
+            return Json(json!({
+                "success": false,
+                "error": "Ollama is not running or unreachable"
+            }));
+        }
+        match ollama.call("Say 'connection successful' in exactly those words.", None) {
+            Ok(response) => {
+                return Json(json!({
+                    "success": true,
+                    "message": "Ollama connection successful",
+                    "response": response
+                }));
+            }
+            Err(e) => {
+                return Json(json!({
+                    "success": false,
+                    "error": format!("Ollama call failed: {}", e)
+                }));
+            }
+        }
+    }
+
+    // Gemini path
     if let Some(api_key) = config.get_api_key() {
-        // Try a simple API call to verify the key works
         let client = crate::core::ai::GeminiClient::new(&crate::core::ai::AiConfig {
             api_key: Some(api_key),
             model: config.ai.model.clone(),
             ..Default::default()
         });
-        
         if let Some(client) = client {
             match client.call("Say 'API connection successful' in exactly those words.", None) {
                 Ok(response) => {
                     return Json(json!({
                         "success": true,
-                        "message": "AI connection successful",
+                        "message": "Gemini connection successful",
                         "response": response
                     }));
                 }
@@ -479,7 +508,7 @@ async fn test_ai_connection() -> impl IntoResponse {
             }
         }
     }
-    
+
     Json(json!({
         "success": false,
         "error": "API key not configured"
