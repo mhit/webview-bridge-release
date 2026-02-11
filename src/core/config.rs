@@ -192,7 +192,7 @@ impl Default for MediaSettings {
 
 /// Application configuration and path management.
 ///
-/// Directory layout (~/.webview-bridge/):
+/// Directory layout (%APPDATA%/webview-bridge/):
 /// ```text
 /// config.toml              設定ファイル
 /// sessions.json            セッション永続化メタデータ
@@ -205,19 +205,41 @@ impl Default for MediaSettings {
 /// analysis/                動画分析出力
 /// ```
 impl AppConfig {
-    /// Get the base data directory (~/.webview-bridge/)
+    /// Get the base data directory (%APPDATA%/webview-bridge/)
+    ///
+    /// Resolution order:
+    /// 1. WEBVIEW_BRIDGE_DATA_PATH env var (explicit override)
+    /// 2. %APPDATA%/webview-bridge (Windows standard via dirs::data_dir())
+    /// 3. Legacy fallback: ~/.webview-bridge/ is auto-migrated if found
     pub fn data_dir() -> PathBuf {
         std::env::var("WEBVIEW_BRIDGE_DATA_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
-                dirs::home_dir()
-                    .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
-                    .expect("Cannot determine home directory. Set WEBVIEW_BRIDGE_DATA_PATH or USERPROFILE.")
-                    .join(".webview-bridge")
+                let new_path = dirs::data_dir()
+                    .expect("Cannot determine AppData directory. Set WEBVIEW_BRIDGE_DATA_PATH.")
+                    .join("webview-bridge");
+
+                // Migrate from legacy ~/.webview-bridge/ if it exists and new path doesn't
+                if !new_path.exists() {
+                    if let Some(legacy) = dirs::home_dir().map(|h| h.join(".webview-bridge")) {
+                        if legacy.exists() {
+                            eprintln!("[config] Migrating data: {} -> {}", legacy.display(), new_path.display());
+                            if let Some(parent) = new_path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            match std::fs::rename(&legacy, &new_path) {
+                                Ok(_) => eprintln!("[config] Migration successful"),
+                                Err(e) => eprintln!("[config] Migration failed (will use new path): {}", e),
+                            }
+                        }
+                    }
+                }
+
+                new_path
             })
     }
     
-    /// Get the config file path (~/.webview-bridge/config.toml)
+    /// Get the config file path (%APPDATA%/webview-bridge/config.toml)
     pub fn config_path() -> PathBuf {
         Self::data_dir().join("config.toml")
     }
