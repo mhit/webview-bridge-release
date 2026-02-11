@@ -253,6 +253,7 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/ai/images/analyze", post(ai_images_analyze))
         .route("/ai/extract", post(ai_extract))
         .route("/ai/usage", get(ai_usage_stats))
+        .route("/ai/models", get(ai_models_list))
         // Download API
         .route("/download/trigger", post(download_trigger))
         .route("/download/status/:id", get(download_status))
@@ -483,6 +484,59 @@ async fn test_ai_connection() -> impl IntoResponse {
         "success": false,
         "error": "API key not configured"
     }))
+}
+
+/// GET /ai/models?provider=ollama&host=http://localhost:11434
+/// List available AI models for the specified (or configured) provider
+async fn ai_models_list(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let config = crate::core::config::get_config();
+    let provider = params.get("provider")
+        .map(|s| s.as_str())
+        .unwrap_or(&config.ai.provider);
+
+    match provider {
+        "ollama" => {
+            let host = params.get("host")
+                .filter(|h| !h.is_empty())
+                .cloned()
+                .or_else(|| std::env::var("OLLAMA_HOST").ok())
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let ollama = crate::core::ai::OllamaClient {
+                base_url: host,
+                model: config.ai.model.clone(),
+                timeout_ms: 5000,
+            };
+            match ollama.list_models() {
+                Ok(models) => Json(json!({
+                    "provider": "ollama",
+                    "available": true,
+                    "models": models,
+                    "current_model": config.ai.model
+                })),
+                Err(e) => Json(json!({
+                    "provider": "ollama",
+                    "available": false,
+                    "models": [],
+                    "error": e
+                })),
+            }
+        }
+        _ => {
+            Json(json!({
+                "provider": provider,
+                "available": true,
+                "models": [
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-pro",
+                    "gemini-pro-vision"
+                ],
+                "current_model": config.ai.model
+            }))
+        }
+    }
 }
 
 // ============================================================================

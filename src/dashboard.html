@@ -1208,15 +1208,13 @@
                                 <option value="gemini">Google Gemini</option>
                                 <option value="ollama">Ollama</option>
                             </select></div>
-                        <div class="fg"><label for="ai-md">モデル</label><select class="fi" id="ai-md">
-                                <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                        <div class="fg"><label for="ai-md">モデル <span id="ai-md-st" style="font-size:var(--text-xs);color:var(--tx3)"></span></label><select class="fi" id="ai-md">
+                                <option value="">読み込み中...</option>
                             </select></div>
                     </div>
                     <div id="ol-c" style="display:none">
                         <div class="fg"><label for="ol-h">Ollama ホスト</label><input class="fi" id="ol-h"
-                                placeholder="http://localhost:11434"></div>
+                                placeholder="http://localhost:11434" onchange="loadModels('ollama')"></div>
                     </div>
                     <div class="fg" id="ai-k-w"><label for="ai-k">API キー</label>
                         <div style="position:relative"><input type="password" class="fi" id="ai-k"
@@ -1952,12 +1950,12 @@
                 $('ai-on').classList.toggle('on', c.ai.enabled);
                 $('ai-on').setAttribute('aria-checked', String(!!c.ai.enabled));
                 $('ai-pv').value = c.ai.provider || 'gemini';
-                const ms = $('ai-md');
-                if (c.ai.model) { let f = false; for (let o of ms.options) if (o.value === c.ai.model) { f = true; break; } if (!f) ms.innerHTML += `<option value="${escAttr(c.ai.model)}">${escHtml(c.ai.model)}</option>`; ms.value = c.ai.model; }
                 if (c.ai.api_key_configured) $('ai-k').placeholder = '(設定済み)';
                 $('ai-to').value = c.ai.timeout_ms || 30000;
                 if (c.ai.daily_budget_usd) $('ai-bg').value = c.ai.daily_budget_usd;
-                onPv();
+                $('ol-c').style.display = (c.ai.provider || 'gemini') === 'ollama' ? 'block' : 'none';
+                $('ai-k-w').style.display = (c.ai.provider || 'gemini') === 'ollama' ? 'none' : 'block';
+                loadModels(c.ai.provider || 'gemini', c.ai.model);
             }
             if (c.server) {
                 $('sv-b').value = c.server.bind || '0.0.0.0'; $('sv-p').value = c.server.port || 9400; $('sv-m').value = c.server.max_sessions || 20;
@@ -1977,7 +1975,30 @@
             $('sv-auth-badge').style.background = on ? 'var(--grn)' : 'var(--ylw)';
         }
         async function loadSrv() { const c = await api('/v2/config'); if (!c.error) lCfg(c); }
-        function onPv() { const p = $('ai-pv').value; $('ol-c').style.display = p === 'ollama' ? 'block' : 'none'; $('ai-k-w').style.display = p === 'ollama' ? 'none' : 'block'; }
+        async function onPv() {
+            const p = $('ai-pv').value;
+            $('ol-c').style.display = p === 'ollama' ? 'block' : 'none';
+            $('ai-k-w').style.display = p === 'ollama' ? 'none' : 'block';
+            await loadModels(p);
+        }
+        async function loadModels(provider, current) {
+            const ms = $('ai-md'), st = $('ai-md-st');
+            const prev = current || ms.value;
+            ms.innerHTML = '<option value="">読み込み中...</option>';
+            st.textContent = '';
+            const host = provider === 'ollama' ? ($('ol-h').value || '') : '';
+            const q = host ? `?provider=${provider}&host=${encodeURIComponent(host)}` : `?provider=${provider}`;
+            const r = await api('/ai/models' + q);
+            if (r.error && (!r.models || r.models.length === 0)) {
+                ms.innerHTML = `<option value="${escAttr(prev)}">${escHtml(prev || '取得失敗')}</option>`;
+                st.textContent = provider === 'ollama' ? '(Ollama未接続)' : '';
+                return;
+            }
+            const models = r.models || [];
+            ms.innerHTML = models.map(m => `<option value="${escAttr(m)}">${escHtml(m)}</option>`).join('');
+            if (prev) { let f = false; for (let o of ms.options) if (o.value === prev) { f = true; break; } if (!f && prev) ms.innerHTML += `<option value="${escAttr(prev)}">${escHtml(prev)}</option>`; ms.value = prev; }
+            if (models.length) st.textContent = `(${models.length}件)`;
+        }
         async function saveAI() {
             const r = await api('/v2/config', 'POST', { ai: { enabled: $('ai-on').classList.contains('on'), provider: $('ai-pv').value, model: $('ai-md').value, api_key: $('ai-k').value || null, timeout_ms: parseInt($('ai-to').value), daily_budget_usd: parseFloat($('ai-bg').value) || null } });
             if (r.error || r.success === false) { toast('AI保存失敗: ' + (r.error || '不明なエラー'), 'er'); return; }
