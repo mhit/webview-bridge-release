@@ -663,13 +663,30 @@ impl OllamaClient {
         // Support custom Ollama URL via environment variable
         let base_url = std::env::var("OLLAMA_HOST")
             .ok()
-            .filter(|h| h.starts_with("http://") || h.starts_with("https://"))
+            .filter(|h| !h.is_empty())
+            .map(|h| Self::normalize_host(&h))
             .unwrap_or_else(|| "http://localhost:11434".to_string());
-        
+
         Self {
             base_url,
             model: config.model.clone(),
             timeout_ms: config.timeout_ms,
+        }
+    }
+
+    /// Normalize an Ollama host value into a usable HTTP URL.
+    /// "0.0.0.0" → "http://127.0.0.1:11434", "0.0.0.0:11434" → "http://127.0.0.1:11434"
+    pub fn normalize_host(raw: &str) -> String {
+        let s = raw.trim().trim_end_matches('/');
+        if s.starts_with("http://") || s.starts_with("https://") {
+            return s.replace("://0.0.0.0", "://127.0.0.1");
+        }
+        let with_scheme = format!("http://{}", s);
+        let normalized = with_scheme.replace("://0.0.0.0", "://127.0.0.1");
+        if !s.contains(':') {
+            format!("{}:11434", normalized)
+        } else {
+            normalized
         }
     }
     
@@ -760,10 +777,13 @@ impl OllamaClient {
         Ok(models)
     }
     
-    /// Check if Ollama is running
+    /// Check if Ollama is running (with timeout)
     pub fn is_available(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        ureq::get(&url).call().is_ok()
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .build();
+        client.get(&url).call().is_ok()
     }
 }
 

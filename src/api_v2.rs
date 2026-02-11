@@ -456,13 +456,20 @@ async fn update_config(
 }
 
 /// Resolve Ollama host: request param > config > env > default
+/// Normalizes the result to a proper http(s) URL (OLLAMA_HOST may be just a bind address like "0.0.0.0")
 fn resolve_ollama_host(override_host: Option<&str>, config: &crate::core::config::AppConfig) -> String {
-    override_host
+    let raw = override_host
         .filter(|h| !h.is_empty())
         .map(String::from)
-        .or_else(|| config.ai.ollama_host.clone())
-        .or_else(|| std::env::var("OLLAMA_HOST").ok())
-        .unwrap_or_else(|| "http://localhost:11434".to_string())
+        .or_else(|| config.ai.ollama_host.clone().filter(|h| !h.is_empty()))
+        .or_else(|| std::env::var("OLLAMA_HOST").ok().filter(|h| !h.is_empty()))
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+    normalize_ollama_url(&raw)
+}
+
+/// Delegate to OllamaClient::normalize_host for URL normalization
+fn normalize_ollama_url(raw: &str) -> String {
+    crate::core::ai::OllamaClient::normalize_host(raw)
 }
 
 /// POST /v2/ai/test - Test AI connection (supports both Gemini and Ollama)
