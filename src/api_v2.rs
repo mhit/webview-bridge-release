@@ -218,6 +218,8 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/state/history", get(session_state_history))
         .route("/session/import", post(session_import_cookies))
         .route("/session/import/profiles", get(session_import_profiles))
+        .route("/session/:name/cookies", get(session_get_cookies))
+        .route("/session/:name/cookies", post(session_set_cookies))
         // Navigation (synchronous, waits for load)
         .route("/navigate", post(navigate_v2))
         .route("/click", post(click_v2))
@@ -1105,6 +1107,85 @@ async fn session_import_profiles(
     )
 }
 
+/// GET /session/:name/cookies - Get all cookies from a WebView session
+async fn session_get_cookies(
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&name) {
+        Some(h) => h,
+        None => return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
+        ),
+    };
+
+    let core_manager = match get_core_session_manager() {
+        Some(m) => m,
+        None => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": "Core session manager not initialized" })),
+        ),
+    };
+
+    match core_manager.get_cookies(&handle.id).await {
+        Ok(cookies_json) => {
+            let cookies: serde_json::Value = serde_json::from_str(&cookies_json).unwrap_or(json!([]));
+            (StatusCode::OK, Json(json!({ "success": true, "session": name, "cookies": cookies })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": e })),
+        ),
+    }
+}
+
+/// POST /session/:name/cookies - Set cookies on a WebView session
+/// Body: { "cookies": [ { "name": "...", "value": "...", "domain": "...", ... } ] }
+async fn session_set_cookies(
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&name) {
+        Some(h) => h,
+        None => return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
+        ),
+    };
+
+    let cookies = match body.get("cookies") {
+        Some(c) if c.is_array() => c,
+        _ => return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "Missing or invalid 'cookies' array in request body" })),
+        ),
+    };
+
+    let core_manager = match get_core_session_manager() {
+        Some(m) => m,
+        None => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": "Core session manager not initialized" })),
+        ),
+    };
+
+    let cookies_json = serde_json::to_string(cookies).unwrap_or_else(|_| "[]".to_string());
+    let count = cookies.as_array().map(|a| a.len()).unwrap_or(0);
+
+    match core_manager.set_cookies(&handle.id, cookies_json).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "session": name, "set_count": count })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": e })),
+        ),
+    }
+}
+
 /// POST /session/import - Import cookies from browser to session
 async fn session_import_cookies(
     Json(request): Json<serde_json::Value>,
@@ -1198,23 +1279,80 @@ async fn session_import_cookies(
     // Summarize what was found
     let domain_counts = summarize_cookies(&cookies);
     let domains_found: Vec<_> = domain_counts.keys().cloned().collect();
-    
-    // TODO: Actually set cookies in the WebView session
-    // For now, just return what was found
-    
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "session": session,
-            "browser": browser_str,
-            "profile": profile,
-            "imported_count": cookies.len(),
-            "domains_found": domains_found,
-            "domain_counts": domain_counts,
-            "note": "Cookies read successfully. Use /session/cookies to set them in the WebView session."
-        })),
-    )
+
+    if cookies.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "success": false,
+                "session": session,
+                "browser": browser_str,
+                "error": "No cookies found for the specified domains"
+            })),
+        );
+    }
+
+    // Convert ImportedCookie → CDP CookieInfo JSON and set on WebView session
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&session) {
+        Some(h) => h,
+        None => return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "success": false,
+                "error": format!("Session '{}' not found. Acquire it first.", session)
+            })),
+        ),
+    };
+
+    let cdp_cookies: Vec<serde_json::Value> = cookies.iter().map(|c| {
+        let mut obj = serde_json::json!({
+            "name": c.name,
+            "value": c.value,
+            "domain": c.domain,
+            "path": c.path,
+            "secure": c.secure,
+            "http_only": c.http_only,
+        });
+        if let Some(exp) = c.expires {
+            obj["expires"] = serde_json::json!(exp as f64);
+        }
+        obj
+    }).collect();
+    let cdp_json = serde_json::to_string(&cdp_cookies).unwrap_or_else(|_| "[]".to_string());
+
+    let core_manager = match get_core_session_manager() {
+        Some(m) => m,
+        None => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": "Core session manager not initialized"
+            })),
+        ),
+    };
+
+    match core_manager.set_cookies(&handle.id, cdp_json).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "session": session,
+                "browser": browser_str,
+                "profile": profile,
+                "imported_count": cookies.len(),
+                "domains_found": domains_found,
+                "domain_counts": domain_counts,
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": format!("Cookies read OK but failed to set on session: {}", e)
+            })),
+        ),
+    }
 }
 
 /// POST /v2/session/clone - Clone a session (copy profile and data)

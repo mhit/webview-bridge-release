@@ -132,6 +132,52 @@ async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, St
 }
 
 // ============================================================================
+// Helper: Set Cookies (CDP via AppCommand)
+// ============================================================================
+
+async fn set_cookies_cdp(session: &str, cookies_json: String, state: &V2AppState) -> Result<(), String> {
+    let manager = get_session_manager_v2();
+
+    let handle = manager.get_handle(session)
+        .ok_or_else(|| format!("Session '{}' not found", session))?;
+
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::SetCookies {
+        id: handle.id.clone(),
+        cookies: cookies_json,
+        resp_tx: tx,
+    };
+
+    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+
+    match tokio::time::timeout(Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(e),
+        Ok(Err(_)) => Err("Channel closed".to_string()),
+        Err(_) => Err("SetCookies timed out".to_string()),
+    }
+}
+
+/// Convert ImportedCookie list to CDP CookieInfo JSON array
+fn imported_cookies_to_cdp_json(cookies: &[crate::core::cookie_import::ImportedCookie]) -> String {
+    let cdp_cookies: Vec<serde_json::Value> = cookies.iter().map(|c| {
+        let mut obj = serde_json::json!({
+            "name": c.name,
+            "value": c.value,
+            "domain": c.domain,
+            "path": c.path,
+            "secure": c.secure,
+            "http_only": c.http_only,
+        });
+        if let Some(exp) = c.expires {
+            obj["expires"] = serde_json::json!(exp as f64);
+        }
+        obj
+    }).collect();
+    serde_json::to_string(&cdp_cookies).unwrap_or_else(|_| "[]".to_string())
+}
+
+// ============================================================================
 // 1. Navigate
 // ============================================================================
 
@@ -1490,11 +1536,64 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
     }
     
     if let Some(name) = &req.import {
-        // TODO: Implement cookie import
-        return McpToolResponse::success_json(serde_json::json!({
-            "session": name,
-            "status": "cookies_imported"
-        }));
+        use crate::core::cookie_import::{BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies};
+
+        // Determine browser type
+        let browser_str = req.browser.as_deref().unwrap_or("firefox");
+        let browser = match browser_str.to_lowercase().as_str() {
+            "chrome" => BrowserType::Chrome,
+            "edge" => BrowserType::Edge,
+            "firefox" => BrowserType::Firefox,
+            _ => return McpToolResponse::error("INVALID_BROWSER", &format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)),
+        };
+
+        // Chrome/Edge cookies are DPAPI-encrypted — not supported yet
+        if matches!(browser, BrowserType::Chrome | BrowserType::Edge) {
+            return McpToolResponse::error("UNSUPPORTED_BROWSER",
+                "Chrome/Edge cookie import requires DPAPI decryption (not yet implemented). Use browser='firefox' instead.");
+        }
+
+        // Find cookie database
+        let db_path = match get_cookie_db_path(browser, "Default") {
+            Some(p) if p.exists() => p,
+            Some(p) => return McpToolResponse::error("COOKIE_DB_NOT_FOUND", &format!("Cookie database not found at: {}", p.display())),
+            None => return McpToolResponse::error("COOKIE_DB_NOT_FOUND", "Could not determine Firefox cookie database path"),
+        };
+
+        // Read cookies
+        let domains = req.domains.clone().unwrap_or_default();
+        let cookies = match read_firefox_cookies(&db_path, &domains) {
+            Ok(c) => c,
+            Err(e) => return McpToolResponse::error("COOKIE_READ_FAILED", &format!("Failed to read cookies: {}", e)),
+        };
+
+        if cookies.is_empty() {
+            return McpToolResponse::error("NO_COOKIES_FOUND", &format!(
+                "No cookies found for domains: {:?}. Make sure Firefox has cookies for these domains.", domains
+            ));
+        }
+
+        // Verify session exists
+        let manager = get_session_manager_v2();
+        if manager.get_handle(name).is_none() {
+            return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found. Acquire it first.", name));
+        }
+
+        // Convert and set cookies on the WebView session
+        let cdp_json = imported_cookies_to_cdp_json(&cookies);
+        match set_cookies_cdp(name, cdp_json, state).await {
+            Ok(()) => {
+                let domain_counts = summarize_cookies(&cookies);
+                return McpToolResponse::success_json(serde_json::json!({
+                    "session": name,
+                    "status": "cookies_imported",
+                    "imported_count": cookies.len(),
+                    "browser": browser_str,
+                    "domain_counts": domain_counts,
+                }));
+            }
+            Err(e) => return McpToolResponse::error("COOKIE_SET_FAILED", &format!("Cookies read OK but failed to set on session: {}", e)),
+        }
     }
     
     // AI Status - show current AI configuration
