@@ -276,7 +276,12 @@ async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolRes
                 } else {
                     None
                 };
-                
+                let error_screenshot_url = error_screenshot.as_ref().and_then(|uri| {
+                    let stripped = uri.strip_prefix("browser://screenshots/")?;
+                    let (s, f) = stripped.split_once('/')?;
+                    Some(to_screenshot_http_url(s, f))
+                });
+
                 return McpToolResponse::error_with_details(
                     "ACTION_FAILED",
                     &format!("Action {} failed: {}", index, e),
@@ -285,7 +290,8 @@ async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolRes
                         "action": action,
                         "reason": e,
                         "completed_actions": completed_actions,
-                        "error_screenshot": error_screenshot
+                        "error_screenshot": error_screenshot,
+                        "error_screenshot_url": error_screenshot_url
                     }),
                 );
             }
@@ -294,9 +300,19 @@ async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolRes
     
     let mut text = format!("Completed {} actions successfully", completed_actions.len());
     if !screenshots.is_empty() {
+        // screenshots contain browser:// URIs - also provide HTTP URLs
+        let http_urls: Vec<String> = screenshots.iter().filter_map(|uri| {
+            // Parse browser://screenshots/{session}/{filename}
+            let stripped = uri.strip_prefix("browser://screenshots/")?;
+            let (session, filename) = stripped.split_once('/')?;
+            Some(to_screenshot_http_url(session, filename))
+        }).collect();
         text.push_str(&format!("\nScreenshots: {:?}", screenshots));
+        if !http_urls.is_empty() {
+            text.push_str(&format!("\nView at: {:?}", http_urls));
+        }
     }
-    
+
     McpToolResponse::success_text(text)
 }
 
@@ -632,6 +648,13 @@ async fn execute_action(
 /// Convert a screenshot path to a compact browser:// URI for MCP responses
 fn to_screenshot_uri(session: &str, filename: &str) -> String {
     format!("browser://screenshots/{}/{}", session, filename)
+}
+
+/// Build the HTTP URL to retrieve a screenshot via the REST API
+fn to_screenshot_http_url(session: &str, filename: &str) -> String {
+    let cfg = crate::core::config::get_config();
+    let port = cfg.server.port;
+    format!("http://127.0.0.1:{}/media/screenshots/{}/{}", port, session, filename)
 }
 
 async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, String> {
@@ -1021,8 +1044,9 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                             // Save to file
                             match std::fs::write(&screenshot_path, &bytes) {
                                 Ok(_) => {
-                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n{}　({} bytes)", 
-                                        to_screenshot_uri(&req.session, &filename), bytes.len()));
+                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n{}　({} bytes)\nView: {}",
+                                        to_screenshot_uri(&req.session, &filename), bytes.len(),
+                                        to_screenshot_http_url(&req.session, &filename)));
                                 }
                                 Err(e) => {
                                     text.push_str(&format!("\n【スクリーンショット保存失敗】{}", e));
@@ -2405,8 +2429,24 @@ fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_he
 // ============================================================================
 
 async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolResponse {
-    match execute_script(&req.session, req.script, state, req.timeout_ms).await {
-        Ok(result) => McpToolResponse::success_text(format!("Result: {}", result)),
+    match execute_script(&req.session, req.script.clone(), state, req.timeout_ms).await {
+        Ok(result) => {
+            // Parse to proper JSON type for structured response
+            let typed = serde_json::from_str::<serde_json::Value>(&result)
+                .unwrap_or(serde_json::Value::String(result));
+            McpToolResponse::success_json(serde_json::json!({
+                "session": req.session,
+                "result": typed,
+                "result_type": match &typed {
+                    serde_json::Value::Null => "null",
+                    serde_json::Value::Bool(_) => "boolean",
+                    serde_json::Value::Number(_) => "number",
+                    serde_json::Value::String(_) => "string",
+                    serde_json::Value::Array(_) => "array",
+                    serde_json::Value::Object(_) => "object",
+                },
+            }))
+        }
         Err(e) => McpToolResponse::error("EXECUTE_FAILED", &e),
     }
 }

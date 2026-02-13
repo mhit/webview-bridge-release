@@ -1787,15 +1787,21 @@ async fn execute_v2(
         std::time::Duration::from_millis(request.timeout_ms),
         rx
     ).await {
-        Ok(Ok(Ok(result))) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "session": request.session,
-                "result": result,
-                "elapsed_ms": start.elapsed().as_millis() as u64
-            })),
-        ).into_response(),
+        Ok(Ok(Ok(result))) => {
+            // Parse result back to proper JSON type (number, bool, null, object, array)
+            // Falls back to string if not valid JSON (e.g. plain text from document.title)
+            let typed_result = serde_json::from_str::<serde_json::Value>(&result)
+                .unwrap_or(serde_json::Value::String(result));
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "session": request.session,
+                    "result": typed_result,
+                    "elapsed_ms": start.elapsed().as_millis() as u64
+                })),
+            ).into_response()
+        }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
         Err(_) => error_response(Wbp2Error::InternalError, "Execution timed out"),
@@ -3978,10 +3984,12 @@ async fn mcp_v3_handler(
                             for entry in entries.flatten() {
                                 if let Some(name) = entry.file_name().to_str() {
                                     if name.ends_with(".png") || name.ends_with(".webp") || name.ends_with(".jpg") {
+                                        let cfg = crate::core::config::get_config();
+                                        let port = cfg.server.port;
                                         resources.push(serde_json::json!({
                                             "uri": format!("browser://screenshots/{}/{}", session_name, name),
                                             "name": name,
-                                            "description": format!("Screenshot from session '{}'", session_name),
+                                            "description": format!("Screenshot from session '{}'. HTTP: http://127.0.0.1:{}/media/screenshots/{}/{}", session_name, port, session_name, name),
                                             "mimeType": "image/png"
                                         }));
                                     }
