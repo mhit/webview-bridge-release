@@ -2615,12 +2615,12 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "session",
-            "description": "Manage browser sessions. Use 'acquire' to create or resume a named session (cookies persist across restarts). Use 'release' when done. Use 'list' to see all sessions. Use 'import' to load cookies from Firefox (enables logged-in browsing without re-authentication). Sessions support device emulation (mobile/tablet presets or custom viewport).",
+            "description": "Manage browser sessions and device emulation. Use 'acquire' to create or resume a named session (cookies persist across restarts). Use 'release' when done. Use 'list' to see all sessions. Use 'import' to load cookies from Firefox (enables logged-in browsing without re-authentication). Device emulation: pass 'device' with acquire to start as mobile/tablet, or pass 'device' with 'session' (no acquire) to switch an existing session's device mid-workflow. Use device emulation to get mobile-optimized pages, test responsive layouts, or bypass desktop-only restrictions.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default", "description": "Target session name. Used with device/viewport params to change device emulation on an existing session." },
-                    "acquire": { "type": "string", "description": "Create or resume a session by name. If the session exists, it reuses the WebView and all cookies. If new, creates a fresh browser instance." },
+                    "session": { "type": "string", "default": "default", "description": "Target session name. When used with device/viewport/user_agent params (without acquire), switches device emulation on an already-active session." },
+                    "acquire": { "type": "string", "description": "Create or resume a session by name. If the session exists, it reuses the WebView and all cookies. If new, creates a fresh browser instance. Combine with 'device' to start in mobile/tablet mode." },
                     "release": { "type": "string", "description": "Release a session. The WebView and cookies stay alive for future reuse — this just marks it available." },
                     "list": { "type": "boolean", "description": "Return a list of all sessions with their status (active, expired, etc.)" },
                     "import": { "type": "string", "description": "Session name to import cookies INTO. Reads cookies from local browser profile and sets them via CDP. Requires 'browser' and 'domains' parameters." },
@@ -2629,10 +2629,10 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "ttl_hours": { "type": "integer", "default": 168, "description": "Session lifetime in hours. Default: 168 (1 week). Set 0 for no expiration." },
                     "browser": { "type": "string", "enum": ["firefox"], "description": "Browser to import cookies from. Currently only Firefox is supported (Chrome/Edge use DPAPI encryption)." },
                     "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import. Example: ['.amazon.co.jp', '.x.com']. Required with 'import'." },
-                    "device": { "type": "string", "description": "Device preset for emulation. Examples: 'iPhone 14', 'iPhone 14 Pro Max', 'Pixel 7', 'iPad Air'. Sets viewport, user-agent, and touch simulation." },
-                    "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels (overrides device preset)" },
-                    "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels (overrides device preset)" },
-                    "user_agent": { "type": "string", "description": "Custom User-Agent string (overrides device preset)" }
+                    "device": { "type": "string", "description": "Device preset name for emulation. Sets viewport size, user-agent, device-scale-factor, and touch support. Name matching is flexible: 'iPhone 14', 'iphone_14', 'iphone14' all work. Phones: iphone_se, iphone_14, iphone_14_plus, iphone_14_pro, iphone_14_pro_max, iphone_15, iphone_15_plus, iphone_15_pro, iphone_15_pro_max, iphone_16, iphone_16_plus, iphone_16_pro, iphone_16_pro_max, pixel_7, pixel_7_pro, pixel_8, pixel_8_pro, pixel_9, pixel_9_pro, pixel_9_pro_xl, galaxy_s23, galaxy_s23_ultra, galaxy_s24, galaxy_s24_ultra, galaxy_fold_5. Tablets: ipad, ipad_mini, ipad_air, ipad_pro_11, ipad_pro_12, galaxy_tab_s9, pixel_tablet. Desktops: desktop_1366x768, desktop_1080p, desktop_1440p, desktop_4k, macbook_air_13, macbook_pro_14, macbook_pro_16, imac_24. Generic: mobile_small (320), mobile_medium (375), mobile_large (414), tablet (768), laptop (1366), desktop (1920)." },
+                    "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels. Use with viewport_height for arbitrary sizes not covered by device presets. Overrides device preset if both are given." },
+                    "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels. Must be used together with viewport_width." },
+                    "user_agent": { "type": "string", "description": "Custom User-Agent string. Overrides the user-agent set by device preset if both are given." }
                 }
             }
         },
