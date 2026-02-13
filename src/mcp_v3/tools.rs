@@ -19,6 +19,67 @@ pub async fn route_tool(
     params: serde_json::Value,
     state: &V2AppState,
 ) -> McpToolResponse {
+    let result = route_tool_inner(tool, params.clone(), state).await;
+
+    // Auto-reacquire: if a session-dependent tool gets SESSION_NOT_FOUND,
+    // automatically re-acquire the session and retry the operation.
+    // This eliminates the common "expired → manual re-acquire → retry" cycle.
+    if let Some(ref err) = result.error {
+        if err.code == "SESSION_NOT_FOUND" && tool != "session" {
+            if let Some(session_name) = params.get("session").and_then(|s| s.as_str()) {
+                if !session_name.is_empty() {
+                    tracing::info!("Auto-reacquiring session '{}' for tool '{}'", session_name, tool);
+
+                    // Build a minimal acquire request
+                    let acquire_req = SessionRequest {
+                        session: None,
+                        acquire: Some(session_name.to_string()),
+                        release: None,
+                        list: false,
+                        import: None,
+                        clone_to: None,
+                        headless: false,
+                        restore: true,
+                        ttl_hours: 168,
+                        browser: None,
+                        domains: None,
+                        ai_status: false,
+                        ai_models: false,
+                        ai_config: None,
+                        device: None,
+                        viewport_width: None,
+                        viewport_height: None,
+                        user_agent: None,
+                    };
+
+                    let acquire_result = handle_session(acquire_req, state).await;
+                    if acquire_result.success {
+                        tracing::info!("Session '{}' re-acquired, retrying '{}'", session_name, tool);
+                        let retry_result = route_tool_inner(tool, params, state).await;
+                        // Return retry result with a note about auto-reacquire
+                        if retry_result.success {
+                            return retry_result;
+                        }
+                        // Retry also failed — return the retry error, not the original
+                        return retry_result;
+                    }
+                    // Acquire failed — return original error with hint
+                    return McpToolResponse::error("SESSION_NOT_FOUND",
+                        &format!("Session '{}' not found and auto-reacquire failed. The session may have been permanently deleted. Use the session tool with acquire to create it.", session_name));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Inner routing — dispatches to tool handlers without auto-reacquire logic
+async fn route_tool_inner(
+    tool: &str,
+    params: serde_json::Value,
+    state: &V2AppState,
+) -> McpToolResponse {
     match tool {
         "navigate" => {
             match serde_json::from_value::<NavigateRequest>(params) {
