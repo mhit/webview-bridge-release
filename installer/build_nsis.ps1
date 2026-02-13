@@ -74,7 +74,7 @@ $titleFont.Dispose()
 $verFont = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Regular)
 $lightBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 190, 220))
 $verRect = New-Object System.Drawing.RectangleF(0, 158, 164, 20)
-$g.DrawString("v3.5.0", $verFont, $lightBrush, $verRect, $sf)
+$g.DrawString("v3.6.0", $verFont, $lightBrush, $verRect, $sf)
 $verFont.Dispose()
 
 # Tagline
@@ -125,7 +125,7 @@ Write-Host "Running makensis..."
 & $nsisExe $nsisArgs
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Installer built successfully!"
-    $installer = Join-Path $root "dist\WebViewBridge-3.5.0-Setup.exe"
+    $installer = Join-Path $root "dist\WebViewBridge-3.6.0-Setup.exe"
     if (Test-Path $installer) {
         $fi = Get-Item $installer
         Write-Host "Output: $installer ($([math]::Round($fi.Length / 1024 / 1024, 1)) MB)"

@@ -66,7 +66,7 @@ impl Default for ServerConfig {
             bind: default_bind(),
             port: default_port(),
             max_sessions: default_max_sessions(),
-            no_auth: false,
+            no_auth: true,
         }
     }
 }

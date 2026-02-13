@@ -18,25 +18,16 @@ pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
 
 const COMMAND_PROCESSOR_COUNT: usize = 4;
 
-/// Command line configuration
+/// Command line configuration (CLI args override config.toml)
 struct Config {
-    bind: IpAddr,
-    port: u16,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            bind: "127.0.0.1".parse().unwrap(),
-            port: 9400,
-        }
-    }
+    bind: Option<IpAddr>,
+    port: Option<u16>,
 }
 
 fn parse_args() -> Option<Config> {
     let args: Vec<String> = std::env::args().collect();
-    let mut config = Config::default();
-    
+    let mut config = Config { bind: None, port: None };
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -46,27 +37,27 @@ fn parse_args() -> Option<Config> {
                 println!("Usage: webview-bridge-rust.exe [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --bind <IP>       Bind address (default: 127.0.0.1)");
-                println!("  --port <PORT>     Port number (default: 9400)");
+                println!("  --bind <IP>       Bind address (default: from config.toml or 127.0.0.1)");
+                println!("  --port <PORT>     Port number (default: from config.toml or 9400)");
                 println!("  --help, -h        Show this help message");
                 return None;
             }
             "--bind" => {
                 if i + 1 < args.len() {
                     i += 1;
-                    config.bind = args[i].parse().unwrap_or_else(|_| {
+                    config.bind = Some(args[i].parse().unwrap_or_else(|_| {
                         eprintln!("Invalid bind address: {}", args[i]);
                         std::process::exit(1);
-                    });
+                    }));
                 }
             }
             "--port" => {
                 if i + 1 < args.len() {
                     i += 1;
-                    config.port = args[i].parse().unwrap_or_else(|_| {
+                    config.port = Some(args[i].parse().unwrap_or_else(|_| {
                         eprintln!("Invalid port number: {}", args[i]);
                         std::process::exit(1);
-                    });
+                    }));
                 }
             }
             _ => {
@@ -75,29 +66,35 @@ fn parse_args() -> Option<Config> {
         }
         i += 1;
     }
-    
+
     Some(config)
 }
 
 fn main() {
     // Parse command line arguments
-    let config = match parse_args() {
+    let cli = match parse_args() {
         Some(c) => c,
         None => return, // --help was shown
     };
 
-    let port = config.port;
+    // Resolve bind/port: CLI args > config.toml > hardcoded defaults
+    let toml_cfg = crate::core::config::AppConfig::load();
+    let bind: IpAddr = cli.bind
+        .unwrap_or_else(|| toml_cfg.server.bind.parse().unwrap_or([127, 0, 0, 1].into()));
+    let port: u16 = cli.port
+        .unwrap_or(toml_cfg.server.port);
 
     // Channel: tray "Exit" → server graceful shutdown
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
 
     // Background thread: Tokio runtime + HTTP server
+    let addr = SocketAddr::new(bind, port);
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
-            .block_on(run_http_server(config, shutdown_rx));
+            .block_on(run_http_server(addr, shutdown_rx));
     });
 
     // Main thread: Win32 message loop (system tray icon)
@@ -116,7 +113,7 @@ fn generate_auth_token() -> String {
         .collect()
 }
 
-async fn run_http_server(config: Config, shutdown_rx: std::sync::mpsc::Receiver<()>) {
+async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receiver<()>) {
     // Initialize config file system first
     let app_config = crate::core::config::init_config();
     {
@@ -211,7 +208,6 @@ async fn run_http_server(config: Config, shutdown_rx: std::sync::mpsc::Receiver<
     let app = v2_router.nest("/ws", ws_router);
 
     // Run server
-    let addr = SocketAddr::new(config.bind, config.port);
     tracing::info!("listening on {} with {} command processors", addr, COMMAND_PROCESSOR_COUNT);
     tracing::info!("API: http://{}/", addr);
     tracing::info!("MCP: webview-bridge-rust.exe --mcp-stdio (requires server running)");
