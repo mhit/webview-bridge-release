@@ -266,6 +266,8 @@ pub struct SessionRequest {
     pub list: bool,
     #[serde(default)]
     pub import: Option<String>,
+    #[serde(default)]
+    pub clone_to: Option<String>,  // Clone session cookies/profile to a new session name
     // acquire options
     #[serde(default)]
     pub headless: bool,

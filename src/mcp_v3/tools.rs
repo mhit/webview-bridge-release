@@ -1570,7 +1570,23 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             Err(e) => return McpToolResponse::error("SESSION_RELEASE_FAILED", &e),
         }
     }
-    
+
+    // Clone session (copy profile/cookies to a new session name)
+    if let Some(new_name) = &req.clone_to {
+        let source = req.session.as_deref()
+            .or(req.acquire.as_deref())
+            .unwrap_or("default");
+        match manager.clone_session(source, new_name) {
+            Ok(()) => return McpToolResponse::success_json(serde_json::json!({
+                "source": source,
+                "new_session": new_name,
+                "status": "cloned",
+                "message": format!("Session '{}' cloned to '{}'. The new session has the same cookies and profile. Use acquire to start using it.", source, new_name)
+            })),
+            Err(e) => return McpToolResponse::error("SESSION_CLONE_FAILED", &e),
+        }
+    }
+
     if let Some(name) = &req.import {
         use crate::core::cookie_import::{BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies};
 
@@ -2615,20 +2631,21 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "session",
-            "description": "Manage browser sessions and device emulation. Use 'acquire' to create or resume a named session (cookies persist across restarts). Use 'release' when done. Use 'list' to see all sessions. Use 'import' to load cookies from Firefox (enables logged-in browsing without re-authentication). Device emulation: pass 'device' with acquire to start as mobile/tablet, or pass 'device' with 'session' (no acquire) to switch an existing session's device mid-workflow. Use device emulation to get mobile-optimized pages, test responsive layouts, or bypass desktop-only restrictions.",
+            "description": "Manage browser sessions — create, resume, clone, release, and configure device emulation. Sessions are persistent: cookies, history, and login state survive server restarts. Once acquired, a session stays alive even after 'release' — re-acquiring the same name resumes exactly where you left off. Key operations: 'acquire' creates/resumes a session. 'release' marks it idle but keeps data. 'clone_to' copies cookies and profile to a new session (useful for sharing login state across parallel tasks). 'import' loads cookies from Firefox for logged-in browsing. 'list' shows all sessions. Device emulation: pass 'device' with acquire to start as mobile/tablet, or pass 'device' with 'session' (no acquire) to switch mid-workflow.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default", "description": "Target session name. When used with device/viewport/user_agent params (without acquire), switches device emulation on an already-active session." },
-                    "acquire": { "type": "string", "description": "Create or resume a session by name. If the session exists, it reuses the WebView and all cookies. If new, creates a fresh browser instance. Combine with 'device' to start in mobile/tablet mode." },
-                    "release": { "type": "string", "description": "Release a session. The WebView and cookies stay alive for future reuse — this just marks it available." },
-                    "list": { "type": "boolean", "description": "Return a list of all sessions with their status (active, expired, etc.)" },
-                    "import": { "type": "string", "description": "Session name to import cookies INTO. Reads cookies from local browser profile and sets them via CDP. Requires 'browser' and 'domains' parameters." },
-                    "headless": { "type": "boolean", "default": false, "description": "true = hidden window, false = visible window. Use visible (false) for bot-protected sites and manual login." },
-                    "restore": { "type": "boolean", "default": true, "description": "When resuming an existing session, navigate back to the last URL" },
-                    "ttl_hours": { "type": "integer", "default": 168, "description": "Session lifetime in hours. Default: 168 (1 week). Set 0 for no expiration." },
-                    "browser": { "type": "string", "enum": ["firefox"], "description": "Browser to import cookies from. Currently only Firefox is supported (Chrome/Edge use DPAPI encryption)." },
-                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import. Example: ['.amazon.co.jp', '.x.com']. Required with 'import'." },
+                    "session": { "type": "string", "default": "default", "description": "Target session name. When used alone with device/viewport/user_agent params (no acquire), switches device emulation on an already-active session. Also used as the source session for clone_to." },
+                    "acquire": { "type": "string", "description": "Create or resume a session by name. If the session already exists, it reuses the same WebView with all cookies and login state intact — you do NOT need to log in again. If new, creates a fresh browser instance. Combine with 'device' to start in mobile/tablet mode." },
+                    "release": { "type": "string", "description": "Release a session by name. The WebView, cookies, and all state stay alive for future reuse — this just marks it as idle. You can re-acquire the same name later to resume." },
+                    "list": { "type": "boolean", "description": "Return all sessions with status, TTL, expiration time, and whether they are currently acquired." },
+                    "clone_to": { "type": "string", "description": "Clone the source session's cookies and profile to a new session name. Source is 'session' param (default: 'default'). Use this to share authentication across multiple parallel sessions — e.g., log in once, then clone to 'worker-1', 'worker-2', etc." },
+                    "import": { "type": "string", "description": "Session name to import cookies INTO from a local browser. Reads cookies from Firefox profile and sets them via CDP, enabling logged-in browsing without manual re-authentication. Requires 'browser' and 'domains'." },
+                    "headless": { "type": "boolean", "default": false, "description": "true = hidden window (no visible browser). false = visible window (default). Use visible for bot-protected sites that require visual interaction or manual login." },
+                    "restore": { "type": "boolean", "default": true, "description": "When resuming an existing session, automatically navigate back to the last URL. Set false to start from a blank page." },
+                    "ttl_hours": { "type": "integer", "default": 168, "description": "Session lifetime in hours before auto-expiration. Default: 168 (1 week). Set 0 for permanent sessions that never expire. TTL auto-extends on each use, so active sessions won't expire unexpectedly." },
+                    "browser": { "type": "string", "enum": ["firefox"], "description": "Browser to import cookies from. Currently only Firefox is supported (Chrome/Edge use DPAPI encryption which is not yet implemented)." },
+                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import. Example: ['.amazon.co.jp', '.x.com']. Use leading dot for subdomain matching. Required with 'import'." },
                     "device": { "type": "string", "description": "Device preset name for emulation. Sets viewport size, user-agent, device-scale-factor, and touch support. Name matching is flexible: 'iPhone 14', 'iphone_14', 'iphone14' all work. Phones: iphone_se, iphone_14, iphone_14_plus, iphone_14_pro, iphone_14_pro_max, iphone_15, iphone_15_plus, iphone_15_pro, iphone_15_pro_max, iphone_16, iphone_16_plus, iphone_16_pro, iphone_16_pro_max, pixel_7, pixel_7_pro, pixel_8, pixel_8_pro, pixel_9, pixel_9_pro, pixel_9_pro_xl, galaxy_s23, galaxy_s23_ultra, galaxy_s24, galaxy_s24_ultra, galaxy_fold_5. Tablets: ipad, ipad_mini, ipad_air, ipad_pro_11, ipad_pro_12, galaxy_tab_s9, pixel_tablet. Desktops: desktop_1366x768, desktop_1080p, desktop_1440p, desktop_4k, macbook_air_13, macbook_pro_14, macbook_pro_16, imac_24. Generic: mobile_small (320), mobile_medium (375), mobile_large (414), tablet (768), laptop (1366), desktop (1920)." },
                     "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels. Use with viewport_height for arbitrary sizes not covered by device presets. Overrides device preset if both are given." },
                     "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels. Must be used together with viewport_width." },
