@@ -80,9 +80,17 @@ curlや各言語のHTTPクライアントから直接APIを呼び出します。
 
 ## MCP クライアントからの接続
 
-### Claude Desktop / OpenClaw
+WebView Bridge は **stdio** と **HTTP/SSE** の両方でMCPプロトコルに対応しています。
 
-MCP設定ファイルに以下を追加:
+---
+
+### 方式1: stdio（ローカル実行）
+
+WebView Bridge の exe を子プロセスとして直接起動する方式。同一マシンでクライアントとサーバーが動作する場合に使用。
+
+**Claude Desktop / Cline:**
+
+`%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
@@ -95,7 +103,101 @@ MCP設定ファイルに以下を追加:
 }
 ```
 
-### REST API 直接利用
+> **Note:** exe にパスが通っていない場合はフルパスを指定:
+> `"command": "C:\\Program Files\\WebViewBridge\\webview-bridge-rust.exe"`
+
+**Claude Code（`.mcp.json`）:**
+
+プロジェクトルートの `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "webview-bridge": {
+      "command": "webview-bridge-rust.exe",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
+---
+
+### 方式2: HTTP/SSE（リモート接続）
+
+別マシンで動作している WebView Bridge サーバーに接続する方式。LAN内の他のPC、WSL、AIエージェントなどからの利用に最適。
+
+**前提:** サーバー側の config.toml で `bind = "0.0.0.0"` に設定し、LAN内からアクセス可能にしておく。
+
+```toml
+[server]
+bind = "0.0.0.0"   # ← 127.0.0.1 だとローカルのみ
+port = 9400
+```
+
+#### Claude Desktop（mcp-remote 経由）
+
+> **既知の問題:** Claude Desktop v1.1.2998 では `"url"` 形式の MCP 設定を使うと起動時にクラッシュします（`TypeError: Cannot read properties of undefined (reading 'value')`）。`mcp-remote` をブリッジとして使用してください。
+
+`%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "webview-bridge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://<サーバーIP>:9400/mcp",
+        "--allow-http"
+      ]
+    }
+  }
+}
+```
+
+| パラメータ | 説明 |
+|-----------|------|
+| `npx -y` | mcp-remote を自動インストール・実行 |
+| `mcp-remote` | リモート HTTP/SSE サーバーへのブリッジ |
+| `--allow-http` | **必須** — HTTP接続を許可（デフォルトはHTTPSのみ） |
+
+> **設定変更時の注意:** Claude Desktop 起動中に設定ファイルを変更すると上書きされます。必ず完全終了してから編集してください。
+
+#### Claude Code（リモート URL）
+
+`.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "webview-bridge": {
+      "url": "http://<サーバーIP>:9400/mcp"
+    }
+  }
+}
+```
+
+#### OpenClaw
+
+`openclaw.json` の MCP 設定:
+
+```json
+{
+  "mcp_servers": {
+    "webview-bridge": {
+      "url": "http://<サーバーIP>:9400/mcp"
+    }
+  }
+}
+```
+
+---
+
+### 方式3: REST API 直接利用
+
+MCP を使わず、curl や HTTP クライアントから直接 API を呼び出す方式。
 
 ```bash
 # ヘルスチェック
@@ -107,7 +209,7 @@ curl -X POST http://localhost:9400/session/acquire \
   -d '{"name": "my-session"}'
 ```
 
-### MCP エンドポイント
+### MCP HTTP エンドポイント
 
 ```bash
 # MCPツール呼び出し
@@ -118,6 +220,18 @@ curl -X POST http://localhost:9400/mcp \
 # 利用可能ツール一覧
 curl http://localhost:9400/mcp/tools
 ```
+
+---
+
+### 接続方式の選び方
+
+| 条件 | 推奨方式 | 理由 |
+|------|---------|------|
+| 同一PCで利用 | stdio | セットアップ不要、最もシンプル |
+| LAN内の別マシンから | HTTP/SSE | ネットワーク越しに接続可能 |
+| WSLからWindowsへ | HTTP/SSE | WSLとWindows間はネットワーク経由 |
+| AIエージェント（Sam等） | HTTP/SSE | サーバーが常時起動、複数クライアント対応 |
+| Claude Desktop リモート | mcp-remote | `url` 設定のクラッシュバグ回避 |
 
 ## 最初のブラウザ操作
 

@@ -13,13 +13,13 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-3.5.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-3.6.0-blue">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Rust" src="https://img.shields.io/badge/rust-edition%202024-orange">
 </p>
 
-> **v3.5 — OpenClaw (CDP Native)**: Chrome DevTools Protocol直接制御により、ネットワーク監視・フルページキャプチャ・要素取得の精度が劇的に向上。
+> **v3.6 — OpenClaw (CDP Native)**: Chrome DevTools Protocol直接制御により、ネットワーク監視・フルページキャプチャ・要素取得の精度が劇的に向上。Cookie インポート機能実装、LAN接続対応。
 
 ## 🎯 なぜWebView Bridge?
 
@@ -213,7 +213,7 @@ model = "gemma3:12b"       # ローカルLLM
 ## 📐 アーキテクチャ
 
 ```
-AI (Claude/Gemini/OpenClaw)    WebView Bridge v3.5 (Windows)
+AI (Claude/Gemini/OpenClaw)    WebView Bridge v3.6 (Windows)
 ┌─────────────────┐            ┌──────────────────────────────┐
 │  MCP Client     │◀──MCP──▶  │  MCP Server (9 tools)        │
 │                 │            │  ├─ Session Manager          │
@@ -267,7 +267,7 @@ cargo run --release
 
 ### 2. MCP設定
 
-#### Claude Desktop / Cline
+#### 方式A: stdio（同一PC）
 
 `claude_desktop_config.json` または MCP設定ファイル:
 
@@ -281,6 +281,23 @@ cargo run --release
   }
 }
 ```
+
+#### 方式B: リモート接続（LAN内の別マシン/WSL/AIエージェント）
+
+> **Claude Desktop v1.1.2998:** `"url"` 設定はクラッシュするため、`mcp-remote` ブリッジを使用
+
+```json
+{
+  "mcpServers": {
+    "webview-bridge": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://<サーバーIP>:9400/mcp", "--allow-http"]
+    }
+  }
+}
+```
+
+> 詳細な接続設定は [クイックスタート](docs/QUICK_START.md#mcp-クライアントからの接続) を参照
 
 #### config.toml（サーバー設定）
 
