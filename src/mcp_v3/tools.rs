@@ -2441,7 +2441,19 @@ fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_he
 // ============================================================================
 
 async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolResponse {
-    match execute_script(&req.session, req.script.clone(), state, req.timeout_ms).await {
+    // Auto-wrap in IIFE if script uses top-level `return` but isn't already wrapped
+    let script = {
+        let trimmed = req.script.trim();
+        let needs_wrap = trimmed.contains("return ")
+            && !trimmed.starts_with("(function")
+            && !trimmed.starts_with("(async");
+        if needs_wrap {
+            format!("(function(){{{}}})();", req.script)
+        } else {
+            req.script.clone()
+        }
+    };
+    match execute_script(&req.session, script, state, req.timeout_ms).await {
         Ok(result) => {
             // Parse to proper JSON type for structured response
             let typed = serde_json::from_str::<serde_json::Value>(&result)

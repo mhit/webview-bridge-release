@@ -1772,17 +1772,30 @@ async fn execute_v2(
         None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
     };
     
+    // Auto-wrap in IIFE if script uses top-level `return` but isn't already wrapped
+    let script = {
+        let trimmed = request.script.trim();
+        let needs_wrap = trimmed.contains("return ")
+            && !trimmed.starts_with("(function")
+            && !trimmed.starts_with("(async");
+        if needs_wrap {
+            format!("(function(){{{}}})();", request.script)
+        } else {
+            request.script.clone()
+        }
+    };
+
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::ExecuteScript {
         id: handle.id.clone(),
-        script: request.script.clone(),
+        script,
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return error_response(Wbp2Error::InternalError, "Failed to send command");
     }
-    
+
     match tokio::time::timeout(
         std::time::Duration::from_millis(request.timeout_ms),
         rx
