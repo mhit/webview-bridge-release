@@ -2523,52 +2523,54 @@ pub fn get_mcp_tools() -> serde_json::Value {
     serde_json::json!([
         {
             "name": "navigate",
-            "description": "Navigate to URL with wait conditions. For SPA sites use 'stable' or 'selector' wait. BOT DETECTION WARNING: For protected sites (Amazon, etc.), avoid direct URL navigation to subpages. Instead: 1) navigate to homepage only, 2) use interact with human_mode:true to click through links naturally. Direct URL jumps trigger bot detection.",
+            "description": "Load a URL in the browser. Use this to open websites, follow links by URL, or reload pages. Returns page title, final URL (after redirects), and detected challenges (CAPTCHA, Cloudflare). For bot-protected sites (Amazon, etc.): navigate to homepage ONLY, then use 'interact' with human_mode to click links — direct deep-URL navigation triggers bot detection.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "description": "Session name (default: 'default')" },
-                    "url": { "type": "string", "description": "URL to navigate to. For bot-protected sites, only navigate to homepage, then use interact to click links." },
-                    "wait_for": { "type": "string", "enum": ["load", "stable", "networkidle", "selector"], "default": "stable", "description": "load=basic, stable=DOM stops changing, networkidle=no network, selector=wait for element" },
-                    "wait_selector": { "type": "string", "description": "CSS selector to wait for (required if wait_for=selector)" },
-                    "timeout_ms": { "type": "integer", "default": 30000 }
+                    "session": { "type": "string", "default": "default", "description": "Session name. Must be acquired first via the 'session' tool." },
+                    "url": { "type": "string", "description": "Full URL to navigate to (e.g. 'https://example.com')" },
+                    "wait_for": { "type": "string", "enum": ["load", "stable", "networkidle", "selector"], "default": "stable", "description": "When to consider page ready. 'stable' (default) waits for DOM to stop changing — best for SPAs and dynamic pages. 'selector' waits for a specific CSS element. 'networkidle' waits for no network activity. 'load' waits for basic page load only." },
+                    "wait_selector": { "type": "string", "description": "CSS selector to wait for. Required when wait_for='selector'. Example: '#main-content'" },
+                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Navigation timeout in milliseconds" }
                 },
                 "required": ["url"]
             }
         },
         {
             "name": "interact",
-            "description": "Execute browser actions. RECOMMENDED FOR BOT-PROTECTED SITES: Use interact with human_mode:true instead of navigate to move between pages by clicking links. Action types: click{target}, type{target,value,clear?}, scroll{direction?,amount?,target?}, hover{target}, select{target,value}, wait{condition,value?,timeout_ms?}, screenshot. Wait condition: timeout, element, element_visible, element_clickable, element_hidden, url_contains, text_contains, network_idle.",
+            "description": "Perform browser actions: click buttons, type text, scroll, hover, wait for elements, and take screenshots. Accepts an array of actions executed in sequence. Use this instead of 'navigate' to move between pages on bot-protected sites — clicking links naturally avoids detection. Enable human_mode for sites with bot protection (adds realistic mouse curves, typing delays, micro-jitter). Screenshots include HTTP URLs for direct viewing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
                     "actions": {
                         "type": "array",
-                        "description": "Array of action objects. Examples: {\"type\":\"click\",\"target\":\"#btn\"}, {\"type\":\"type\",\"target\":\"#input\",\"value\":\"text\",\"clear\":true}, {\"type\":\"scroll\",\"direction\":\"down\",\"amount\":500}, {\"type\":\"wait\",\"condition\":\"timeout\",\"timeout_ms\":1500}, {\"type\":\"wait\",\"condition\":\"element\",\"value\":\"#loaded\"}",
+                        "description": "Ordered list of browser actions to execute sequentially",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["click", "type", "scroll", "hover", "select", "wait", "screenshot"], "description": "Action type" },
-                                "target": { "type": "string", "description": "CSS selector (required for click, type, hover, select)" },
-                                "value": { "type": "string", "description": "Input text (for type/select) or selector/pattern (for wait conditions)" },
-                                "clear": { "type": "boolean", "description": "Clear input before typing (for type action)" },
-                                "instant": { "type": "boolean", "description": "Instant mode: set value directly instead of char-by-char. Use for autocomplete-heavy inputs like Amazon search." },
-                                "condition": { "type": "string", "enum": ["timeout", "element", "element_visible", "element_clickable", "element_hidden", "url_contains", "url_matches", "text_contains", "network_idle"], "description": "Wait condition type (required for wait action)" },
-                                "timeout_ms": { "type": "integer", "description": "Timeout in ms (for wait action, default: 10000)" },
-                                "direction": { "type": "string", "enum": ["down", "up", "left", "right"], "description": "Scroll direction (for scroll action)" },
-                                "amount": { "type": "integer", "description": "Scroll amount in pixels (for scroll action, default: 500)" }
+                                "type": { "type": "string", "enum": ["click", "type", "scroll", "hover", "select", "wait", "screenshot"], "description": "Action to perform" },
+                                "target": { "type": "string", "description": "CSS selector for the target element. Required for: click, type, hover, select. Example: '#search-btn', '.product-card a', 'input[name=q]'" },
+                                "value": { "type": "string", "description": "For 'type': text to enter. For 'select': option value. For 'wait': CSS selector (condition=element) or URL/text pattern (condition=url_contains/text_contains)" },
+                                "clear": { "type": "boolean", "default": false, "description": "For 'type': clear existing input value before typing" },
+                                "instant": { "type": "boolean", "default": false, "description": "For 'type': set value instantly instead of character-by-character. Use when autocomplete dropdowns interfere (Amazon, Google search)" },
+                                "condition": { "type": "string", "enum": ["timeout", "element", "element_visible", "element_clickable", "element_hidden", "url_contains", "url_matches", "text_contains", "network_idle"], "description": "For 'wait': what to wait for. 'element' waits for selector in 'value' to exist in DOM. 'element_visible' waits for it to be visible. 'timeout' simply pauses." },
+                                "timeout_ms": { "type": "integer", "default": 10000, "description": "For 'wait': maximum wait time in ms" },
+                                "direction": { "type": "string", "enum": ["down", "up", "left", "right"], "default": "down", "description": "For 'scroll': scroll direction" },
+                                "amount": { "type": "integer", "default": 500, "description": "For 'scroll': distance in pixels" }
                             },
                             "required": ["type"]
                         }
                     },
                     "options": {
                         "type": "object",
+                        "description": "Execution options applied to all actions",
                         "properties": {
-                            "wait_timeout_ms": { "type": "integer", "default": 10000 },
-                            "retry_count": { "type": "integer", "default": 3 },
-                            "screenshot_on_error": { "type": "boolean", "default": false },
-                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like behavior: bezier curve mouse movement with ease-in-out, micro-jitter, overshoot (10%), typo simulation (3%) with backspace correction, double-space/shift mistakes. Highly recommended for bot-protected sites like Amazon." }
+                            "wait_timeout_ms": { "type": "integer", "default": 10000, "description": "Default timeout for wait actions" },
+                            "retry_count": { "type": "integer", "default": 3, "description": "Number of retries on action failure" },
+                            "screenshot_on_error": { "type": "boolean", "default": false, "description": "Automatically take screenshot when an action fails (returned as HTTP URL)" },
+                            "human_mode": { "type": "boolean", "default": false, "description": "Simulate human behavior: bezier-curve mouse movement, random micro-jitter, 10% overshoot, 3% typo rate with self-correction, variable delays. Essential for bot-protected sites (Amazon, banks, social media)." },
+                            "slow_mode_ms": { "type": "integer", "default": 0, "description": "Add fixed delay (ms) between each action" }
                         }
                     }
                 },
@@ -2577,74 +2579,77 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "capture",
-            "description": "Capture current page state for AI analysis. Returns: URL, title, list of interactive elements (buttons, links, inputs with selectors). Options: screenshot=true saves image, include=['cookies','full_text','html','images'] for extra data, selector limits to element, full_page captures entire page, summarize=true uses AI to summarize. FEATURES: 1) Interactivity scoring (0-1) with predicted actions, 2) CAPTCHA/Challenge detection (Cloudflare, reCAPTCHA, hCaptcha) with auto_strategy for autonomous handling, 3) Vision LLM analysis for images without alt text (analyze_vision=true).",
+            "description": "Read the current page state. Returns: URL, title, visible text, and a list of all interactive elements (buttons, links, inputs) with their CSS selectors — use these selectors with 'interact' or 'extract'. Also detects CAPTCHA/challenges and scores page interactivity (0-1). Use capture BEFORE extract to discover the correct CSS selectors for data extraction. Screenshots are saved and accessible via HTTP URL in the response.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
-                    "screenshot": { "type": "boolean", "default": true, "description": "Save screenshot to file" },
-                    "include": { "type": "array", "items": { "type": "string", "enum": ["cookies", "full_text", "html", "images"] }, "description": "Extra data to include" },
-                    "selector": { "type": "string", "description": "CSS selector to limit capture to specific element" },
-                    "full_page": { "type": "boolean", "description": "Capture entire scrollable page, not just viewport" },
-                    "text_max_chars": { "type": "integer", "description": "Max chars for text content" },
-                    "summarize": { "type": "boolean", "description": "Use AI to summarize page content" },
-                    "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to analyze images without alt text" },
-                    "use_cdp": { "type": "boolean", "default": true, "description": "Use CDP for screenshot (better quality, supports full_page)" }
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
+                    "screenshot": { "type": "boolean", "default": true, "description": "Save a screenshot image. The response includes an HTTP URL to view it directly." },
+                    "include": { "type": "array", "items": { "type": "string", "enum": ["cookies", "full_text", "html", "images"] }, "description": "Extra data to include. 'full_text' returns complete page text. 'html' returns raw HTML. 'cookies' returns session cookies. 'images' lists all images with src/alt." },
+                    "selector": { "type": "string", "description": "Limit capture to a specific element by CSS selector. Example: '#product-detail'" },
+                    "full_page": { "type": "boolean", "default": false, "description": "Capture entire scrollable page, not just visible viewport" },
+                    "text_max_chars": { "type": "integer", "description": "Truncate text content to this many characters" },
+                    "summarize": { "type": "boolean", "default": false, "description": "Use AI to generate a summary of page content" },
+                    "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to describe images that have no alt text" },
+                    "use_cdp": { "type": "boolean", "default": true, "description": "Use CDP for screenshots (higher quality, supports full_page)" }
                 }
             }
         },
         {
             "name": "extract",
-            "description": "Extract structured data from page. Example: selector='.review', fields={'author':'.author-name','rating':'.star-rating@data-rating','text':'.review-text'} returns [{author:'John',rating:'5',text:'Great!'},...]). Use @attr to get attribute value instead of text content.",
+            "description": "Extract structured data from repeating page elements into a JSON array. First use 'capture' to inspect the page and find correct CSS selectors. Set 'selector' to the repeating container (e.g. '.product-card'), then map field names to sub-selectors within each container. Use '@attr' suffix to get an attribute instead of text content (e.g. 'a@href' for link URL). If all fields return null, the response includes a diagnostic with the container's actual HTML structure — use it to fix your selectors and retry.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
-                    "selector": { "type": "string", "description": "CSS selector for container elements (e.g. '.review-card')" },
-                    "fields": { "type": "object", "description": "Map of field name to sub-selector. Examples: 'title':'.title', 'link':'a@href', 'rating':'span@data-rating'" },
-                    "limit": { "type": "integer", "description": "Max items to extract" },
-                    "wait_for_count": { "type": "integer", "description": "Wait until at least N elements exist" },
-                    "scroll_for_more": { "type": "boolean", "description": "Scroll down to load more items (infinite scroll)" },
-                    "scroll_max": { "type": "integer", "default": 5, "description": "Max scroll iterations" }
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
+                    "selector": { "type": "string", "description": "CSS selector matching the repeating container elements. Example: '.product-card', 'tr.search-result', '[data-testid=item]'" },
+                    "fields": { "type": "object", "description": "Map of output field names to CSS sub-selectors within each container. For text content: 'title': '.product-name'. For attributes: 'link': 'a@href', 'image': 'img@src', 'rating': '.stars@data-score'. The sub-selector is relative to each container element." },
+                    "limit": { "type": "integer", "description": "Maximum number of items to return" },
+                    "wait_for_count": { "type": "integer", "description": "Wait until at least this many containers exist before extracting" },
+                    "wait_timeout_ms": { "type": "integer", "default": 10000, "description": "Timeout for wait_for_count" },
+                    "scroll_for_more": { "type": "boolean", "default": false, "description": "Scroll down repeatedly to trigger infinite-scroll loading before extracting" },
+                    "scroll_max": { "type": "integer", "default": 5, "description": "Maximum number of scroll iterations when scroll_for_more is true" }
                 },
                 "required": ["selector", "fields"]
             }
         },
         {
             "name": "session",
-            "description": "Session management with persistent cookies. BOT DETECTION TIPS: 1) Use headless=false for protected sites, 2) Login manually with window visible, 3) After login, use interact with human_mode:true to navigate via clicks instead of direct URLs, 4) Add random waits/scrolls between actions. Cookies persist across restarts.",
+            "description": "Manage browser sessions. Use 'acquire' to create or resume a named session (cookies persist across restarts). Use 'release' when done. Use 'list' to see all sessions. Use 'import' to load cookies from Firefox (enables logged-in browsing without re-authentication). Sessions support device emulation (mobile/tablet presets or custom viewport).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default", "description": "Target session name for device switch. Use with device/viewport_width/viewport_height to switch device on existing session." },
-                    "acquire": { "type": "string", "description": "Acquire session by name. Creates WebView if needed, reuses existing cookies." },
-                    "release": { "type": "string", "description": "Release session (keeps cookies and WebView alive for reuse)" },
-                    "list": { "type": "boolean", "description": "List all sessions with status" },
-                    "import": { "type": "string", "description": "Import cookies from browser profile" },
-                    "headless": { "type": "boolean", "description": "false=visible window (recommended for bot-protected sites), true=hidden window. Default: false" },
-                    "restore": { "type": "boolean", "default": true, "description": "Restore last URL on session resume" },
-                    "ttl_hours": { "type": "integer", "default": 168, "description": "Session TTL in hours. Default: 168 (1 week). Set to 0 for persistent/no-expiration sessions." },
-                    "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"], "description": "Browser to import cookies from" },
-                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import (e.g. ['amazon.co.jp'])" },
-                    "device": { "type": "string", "description": "Device preset name (e.g., 'iPhone 14', 'Pixel 7'). Sets viewport, user-agent, and enables touch simulation." },
-                    "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels" },
-                    "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels" },
-                    "user_agent": { "type": "string", "description": "Custom user agent string to override" }
+                    "session": { "type": "string", "default": "default", "description": "Target session name. Used with device/viewport params to change device emulation on an existing session." },
+                    "acquire": { "type": "string", "description": "Create or resume a session by name. If the session exists, it reuses the WebView and all cookies. If new, creates a fresh browser instance." },
+                    "release": { "type": "string", "description": "Release a session. The WebView and cookies stay alive for future reuse — this just marks it available." },
+                    "list": { "type": "boolean", "description": "Return a list of all sessions with their status (active, expired, etc.)" },
+                    "import": { "type": "string", "description": "Session name to import cookies INTO. Reads cookies from local browser profile and sets them via CDP. Requires 'browser' and 'domains' parameters." },
+                    "headless": { "type": "boolean", "default": false, "description": "true = hidden window, false = visible window. Use visible (false) for bot-protected sites and manual login." },
+                    "restore": { "type": "boolean", "default": true, "description": "When resuming an existing session, navigate back to the last URL" },
+                    "ttl_hours": { "type": "integer", "default": 168, "description": "Session lifetime in hours. Default: 168 (1 week). Set 0 for no expiration." },
+                    "browser": { "type": "string", "enum": ["firefox"], "description": "Browser to import cookies from. Currently only Firefox is supported (Chrome/Edge use DPAPI encryption)." },
+                    "domains": { "type": "array", "items": { "type": "string" }, "description": "Cookie domains to import. Example: ['.amazon.co.jp', '.x.com']. Required with 'import'." },
+                    "device": { "type": "string", "description": "Device preset for emulation. Examples: 'iPhone 14', 'iPhone 14 Pro Max', 'Pixel 7', 'iPad Air'. Sets viewport, user-agent, and touch simulation." },
+                    "viewport_width": { "type": "integer", "description": "Custom viewport width in pixels (overrides device preset)" },
+                    "viewport_height": { "type": "integer", "description": "Custom viewport height in pixels (overrides device preset)" },
+                    "user_agent": { "type": "string", "description": "Custom User-Agent string (overrides device preset)" }
                 }
             }
         },
         {
             "name": "media",
-            "description": "Media operations: YouTube download/subtitles, video analysis, image collection",
+            "description": "Media extraction from the current page. Use 'youtube_subtitles' to get video captions/transcripts. Use 'youtube_download' to save video files. Use 'collect_images' to gather all images on the page with src, alt, and dimensions.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
                     "action": {
                         "type": "object",
+                        "description": "Media action to perform",
                         "properties": {
-                            "type": { "type": "string", "enum": ["youtube_download", "youtube_subtitles", "video_analyze", "collect_images"] }
-                        }
+                            "type": { "type": "string", "enum": ["youtube_download", "youtube_subtitles", "video_analyze", "collect_images"], "description": "'youtube_subtitles' = get captions/transcript from current YouTube page. 'youtube_download' = download video file. 'collect_images' = list all images on current page with metadata." }
+                        },
+                        "required": ["type"]
                     }
                 },
                 "required": ["action"]
@@ -2652,35 +2657,37 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "execute",
-            "description": "Execute raw JavaScript in browser and return result. The script runs in page context with access to DOM. Return value is JSON-stringified. Examples: 'document.title', 'document.querySelector(\"#price\").textContent', '[...document.querySelectorAll(\"a\")].map(a=>a.href)'",
+            "description": "Run JavaScript code in the browser page context. Use when other tools don't cover your needs — you have full DOM access. The result is returned as a typed JSON value (number, boolean, string, object, array, or null) with a 'result_type' field. Scripts with 'return' statements are auto-wrapped in a function. For complex extraction, prefer the 'extract' tool. For page inspection, prefer 'capture'.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
-                    "script": { "type": "string", "description": "JavaScript code to execute. Use return for async functions." },
-                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Script execution timeout" }
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
+                    "script": { "type": "string", "description": "JavaScript code to execute in page context. Has full DOM access (document, window, etc.). Use 'return' to return values — scripts are auto-wrapped in IIFE if needed. Examples: 'document.title', 'return document.querySelector(\"#price\").textContent', 'return [...document.querySelectorAll(\"a\")].map(a=>({text:a.textContent,href:a.href}))'" },
+                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Maximum execution time in milliseconds" }
                 },
                 "required": ["script"]
             }
         },
         {
             "name": "agent",
-            "description": "Goal-based browser automation with internal AI. Provide a goal and the agent will autonomously navigate, click, type to achieve it. Uses MCP tools internally with full robustness (visibility checks, retries, human_mode).",
+            "description": "Autonomous browser agent. Give it a natural-language goal and it plans and executes the steps: navigating, clicking, typing, reading page content. Use for multi-step tasks like 'search for X on Y and return the top 3 results'. The agent uses all other tools internally with retries and error recovery. Use 'start' to begin, 'status' to check progress, 'cancel' to stop.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default" },
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
                     "action": {
                         "type": "object",
+                        "description": "Agent control action",
                         "properties": {
-                            "type": { "type": "string", "enum": ["start", "resume", "status", "cancel"] },
-                            "goal": { "type": "string", "description": "The goal to achieve, e.g. 'Search for Rust on DuckDuckGo'" },
-                            "context": { "type": "string", "description": "Additional context about the current situation" },
-                            "max_steps": { "type": "integer", "description": "Maximum number of steps (default: 5)" },
-                            "system_prompt": { "type": "string", "description": "Custom instructions for the internal AI agent." },
-                            "human_mode": { "type": "boolean", "description": "Enable human-like behavior: delays and natural movements (recommended for bot-protected sites)" },
-                            "instant_type": { "type": "boolean", "description": "Use instant mode for typing (avoids autocomplete interference on Amazon, Google, etc.)" }
-                        }
+                            "type": { "type": "string", "enum": ["start", "resume", "status", "cancel"], "description": "'start' = begin a new goal. 'resume' = continue after pause. 'status' = check current progress. 'cancel' = abort the goal." },
+                            "goal": { "type": "string", "description": "Natural language description of what to achieve. Be specific. Example: 'Go to amazon.co.jp, search for mechanical keyboard, and extract the top 5 product names and prices'" },
+                            "context": { "type": "string", "description": "Additional context about current state or constraints. Example: 'Already logged in, on the homepage'" },
+                            "max_steps": { "type": "integer", "default": 5, "description": "Maximum number of tool calls the agent can make" },
+                            "system_prompt": { "type": "string", "description": "Override default agent instructions. Use to constrain behavior or add domain knowledge." },
+                            "human_mode": { "type": "boolean", "default": false, "description": "Enable human-like interaction (recommended for bot-protected sites)" },
+                            "instant_type": { "type": "boolean", "default": false, "description": "Type text instantly (use when autocomplete interferes)" }
+                        },
+                        "required": ["type"]
                     }
                 },
                 "required": ["action"]
@@ -2688,18 +2695,18 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "network",
-            "description": "Monitor and intercept network requests/responses (CDP Network domain). Use to capture API calls, headers, and payloads.",
+            "description": "Monitor browser network traffic via CDP. Use 'enable' to start capturing HTTP requests/responses (XHR, fetch, etc.), then perform actions, then 'get_logs' to retrieve captured traffic. Useful for finding hidden API endpoints, inspecting request headers, or debugging failed requests. Use 'filter' to search logs by URL pattern.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "default": "default", "description": "Session name (default: 'default')" },
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
                     "action": {
                         "type": "object",
-                        "description": "Network monitoring action to perform",
+                        "description": "Network monitoring action",
                         "properties": {
-                            "type": { "type": "string", "enum": ["enable", "disable", "get_logs", "clear_logs"], "description": "Action type: enable=start capturing, disable=stop capturing, get_logs=retrieve captured logs, clear_logs=delete all logs" },
-                            "max_logs": { "type": "integer", "description": "Max logs to keep (last N)", "default": 100 },
-                            "filter": { "type": "string", "description": "Filter logs by URL substring" }
+                            "type": { "type": "string", "enum": ["enable", "disable", "get_logs", "clear_logs"], "description": "'enable' = start capturing all network traffic. 'disable' = stop capturing. 'get_logs' = retrieve captured requests/responses. 'clear_logs' = delete captured data." },
+                            "max_logs": { "type": "integer", "default": 100, "description": "For 'get_logs': maximum number of log entries to return (most recent first)" },
+                            "filter": { "type": "string", "description": "For 'get_logs': only return logs whose URL contains this substring. Example: '/api/', '.json', 'graphql'" }
                         },
                         "required": ["type"]
                     }
