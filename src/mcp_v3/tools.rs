@@ -1348,11 +1348,23 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                     req.selector
                 ))
             } else {
-                McpToolResponse::success_text(format!(
-                    "Extracted {} items:\n{}",
-                    count,
-                    serde_json::to_string_pretty(&data).unwrap_or_default()
-                ))
+                // Check if all fields are null (selector mismatch diagnostic)
+                let diag = &parsed["_diagnostic"];
+                if !diag.is_null() {
+                    let diag_pretty = serde_json::to_string_pretty(diag).unwrap_or_default();
+                    McpToolResponse::success_text(format!(
+                        "Extracted {} items but ALL fields are null — the field selectors don't match any child elements inside '{}'.\n\nDiagnostic (first container):\n{}\n\nHint: Check the child_structure and inner_html_sample above to find the correct CSS selectors for your fields.",
+                        count,
+                        req.selector,
+                        diag_pretty
+                    ))
+                } else {
+                    McpToolResponse::success_text(format!(
+                        "Extracted {} items:\n{}",
+                        count,
+                        serde_json::to_string_pretty(&data).unwrap_or_default()
+                    ))
+                }
             }
         }
         Err(e) => McpToolResponse::error("EXTRACT_FAILED", &e),

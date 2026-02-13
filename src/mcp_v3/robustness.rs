@@ -1198,16 +1198,18 @@ pub fn generate_extract_data_script(selector: &str, fields: &std::collections::H
     const containerSelector = "{}";
     const fields = {};
     const containers = Array.from(document.querySelectorAll(containerSelector)){};
-    
+
     const extractField = (container, fieldSpec) => {{
-        // Handle attribute extraction (e.g., "a@href")
-        if (fieldSpec.includes('@')) {{
-            const [selector, attr] = fieldSpec.split('@');
-            const el = selector ? container.querySelector(selector) : container;
+        // Handle attribute extraction (e.g., "a@href", ".link@data-url")
+        const atIdx = fieldSpec.indexOf('@');
+        if (atIdx > -1) {{
+            const sel = fieldSpec.substring(0, atIdx);
+            const attr = fieldSpec.substring(atIdx + 1);
+            const el = sel ? container.querySelector(sel) : container;
             return el ? el.getAttribute(attr) : null;
         }}
-        
-        // Handle text content
+
+        // Handle text content with querySelector
         const el = container.querySelector(fieldSpec);
         return el ? el.textContent.trim() : null;
     }};
@@ -1220,10 +1222,37 @@ pub fn generate_extract_data_script(selector: &str, fields: &std::collections::H
         return item;
     }});
 
+    // Diagnostic: if all fields are null in first item, include container sample
+    let _diag = null;
+    if (results.length > 0 && Object.values(results[0]).every(v => v === null)) {{
+        const first = containers[0];
+        // Show child element structure (tag.class for each direct child)
+        const children = Array.from(first.children).slice(0, 20).map(c => {{
+            const tag = c.tagName.toLowerCase();
+            const cls = c.className ? ('.' + String(c.className).split(/\s+/).join('.')) : '';
+            return tag + cls;
+        }});
+        _diag = {{
+            container_tag: first.tagName.toLowerCase(),
+            container_classes: first.className || '',
+            child_structure: children,
+            inner_html_sample: first.innerHTML.substring(0, 800),
+            field_match_test: Object.fromEntries(
+                Object.entries(fields).map(([k, spec]) => {{
+                    const atI = spec.indexOf('@');
+                    const sel = atI > -1 ? spec.substring(0, atI) : spec;
+                    const matched = sel ? first.querySelector(sel) : first;
+                    return [k, matched ? 'FOUND' : 'NOT_FOUND (' + sel + ')'];
+                }})
+            )
+        }};
+    }}
+
     return JSON.stringify({{
         success: true,
         count: results.length,
-        data: results
+        data: results,
+        _diagnostic: _diag
     }});
 }})();
 "#, selector.replace('"', "\\\""), fields_json, limit_code)
