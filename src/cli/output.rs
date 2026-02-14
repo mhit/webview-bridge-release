@@ -30,7 +30,7 @@ pub fn output_dir() -> PathBuf {
 pub fn save_text(subdir: &str, prefix: &str, session: &str, content: &str) -> std::io::Result<PathBuf> {
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
     let safe_session = sanitize_filename_part(session);
     let filename = format!("{prefix}-{safe_session}-{ts}.txt");
     let path = dir.join(filename);
@@ -42,7 +42,7 @@ pub fn save_text(subdir: &str, prefix: &str, session: &str, content: &str) -> st
 pub fn save_binary(subdir: &str, prefix: &str, session: &str, ext: &str, data: &[u8]) -> std::io::Result<PathBuf> {
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
     let safe_session = sanitize_filename_part(session);
     let filename = format!("{prefix}-{safe_session}-{ts}.{ext}");
     let path = dir.join(filename);

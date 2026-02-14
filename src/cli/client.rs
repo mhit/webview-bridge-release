@@ -72,8 +72,10 @@ impl WbClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
         let token = token.map(|t| t.to_string()).or_else(|| Self::read_token_file());
+        // Generous HTTP timeout — command-level timeouts (wait, execute)
+        // govern actual operations; this just prevents hung connections.
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(300))
             .build();
         Self { base_url, token, agent }
     }

@@ -58,9 +58,9 @@ pub fn run(
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
     } else {
-        // Medium fix: use byte length instead of O(n) char count
         if result_str.len() <= 500 {
-            output::print_result(opts, &result_str);
+            // Small results: print directly (even in quiet mode — no file to show path for)
+            println!("{result_str}");
             output::print_result(opts, &format!("[{} ms]", resp.elapsed_ms));
             return Ok(());
         }
