@@ -6,6 +6,18 @@ $iconPath = Join-Path $root "docs\img\icon.ico"
 $icon128Path = Join-Path $root "docs\img\icon-128.png"
 
 # ============================================================
+# Extract version from Cargo.toml (single source of truth)
+# ============================================================
+$cargoToml = Get-Content (Join-Path $root "Cargo.toml") -Raw
+if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
+    $version = $Matches[1]
+} else {
+    Write-Host "ERROR: Could not extract version from Cargo.toml"
+    exit 1
+}
+Write-Host "Version: $version (from Cargo.toml)"
+
+# ============================================================
 # Generate header bitmap (150x57) — right-aligned icon + product name
 # ============================================================
 $headerBmp = New-Object System.Drawing.Bitmap(150, 57)
@@ -74,7 +86,7 @@ $titleFont.Dispose()
 $verFont = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Regular)
 $lightBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 190, 220))
 $verRect = New-Object System.Drawing.RectangleF(0, 158, 164, 20)
-$g.DrawString("v3.7.0", $verFont, $lightBrush, $verRect, $sf)
+$g.DrawString("v$version", $verFont, $lightBrush, $verRect, $sf)
 $verFont.Dispose()
 
 # Tagline
@@ -116,6 +128,7 @@ if (-not (Test-Path $nsisExe)) {
 }
 
 $nsisArgs = @(
+    "/DPRODUCT_VERSION=$version",
     "/DHEADER_BMP=$headerPath",
     "/DWELCOME_BMP=$welcomePath",
     $nsiPath
@@ -125,7 +138,7 @@ Write-Host "Running makensis..."
 & $nsisExe $nsisArgs
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Installer built successfully!"
-    $installer = Join-Path $root "dist\WebViewBridge-3.6.0-Setup.exe"
+    $installer = Join-Path $root "dist\WebViewBridge-$version-Setup.exe"
     if (Test-Path $installer) {
         $fi = Get-Item $installer
         Write-Host "Output: $installer ($([math]::Round($fi.Length / 1024 / 1024, 1)) MB)"

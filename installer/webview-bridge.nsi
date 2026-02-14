@@ -25,7 +25,10 @@ ManifestDPIAware true
 ; ============================================================
 
 !define PRODUCT_NAME    "WebView Bridge"
-!define PRODUCT_VERSION "3.7.0"
+; PRODUCT_VERSION is passed via /D from build_nsis.ps1 (sourced from Cargo.toml)
+!ifndef PRODUCT_VERSION
+  !error "PRODUCT_VERSION not defined — run via build_nsis.ps1"
+!endif
 !define PRODUCT_EXE     "webview-bridge-rust.exe"
 !define PRODUCT_PUBLISHER "mhit"
 !define PRODUCT_URL     "https://github.com/mhit/webview-bridge"

@@ -172,10 +172,11 @@ jobs:
 
             | ファイル | 説明 |
             |---------|------|
-            | `webview-bridge-rust.exe` | サーバー (Windows x86_64) |
-            | `wb-*-x86_64-pc-windows-msvc.exe` | CLI (Windows x86_64) |
-            | `wb-*-x86_64-unknown-linux-gnu` | CLI (Linux x86_64) |
-            | `wb-*-aarch64-apple-darwin` | CLI (macOS ARM) |
+            | `WebViewBridge-*-Setup.exe` | **インストーラー (推奨)** — スタートメニュー登録・自動起動設定付き |
+            | `webview-bridge-rust.exe` | サーバー ポータブル版 (Windows x86_64) |
+            | `wb-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe` | **wb CLI** (Windows x86_64) |
+            | `wb-${{ github.ref_name }}-x86_64-unknown-linux-gnu` | **wb CLI** (Linux x86_64) |
+            | `wb-${{ github.ref_name }}-aarch64-apple-darwin` | **wb CLI** (macOS ARM) |
 
             ### wb CLI
 
