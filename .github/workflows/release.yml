@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ===========================================================================
+  # CLI: Cross-platform build (Windows, Linux, macOS)
+  # ===========================================================================
+  cli:
+    name: CLI (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: wb.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: wb
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: wb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build CLI
+        run: cargo build --release --bin wb --features cli --no-default-features --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          BIN="target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            ASSET="wb-${TAG}-${{ matrix.target }}.exe"
+          else
+            ASSET="wb-${TAG}-${{ matrix.target }}"
+          fi
+          cp "$BIN" "$ASSET"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+
+  # ===========================================================================
+  # Server: Windows-only build
+  # ===========================================================================
+  server:
+    name: Server (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-server-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build server
+        run: cargo build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-windows
+          path: target/release/webview-bridge-rust.exe
+
+  # ===========================================================================
+  # Create GitHub Releases (private + public repos)
+  # ===========================================================================
+  release:
+    name: Create Releases
+    needs: [cli, server]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release/
+          for dir in artifacts/cli-*/; do
+            cp "$dir"* release/
+          done
+          cp artifacts/server-windows/webview-bridge-rust.exe release/
+          ls -la release/
+
+      # --- Private repo release (draft) ---
+      - name: Create private repo release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Public repo release (requires RELEASE_TOKEN secret) ---
+      - name: Create public repo release
+        if: ${{ secrets.RELEASE_TOKEN != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: mhit/webview-bridge-release
+          files: release/*
+          body: |
+            ## WebView Bridge ${{ github.ref_name }}
+
+            ### ダウンロード
+
+            | ファイル | 説明 |
+            |---------|------|
+            | `webview-bridge-rust.exe` | サーバー (Windows x86_64) |
+            | `wb-*-x86_64-pc-windows-msvc.exe` | CLI (Windows x86_64) |
+            | `wb-*-x86_64-unknown-linux-gnu` | CLI (Linux x86_64) |
+            | `wb-*-aarch64-apple-darwin` | CLI (macOS ARM) |
+
+            ### wb CLI
+
+            トークン効率的なブラウザ操作 CLI。MCP 経由と比較して 97-99% のトークン削減。
+
+            ```bash
+            wb snapshot              # ページ要素一覧
+            wb click e3              # 要素クリック
+            wb type e5 "検索語"       # テキスト入力
+            wb screenshot            # スクリーンショット
+            wb execute "document.title"  # JS実行
+            ```
+
+            14コマンド: status, session, open, snapshot, click, type, screenshot, execute, scroll, wait, select, extract, cookies, auth
+
+            ### 動作環境
+
+            - **サーバー**: Windows 10/11 (64-bit) + WebView2 Runtime
+            - **CLI**: Windows / Linux / macOS（サーバーに HTTP 接続）
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
