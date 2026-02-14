@@ -1,7 +1,14 @@
+pub mod auth;
 pub mod click;
+pub mod cookies;
+pub mod execute;
+pub mod extract;
 pub mod open;
 pub mod screenshot;
+pub mod scroll;
+pub mod select;
 pub mod session;
 pub mod snapshot;
 pub mod status;
 pub mod type_cmd;
+pub mod wait;

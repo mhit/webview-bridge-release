@@ -118,6 +118,115 @@ enum Command {
         #[arg(short, long)]
         output: Option<String>,
     },
+
+    /// Execute JavaScript in the browser
+    Execute {
+        /// JavaScript code to execute
+        script: Option<String>,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Read script from file
+        #[arg(short, long)]
+        file: Option<String>,
+
+        /// Execution timeout in milliseconds
+        #[arg(long, default_value = "30000")]
+        timeout: u64,
+
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Scroll the page or an element
+    Scroll {
+        /// Direction: up or down
+        direction: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Scroll amount in pixels
+        #[arg(long, default_value = "500")]
+        amount: i64,
+
+        /// CSS selector to scroll (default: window)
+        #[arg(long)]
+        target: Option<String>,
+    },
+
+    /// Wait for an element or condition
+    Wait {
+        /// Target: e1, e2... (from snapshot) or CSS selector
+        selector: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Condition: present, visible, stable, text_contains, clickable, detached
+        #[arg(short, long, default_value = "present")]
+        condition: String,
+
+        /// Timeout in milliseconds
+        #[arg(long, default_value = "10000")]
+        timeout: u64,
+
+        /// Text to match (for text_contains/text_matches conditions)
+        #[arg(long)]
+        text: Option<String>,
+    },
+
+    /// Select an option in a <select> dropdown
+    Select {
+        /// Target element: e1, e2... (from snapshot) or CSS selector
+        target: String,
+
+        /// Value or visible text to select
+        value: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+    },
+
+    /// Extract data from page elements
+    Extract {
+        /// CSS selector for container elements
+        selector: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Field mappings: "name=.sub-selector,price=.price"
+        #[arg(short, long)]
+        fields: Option<String>,
+
+        /// Maximum number of items
+        #[arg(long, default_value = "100")]
+        limit: usize,
+
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Manage cookies for a session
+    Cookies {
+        #[command(subcommand)]
+        action: CookieAction,
+    },
+
+    /// Manage authentication token
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -138,6 +247,64 @@ enum SessionAction {
 
     /// List all sessions
     List,
+}
+
+#[derive(Subcommand)]
+enum CookieAction {
+    /// Get cookies from a session
+    Get {
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Set cookies from a JSON file
+    Set {
+        /// Path to JSON file with cookies array
+        file: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+    },
+
+    /// Import cookies from a browser (Chrome/Edge/Firefox)
+    Import {
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Browser to import from: chrome, edge, firefox
+        #[arg(short, long, default_value = "chrome")]
+        browser: String,
+
+        /// Browser profile name
+        #[arg(short, long, default_value = "Default")]
+        profile: String,
+
+        /// Filter by domains (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        domains: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthAction {
+    /// Save a token for CLI authentication
+    Save {
+        /// The bearer token to save
+        token: String,
+    },
+
+    /// Show the saved token (masked)
+    Show,
+
+    /// Remove the saved token
+    Clear,
 }
 
 fn main() -> ExitCode {
@@ -175,6 +342,37 @@ fn main() -> ExitCode {
         Command::Screenshot { session, device, output } => {
             commands::screenshot::run(&client, &opts, &session, device.as_deref(), output.as_deref())
         }
+        Command::Execute { script, session, file, timeout, output } => {
+            commands::execute::run(&client, &opts, &session, script.as_deref(), file.as_deref(), timeout, output.as_deref())
+        }
+        Command::Scroll { direction, session, amount, target } => {
+            commands::scroll::run(&client, &opts, &session, &direction, amount, target.as_deref())
+        }
+        Command::Wait { selector, session, condition, timeout, text } => {
+            commands::wait::run(&client, &opts, &session, &selector, &condition, timeout, text.as_deref())
+        }
+        Command::Select { target, value, session } => {
+            commands::select::run(&client, &opts, &session, &target, &value)
+        }
+        Command::Extract { selector, session, fields, limit, output } => {
+            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref())
+        }
+        Command::Cookies { action } => match action {
+            CookieAction::Get { session, output } => {
+                commands::cookies::get(&client, &opts, &session, output.as_deref())
+            }
+            CookieAction::Set { file, session } => {
+                commands::cookies::set(&client, &opts, &session, &file)
+            }
+            CookieAction::Import { session, browser, profile, domains } => {
+                commands::cookies::import(&client, &opts, &session, &browser, &profile, &domains)
+            }
+        },
+        Command::Auth { action } => match action {
+            AuthAction::Save { token } => commands::auth::save(&opts, &token),
+            AuthAction::Show => commands::auth::show(&opts),
+            AuthAction::Clear => commands::auth::clear(&opts),
+        },
     };
 
     match result {

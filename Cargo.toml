@@ -18,7 +18,6 @@ server = [
     "dep:tracing-subscriber",
     "dep:tempfile",
     "dep:regex",
-    "dep:urlencoding",
     "dep:rusqlite",
     "dep:rand",
 ]
@@ -43,6 +42,7 @@ path = "src/lib.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ureq = { version = "2.9", features = ["json"] }
+urlencoding = "2.1"
 chrono = "0.4"
 dirs = "5.0"
 toml = "0.8"
@@ -79,7 +79,6 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 tempfile = { version = "3.8", optional = true }
 regex = { version = "1.10", optional = true }
-urlencoding = { version = "2.1", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 rand = { version = "0.8", optional = true }
 
