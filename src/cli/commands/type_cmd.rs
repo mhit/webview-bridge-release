@@ -10,7 +10,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, target: &str, te
         "text": text,
     });
     if clear {
-        body["clear"] = serde_json::Value::Bool(true);
+        body["clear_first"] = serde_json::Value::Bool(true);
     }
     let resp = client.post("/type", &body)?;
 

@@ -61,13 +61,17 @@ pub fn run(
     });
     let resp = client.post("/execute", &body)?;
 
-    // Parse the JS result
-    let result_str = resp.body.get("result")
-        .and_then(|v| v.as_str())
+    // Parse the JS result — server may return pre-parsed JSON object or a JSON string
+    let result_val = resp.body.get("result")
         .ok_or_else(|| WbError::general("No result from snapshot script"))?;
-
-    let snap: serde_json::Value = serde_json::from_str(result_str)
-        .map_err(|e| WbError::general(format!("Snapshot parse error: {e}")))?;
+    let snap: serde_json::Value = if let Some(s) = result_val.as_str() {
+        // Server returned a string — parse it as JSON
+        serde_json::from_str(s)
+            .map_err(|e| WbError::general(format!("Snapshot parse error: {e}")))?
+    } else {
+        // Server already returned parsed JSON object
+        result_val.clone()
+    };
 
     if opts.json {
         output::print_json(&snap);

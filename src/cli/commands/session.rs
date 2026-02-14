@@ -1,20 +1,16 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
 
-pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str, device: Option<&str>) -> Result<(), WbError> {
-    let mut body = serde_json::json!({ "name": name });
-    if let Some(d) = device {
-        body["device"] = serde_json::Value::String(d.to_string());
-    }
+pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), WbError> {
+    let body = serde_json::json!({ "name": name });
     let resp = client.post("/session/acquire", &body)?;
 
     if opts.json {
         output::print_json(&resp.body);
     } else {
-        output::print_result(opts, &format!("Session '{name}' ready [{} ms]", resp.elapsed_ms));
-        if let Some(d) = device {
-            output::print_result(opts, &format!("  Device: {d}"));
-        }
+        let is_new = resp.body.get("is_new").and_then(|v| v.as_bool()).unwrap_or(false);
+        let status = if is_new { "created" } else { "reused" };
+        output::print_result(opts, &format!("Session '{name}' ready ({status}) [{} ms]", resp.elapsed_ms));
     }
     Ok(())
 }
@@ -39,7 +35,8 @@ pub fn list(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
         return Ok(());
     }
 
-    if let Some(arr) = resp.body.as_array() {
+    // Server returns {"sessions": [...]} — extract the array
+    if let Some(arr) = resp.body.get("sessions").and_then(|v| v.as_array()) {
         if arr.is_empty() {
             output::print_result(opts, "No active sessions");
         } else {

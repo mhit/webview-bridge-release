@@ -20,7 +20,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
     output::print_result(opts, &format!("Server: {status} (v{version}) [{} ms]", health.elapsed_ms));
 
     // Sessions
-    if let Some(arr) = sessions.body.as_array() {
+    if let Some(arr) = sessions.body.get("sessions").and_then(|v| v.as_array()) {
         if arr.is_empty() {
             output::print_result(opts, "Sessions: (none)");
         } else {

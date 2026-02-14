@@ -127,10 +127,6 @@ enum SessionAction {
         /// Session name
         #[arg(default_value = "default")]
         name: String,
-
-        /// Device preset for emulation
-        #[arg(long)]
-        device: Option<String>,
     },
 
     /// Release a browser session (keeps data for reuse)
@@ -156,8 +152,8 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Status => commands::status::run(&client, &opts),
         Command::Session { action } => match action {
-            SessionAction::Acquire { name, device } => {
-                commands::session::acquire(&client, &opts, &name, device.as_deref())
+            SessionAction::Acquire { name } => {
+                commands::session::acquire(&client, &opts, &name)
             }
             SessionAction::Release { name } => {
                 commands::session::release(&client, &opts, &name)

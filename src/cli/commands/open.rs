@@ -11,12 +11,10 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str) -> Re
     if opts.json {
         output::print_json(&resp.body);
     } else {
-        let title = resp.body.get("title").and_then(|v| v.as_str()).unwrap_or("");
-        if title.is_empty() {
-            output::print_result(opts, &format!("Navigated [{} ms]", resp.elapsed_ms));
-        } else {
-            output::print_result(opts, &format!("Navigated: {title} [{} ms]", resp.elapsed_ms));
-        }
+        let load_ms = resp.body.get("load_time_ms").and_then(|v| v.as_u64());
+        let display_ms = load_ms.unwrap_or(resp.elapsed_ms);
+        let url_short = output::truncate_str(url, 60);
+        output::print_result(opts, &format!("Navigated: {url_short} [{display_ms} ms]"));
     }
     Ok(())
 }
