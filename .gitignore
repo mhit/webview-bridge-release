@@ -29,6 +29,7 @@ build_errors.txt
 
 # Test output
 *.png
+!docs/img/icon-128.png
 *_output.txt
 coverage.txt
 
