@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
 
@@ -39,7 +40,8 @@ pub fn run(
     }
 
     let path = if let Some(p) = output_path {
-        let path = std::path::PathBuf::from(p);
+        let path = output::validate_output_path(p)
+            .map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &image_data)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
@@ -55,43 +57,12 @@ pub fn run(
     Ok(())
 }
 
-/// Simple base64 decoder (avoids pulling in the base64 crate for CLI)
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    // Strip data URI prefix if present
-    let data = if let Some(pos) = input.find(",") {
+    // Strip data URI prefix if present (e.g., "data:image/png;base64,...")
+    let data = if let Some(pos) = input.find(',') {
         &input[pos + 1..]
     } else {
         input
     };
-
-    // Simple base64 decode using lookup table
-    let table: [u8; 128] = {
-        let mut t = [255u8; 128];
-        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut i = 0;
-        while i < 64 {
-            t[alphabet[i] as usize] = i as u8;
-            i += 1;
-        }
-        t
-    };
-
-    let clean: Vec<u8> = data.bytes().filter(|b| !b.is_ascii_whitespace() && *b != b'=').collect();
-    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
-
-    for chunk in clean.chunks(4) {
-        let mut buf = [0u8; 4];
-        for (i, &b) in chunk.iter().enumerate() {
-            if b >= 128 || table[b as usize] == 255 {
-                return Err(format!("Invalid base64 character: {}", b as char));
-            }
-            buf[i] = table[b as usize];
-        }
-        let n = chunk.len();
-        if n >= 2 { out.push((buf[0] << 2) | (buf[1] >> 4)); }
-        if n >= 3 { out.push((buf[1] << 4) | (buf[2] >> 2)); }
-        if n >= 4 { out.push((buf[2] << 6) | buf[3]); }
-    }
-
-    Ok(out)
+    STANDARD.decode(data.trim()).map_err(|e| format!("Base64 decode error: {e}"))
 }

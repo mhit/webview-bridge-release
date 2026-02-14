@@ -19,7 +19,6 @@ server = [
     "dep:tempfile",
     "dep:regex",
     "dep:urlencoding",
-    "dep:base64",
     "dep:rusqlite",
     "dep:rand",
 ]
@@ -47,6 +46,7 @@ ureq = { version = "2.9", features = ["json"] }
 chrono = "0.4"
 dirs = "5.0"
 toml = "0.8"
+base64 = "0.21"
 
 # === CLI only ===
 clap = { version = "4", features = ["derive", "env"], optional = true }
@@ -80,7 +80,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tempfile = { version = "3.8", optional = true }
 regex = { version = "1.10", optional = true }
 urlencoding = { version = "2.1", optional = true }
-base64 = { version = "0.21", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 rand = { version = "0.8", optional = true }
 

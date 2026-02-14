@@ -58,3 +58,26 @@ pub fn print_json(value: &serde_json::Value) {
         println!("{s}");
     }
 }
+
+/// Validate and resolve a user-provided output path.
+/// Rejects paths containing `..` components to prevent traversal attacks.
+pub fn validate_output_path(p: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(p);
+    // Reject path traversal components
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("Output path must not contain '..' components".to_string());
+        }
+    }
+    Ok(path)
+}
+
+/// Truncate a string at a character boundary, safe for UTF-8/multibyte.
+pub fn truncate_str(s: &str, max_chars: usize) -> &str {
+    if s.chars().count() <= max_chars {
+        s
+    } else {
+        let end = s.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(s.len());
+        &s[..end]
+    }
+}

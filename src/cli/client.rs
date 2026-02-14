@@ -1,10 +1,11 @@
 use serde_json::Value;
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct WbClient {
     base_url: String,
     token: Option<String>,
+    agent: ureq::Agent,
 }
 
 #[derive(Debug)]
@@ -54,7 +55,10 @@ impl WbClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
         let token = token.map(|t| t.to_string()).or_else(|| Self::read_token_file());
-        Self { base_url, token }
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build();
+        Self { base_url, token, agent }
     }
 
     /// Read token from $DATA_DIR/cli-token file
@@ -64,32 +68,47 @@ impl WbClient {
             .ok()
             .or_else(|| dirs::data_dir().map(|d| d.join("webview-bridge")))?;
         let token_path = data_dir.join("cli-token");
+
+        // On Unix, warn if token file is world-readable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let Ok(meta) = std::fs::metadata(&token_path) {
+                if meta.mode() & 0o077 != 0 {
+                    eprintln!("Warning: {} is accessible by other users. Run: chmod 600 {}",
+                        token_path.display(), token_path.display());
+                }
+            }
+        }
+
         std::fs::read_to_string(token_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
 
     pub fn get(&self, path: &str) -> Result<WbResponse, WbError> {
-        let url = format!("{}{}", self.base_url, path);
-        let start = Instant::now();
-        let mut req = ureq::get(&url);
-        if let Some(ref token) = self.token {
-            req = req.set("Authorization", &format!("Bearer {token}"));
-        }
-        let resp = req.call().map_err(|e| Self::map_ureq_error(e))?;
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-        let body: Value = resp.into_json().map_err(|e| WbError::general(format!("JSON parse error: {e}")))?;
-        Ok(WbResponse { body, elapsed_ms })
+        self.request(self.agent.get(&self.url(path)), None)
     }
 
     pub fn post(&self, path: &str, body: &Value) -> Result<WbResponse, WbError> {
-        let url = format!("{}{}", self.base_url, path);
-        let start = Instant::now();
-        let mut req = ureq::post(&url);
+        self.request(self.agent.post(&self.url(path)), Some(body))
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+
+    fn request(&self, mut req: ureq::Request, body: Option<&Value>) -> Result<WbResponse, WbError> {
         if let Some(ref token) = self.token {
             req = req.set("Authorization", &format!("Bearer {token}"));
         }
-        let resp = req.send_json(body.clone()).map_err(|e| Self::map_ureq_error(e))?;
+        let start = Instant::now();
+        let resp = if let Some(b) = body {
+            req.send_json(b.clone())
+        } else {
+            req.call()
+        }.map_err(Self::map_ureq_error)?;
         let elapsed_ms = start.elapsed().as_millis() as u64;
-        let body: Value = resp.into_json().map_err(|e| WbError::general(format!("JSON parse error: {e}")))?;
+        let body: Value = resp.into_json()
+            .map_err(|e| WbError::general(format!("Invalid server response: {e}")))?;
         Ok(WbResponse { body, elapsed_ms })
     }
 

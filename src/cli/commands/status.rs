@@ -28,7 +28,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
             for s in arr {
                 let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                 let url = s.get("current_url").and_then(|v| v.as_str()).unwrap_or("");
-                let url_display = if url.len() > 60 { &url[..60] } else { url };
+                let url_display = output::truncate_str(url, 60);
                 output::print_result(opts, &format!("  {name}: {url_display}"));
             }
         }
