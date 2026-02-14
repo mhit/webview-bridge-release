@@ -3,30 +3,63 @@ name = "webview-bridge-rust"
 version = "3.6.0"
 edition = "2024"
 
+[features]
+default = ["server"]
+server = [
+    "dep:windows",
+    "dep:windows-implement",
+    "dep:webview2-com",
+    "dep:axum",
+    "dep:tokio",
+    "dep:tower-http",
+    "dep:futures",
+    "dep:uuid",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tempfile",
+    "dep:regex",
+    "dep:urlencoding",
+    "dep:base64",
+    "dep:rusqlite",
+    "dep:rand",
+]
+cli = ["dep:clap"]
+
 [[bin]]
 name = "webview-bridge-rust"
 path = "src/main.rs"
+required-features = ["server"]
+
+[[bin]]
+name = "wb"
+path = "src/cli/main.rs"
+required-features = ["cli"]
 
 [lib]
 name = "webview_bridge_rust"
 path = "src/lib.rs"
 
 [dependencies]
-# HTTP Server
-axum = { version = "0.7", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-futures = "0.3"
-
-# Serialization
+# === Always available (shared by server & CLI) ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+ureq = { version = "2.9", features = ["json"] }
+chrono = "0.4"
+dirs = "5.0"
+toml = "0.8"
+
+# === CLI only ===
+clap = { version = "4", features = ["derive", "env"], optional = true }
+
+# === Server only (gated behind "server" feature) ===
+# HTTP Server
+axum = { version = "0.7", features = ["ws"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+futures = { version = "0.3", optional = true }
 
 # Windows & WebView2
-# バージョン不整合を完全に避けるため、webview2-com 0.19.1 が要求する
-# windows v0.39.0 に、windows-implement v0.39.0 を明示的に組み合わせて
-# グラフ内の windows-core 等を同一バージョンに強制する。
-windows = { version = "0.39.0", features = [
+windows = { version = "0.39.0", optional = true, features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Com",
@@ -37,23 +70,19 @@ windows = { version = "0.39.0", features = [
     "Win32_UI_Shell",
     "Win32_System_Com_StructuredStorage",
 ] }
-windows-implement = "0.39.0"
-webview2-com = "0.19.1"
+windows-implement = { version = "0.39.0", optional = true }
+webview2-com = { version = "0.19.1", optional = true }
 
-# Utils
-uuid = { version = "1.6", features = ["v4", "serde"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dirs = "5.0"
-tempfile = "3.8"
-regex = "1.10"
-urlencoding = "2.1"
-ureq = { version = "2.9", features = ["json"] }
-chrono = "0.4"
-base64 = "0.21"
-toml = "0.8"
-rusqlite = { version = "0.31", features = ["bundled"] }
-rand = "0.8"
+# Utils (server only)
+uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tempfile = { version = "3.8", optional = true }
+regex = { version = "1.10", optional = true }
+urlencoding = { version = "2.1", optional = true }
+base64 = { version = "0.21", optional = true }
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+rand = { version = "0.8", optional = true }
 
 [build-dependencies]
 winres = "0.1"

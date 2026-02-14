@@ -4,8 +4,13 @@
 //! 
 //! Protocol: WBP2 (WebView Bridge Protocol v2)
 
+#[cfg(feature = "server")]
 pub mod api_v2;
+#[cfg(feature = "server")]
 pub mod core;
+#[cfg(feature = "server")]
 pub mod mcp_v3;
+#[cfg(feature = "server")]
 pub mod tray;
+#[cfg(feature = "server")]
 pub mod webview;
