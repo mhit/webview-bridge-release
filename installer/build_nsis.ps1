@@ -74,7 +74,7 @@ $titleFont.Dispose()
 $verFont = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Regular)
 $lightBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 190, 220))
 $verRect = New-Object System.Drawing.RectangleF(0, 158, 164, 20)
-$g.DrawString("v3.6.0", $verFont, $lightBrush, $verRect, $sf)
+$g.DrawString("v3.7.0", $verFont, $lightBrush, $verRect, $sf)
 $verFont.Dispose()
 
 # Tagline

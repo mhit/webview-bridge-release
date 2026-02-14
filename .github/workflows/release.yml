@@ -95,11 +95,28 @@ jobs:
       - name: Build server
         run: cargo build --release
 
-      - name: Upload artifact
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          powershell -ExecutionPolicy Bypass -File installer\build_nsis.ps1
+
+      - name: Upload server artifact
         uses: actions/upload-artifact@v4
         with:
           name: server-windows
           path: target/release/webview-bridge-rust.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        if: hashFiles('dist/WebViewBridge-*-Setup.exe') != ''
+        with:
+          name: installer-windows
+          path: dist/WebViewBridge-*-Setup.exe
 
   # ===========================================================================
   # Create GitHub Releases (private + public repos)
@@ -126,6 +143,9 @@ jobs:
             cp "$dir"* release/
           done
           cp artifacts/server-windows/webview-bridge-rust.exe release/
+          if [ -d artifacts/installer-windows ]; then
+            cp artifacts/installer-windows/*.exe release/
+          fi
           ls -la release/
 
       # --- Private repo release (draft) ---
