@@ -5,7 +5,7 @@ use crate::output::{self, OutputOpts};
 fn snapshot_script(all: bool, within: Option<&str>, limit: usize) -> String {
     // Escape the selector as a JSON string literal to prevent JS injection
     let scope_selector_json = serde_json::to_string(within.unwrap_or("body"))
-        .unwrap_or_else(|_| "\"body\"".to_string());
+        .expect("serde_json::to_string cannot fail on valid UTF-8 str");
     let element_selectors = if all {
         r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"]),h1,h2,h3,h4,h5,h6,p,li,img,table,th,td,label,span[class],div[class]'"#
     } else {
@@ -60,6 +60,8 @@ pub fn run(
         "script": script,
     });
     let resp = client.post("/execute", &body)?;
+
+    resp.check_success("Snapshot execution failed")?;
 
     // Parse the JS result — server may return pre-parsed JSON object or a JSON string
     let result_val = resp.body.get("result")

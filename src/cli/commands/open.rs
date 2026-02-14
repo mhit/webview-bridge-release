@@ -7,6 +7,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str) -> Re
         "url": url,
     });
     let resp = client.post("/navigate", &body)?;
+    resp.check_success("Navigation failed")?;
 
     if opts.json {
         output::print_json(&resp.body);

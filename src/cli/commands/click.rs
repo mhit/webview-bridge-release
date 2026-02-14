@@ -9,6 +9,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, target: &str) ->
         "selector": selector,
     });
     let resp = client.post("/click", &body)?;
+    resp.check_success("Click failed")?;
 
     if opts.json {
         output::print_json(&resp.body);

@@ -51,6 +51,23 @@ pub struct WbResponse {
     pub elapsed_ms: u64,
 }
 
+impl WbResponse {
+    /// Check if the server returned `success: false` and return an error if so.
+    /// Many server endpoints return HTTP 200 with `success: false` for soft errors.
+    pub fn check_success(&self, fallback_msg: &str) -> Result<(), WbError> {
+        if self.body.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            let err_msg = self.body.get("error")
+                .and_then(|v| {
+                    // Error can be a string or an object with a "message" field
+                    v.as_str().or_else(|| v.get("message").and_then(|m| m.as_str()))
+                })
+                .unwrap_or(fallback_msg);
+            return Err(WbError::general(err_msg));
+        }
+        Ok(())
+    }
+}
+
 impl WbClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
@@ -120,7 +137,7 @@ impl WbClient {
             ureq::Error::Status(code, resp) => {
                 let msg = resp.into_string().unwrap_or_default();
                 if msg.contains("SESSION_NOT_FOUND") {
-                    WbError::session(format!("Session not found. Run: wb session acquire"))
+                    WbError::session("Session not found. Run: wb session acquire")
                 } else {
                     WbError::general(format!("HTTP {code}: {msg}"))
                 }

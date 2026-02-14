@@ -13,6 +13,7 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, target: &str, te
         body["clear_first"] = serde_json::Value::Bool(true);
     }
     let resp = client.post("/type", &body)?;
+    resp.check_success("Type failed")?;
 
     if opts.json {
         output::print_json(&resp.body);

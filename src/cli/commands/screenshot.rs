@@ -14,10 +14,10 @@ pub fn run(
         body["device"] = serde_json::Value::String(d.to_string());
     }
     let resp = client.post("/screenshot", &body)?;
+    resp.check_success("Screenshot failed")?;
 
-    // Server returns base64 image data
+    // Server returns base64 image data in "image" field
     let b64 = resp.body.get("image")
-        .or_else(|| resp.body.get("data"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| WbError::general("No image data in response"))?;
 
@@ -29,11 +29,16 @@ pub fn run(
             "size": image_data.len(),
             "elapsed_ms": resp.elapsed_ms,
         }));
+        return Ok(());
     }
 
     if opts.no_file {
-        // Write raw PNG to stdout
-        use std::io::Write;
+        use std::io::{IsTerminal, Write};
+        if std::io::stdout().is_terminal() {
+            return Err(WbError::general(
+                "Refusing to write binary PNG to terminal. Pipe to a file: wb screenshot --no-file > out.png"
+            ));
+        }
         std::io::stdout().write_all(&image_data)
             .map_err(|e| WbError::general(format!("stdout write error: {e}")))?;
         return Ok(());

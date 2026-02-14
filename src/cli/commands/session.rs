@@ -4,6 +4,7 @@ use crate::output::{self, OutputOpts};
 pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), WbError> {
     let body = serde_json::json!({ "name": name });
     let resp = client.post("/session/acquire", &body)?;
+    resp.check_success("Failed to acquire session")?;
 
     if opts.json {
         output::print_json(&resp.body);
@@ -18,6 +19,7 @@ pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), W
 pub fn release(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), WbError> {
     let body = serde_json::json!({ "name": name });
     let resp = client.post("/session/release", &body)?;
+    resp.check_success("Failed to release session")?;
 
     if opts.json {
         output::print_json(&resp.body);
@@ -43,7 +45,8 @@ pub fn list(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
             for s in arr {
                 let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                 let url = s.get("current_url").and_then(|v| v.as_str()).unwrap_or("about:blank");
-                output::print_result(opts, &format!("{name}\t{url}"));
+                let url_display = output::truncate_str(url, 60);
+                output::print_result(opts, &format!("{name}\t{url_display}"));
             }
         }
     }

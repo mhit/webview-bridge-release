@@ -7,6 +7,18 @@ pub struct OutputOpts {
     pub no_file: bool,
 }
 
+/// Sanitize a session name for use in filenames.
+/// Replaces any non-alphanumeric characters (except - and _) with underscores.
+fn sanitize_filename_part(s: &str) -> String {
+    s.chars().map(|c| {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            c
+        } else {
+            '_'
+        }
+    }).collect()
+}
+
 /// Get the wb output directory ($TMPDIR/wb/ or %TEMP%\wb\)
 pub fn output_dir() -> PathBuf {
     let base = std::env::temp_dir().join("wb");
@@ -19,7 +31,8 @@ pub fn save_text(subdir: &str, prefix: &str, session: &str, content: &str) -> st
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let filename = format!("{prefix}-{session}-{ts}.txt");
+    let safe_session = sanitize_filename_part(session);
+    let filename = format!("{prefix}-{safe_session}-{ts}.txt");
     let path = dir.join(filename);
     fs::write(&path, content)?;
     Ok(path)
@@ -30,7 +43,8 @@ pub fn save_binary(subdir: &str, prefix: &str, session: &str, ext: &str, data: &
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let filename = format!("{prefix}-{session}-{ts}.{ext}");
+    let safe_session = sanitize_filename_part(session);
+    let filename = format!("{prefix}-{safe_session}-{ts}.{ext}");
     let path = dir.join(filename);
     fs::write(&path, data)?;
     Ok(path)
