@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -108,6 +108,8 @@ jobs:
     name: Create Releases
     needs: [cli, server]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -138,7 +140,7 @@ jobs:
 
       # --- Public repo release (requires RELEASE_TOKEN secret) ---
       - name: Create public repo release
-        if: ${{ secrets.RELEASE_TOKEN != '' }}
+        if: env.RELEASE_TOKEN != ''
         uses: softprops/action-gh-release@v2
         with:
           repository: mhit/webview-bridge-release
