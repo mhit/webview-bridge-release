@@ -2523,7 +2523,8 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
         let trimmed = req.script.trim();
         let needs_wrap = trimmed.contains("return ")
             && !trimmed.starts_with("(function")
-            && !trimmed.starts_with("(async");
+            && !trimmed.starts_with("(async")
+            && !trimmed.starts_with("((");
         if needs_wrap {
             format!("(function(){{{}}})();", req.script)
         } else {
