@@ -5,6 +5,7 @@ mod client;
 mod commands;
 mod output;
 mod refs;
+mod updater;
 
 #[derive(Parser)]
 #[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation")]
@@ -28,6 +29,10 @@ struct Cli {
     /// Output to stdout instead of saving to file
     #[arg(long, global = true)]
     no_file: bool,
+
+    /// Disable automatic update check at startup
+    #[arg(long, global = true)]
+    no_update_check: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -227,6 +232,13 @@ enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
+
+    /// Check for and install CLI updates
+    Update {
+        /// Check only, don't download
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -309,6 +321,19 @@ enum AuthAction {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    // Clean up leftover .old binary from previous update
+    updater::cleanup_old_binary();
+
+    // Background update check (unless disabled or running update command)
+    let skip_check = cli.no_update_check
+        || std::env::var("WB_NO_UPDATE_CHECK").is_ok_and(|v| !v.is_empty() && v != "0" && v != "false");
+    let bg_check = if !skip_check && !matches!(cli.command, Command::Update { .. }) {
+        Some(std::thread::spawn(updater::background_check))
+    } else {
+        None
+    };
+
     let client = client::WbClient::new(&cli.host, cli.token.as_deref());
     let opts = output::OutputOpts {
         json: cli.json,
@@ -373,7 +398,15 @@ fn main() -> ExitCode {
             AuthAction::Show => commands::auth::show(&opts),
             AuthAction::Clear => commands::auth::clear(&opts),
         },
+        Command::Update { check } => commands::update::run(check),
     };
+
+    // Collect background update check result
+    if let Some(handle) = bg_check {
+        if let Ok(Some(msg)) = handle.join() {
+            eprintln!("{msg}");
+        }
+    }
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
