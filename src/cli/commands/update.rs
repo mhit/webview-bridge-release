@@ -9,8 +9,9 @@ pub fn run(check_only: bool) -> Result<(), WbError> {
     let current = CURRENT_VERSION;
     let latest = &release.version;
 
-    if !updater_is_newer(latest, current) {
+    if !updater::is_newer(latest, current) {
         println!("Current: v{current}");
+        println!("Latest:  v{latest}");
         println!("Already up to date.");
         return Ok(());
     }
@@ -28,13 +29,4 @@ pub fn run(check_only: bool) -> Result<(), WbError> {
 
     println!("Updated successfully! Restart to use v{latest}.");
     Ok(())
-}
-
-fn updater_is_newer(latest: &str, current: &str) -> bool {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.')
-            .filter_map(|p| p.parse::<u32>().ok())
-            .collect()
-    };
-    parse(latest) > parse(current)
 }

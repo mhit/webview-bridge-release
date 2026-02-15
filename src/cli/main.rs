@@ -322,14 +322,15 @@ enum AuthAction {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // Clean up leftover .old binary from previous update
-    updater::cleanup_old_binary();
-
-    // Background update check (unless disabled or running update command)
+    // H7: Background update check via channel (non-blocking, 1s timeout on exit)
     let skip_check = cli.no_update_check
         || std::env::var("WB_NO_UPDATE_CHECK").is_ok_and(|v| !v.is_empty() && v != "0" && v != "false");
-    let bg_check = if !skip_check && !matches!(cli.command, Command::Update { .. }) {
-        Some(std::thread::spawn(updater::background_check))
+    let bg_rx = if !skip_check && !matches!(cli.command, Command::Update { .. }) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(updater::background_check());
+        });
+        Some(rx)
     } else {
         None
     };
@@ -401,15 +402,19 @@ fn main() -> ExitCode {
         Command::Update { check } => commands::update::run(check),
     };
 
-    // Collect background update check result
-    if let Some(handle) = bg_check {
-        if let Ok(Some(msg)) = handle.join() {
+    // H7: Collect background update check (non-blocking, 1s timeout)
+    if let Some(rx) = bg_rx {
+        if let Ok(Some(msg)) = rx.recv_timeout(std::time::Duration::from_secs(1)) {
             eprintln!("{msg}");
         }
     }
 
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            // H6: Clean up leftover .old binary only after successful command
+            updater::cleanup_old_binary();
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             if !cli.json {
                 eprintln!("Error: {e}");

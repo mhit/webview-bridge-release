@@ -5,6 +5,8 @@ use std::time::Duration;
 
 const RELEASES_URL: &str =
     "https://api.github.com/repos/mhit/webview-bridge-release/releases/latest";
+const EXPECTED_URL_PREFIX: &str =
+    "https://github.com/mhit/webview-bridge-release/releases/download/";
 const CACHE_TTL_SECS: i64 = 86400; // 24 hours
 const MAX_ASSET_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
 const CHECK_TIMEOUT_SECS: u64 = 5;
@@ -57,6 +59,33 @@ impl std::fmt::Display for UpdateError {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Version comparison (H4: single source, H5: pre-release safe)
+// ---------------------------------------------------------------------------
+
+/// Compare semver versions. Strips pre-release suffix (e.g. "3.8.0-rc.1" → "3.8.0").
+/// Returns true if `latest` is strictly newer than `current`.
+pub fn is_newer(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> {
+        // Strip pre-release/build metadata: "3.8.0-rc.1+build" → "3.8.0"
+        let base = s.split(['-', '+']).next().unwrap_or(s);
+        base.split('.')
+            .filter_map(|p| p.parse::<u32>().ok())
+            .collect()
+    };
+    let l = parse(latest);
+    let c = parse(current);
+    // Only compare if both have at least major.minor.patch
+    if l.len() < 3 || c.len() < 3 {
+        return false;
+    }
+    l > c
+}
+
+// ---------------------------------------------------------------------------
+// GitHub API
+// ---------------------------------------------------------------------------
 
 /// Fetch latest release info from GitHub API
 pub fn check_latest() -> Result<ReleaseInfo, UpdateError> {
@@ -118,11 +147,18 @@ pub fn check_with_cache() -> Result<Option<ReleaseInfo>, UpdateError> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Download & replace binary
+// ---------------------------------------------------------------------------
+
 /// Download and replace current binary
 pub fn perform_update(release: &ReleaseInfo) -> Result<(), UpdateError> {
-    // Validate URL origin
-    if !release.asset_url.starts_with("https://github.com/mhit/webview-bridge-release/") {
-        return Err(UpdateError::Network("Unexpected download origin".into()));
+    // C2: Validate URL origin (check the API-returned URL, not the redirect target)
+    if !release.asset_url.starts_with(EXPECTED_URL_PREFIX) {
+        return Err(UpdateError::Network(format!(
+            "Unexpected download URL origin: {}",
+            &release.asset_url[..release.asset_url.len().min(80)]
+        )));
     }
 
     let agent = ureq::AgentBuilder::new()
@@ -136,16 +172,18 @@ pub fn perform_update(release: &ReleaseInfo) -> Result<(), UpdateError> {
         .call()
         .map_err(|e| UpdateError::Network(format!("Download failed: {e}")))?;
 
-    // Check Content-Length
+    // Fast-fail on Content-Length before reading body
     if let Some(len_str) = resp.header("Content-Length") {
         if let Ok(len) = len_str.parse::<u64>() {
             if len > MAX_ASSET_SIZE {
-                return Err(UpdateError::Io(format!("Asset too large: {len} bytes")));
+                return Err(UpdateError::Network(format!(
+                    "Asset too large: {len} bytes (max {MAX_ASSET_SIZE})"
+                )));
             }
         }
     }
 
-    // Read body
+    // Read body with hard cap
     let mut bytes = Vec::new();
     resp.into_reader()
         .take(MAX_ASSET_SIZE)
@@ -155,7 +193,7 @@ pub fn perform_update(release: &ReleaseInfo) -> Result<(), UpdateError> {
     // Validate magic bytes
     validate_binary(&bytes)?;
 
-    // Replace current binary
+    // C1: Atomic binary replacement
     replace_binary(&bytes)
 }
 
@@ -170,7 +208,9 @@ pub fn background_check() -> Option<String> {
     }
 }
 
-// --- Internal helpers ---
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 fn find_matching_asset<'a>(
     assets: &'a [GhAsset],
@@ -184,16 +224,9 @@ fn find_matching_asset<'a>(
         .ok_or_else(|| UpdateError::NoAsset(format!("No asset matching {pattern} for {TARGET}")))
 }
 
-fn is_newer(latest: &str, current: &str) -> bool {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.')
-            .filter_map(|p| p.parse::<u32>().ok())
-            .collect()
-    };
-    let l = parse(latest);
-    let c = parse(current);
-    l > c
-}
+// ---------------------------------------------------------------------------
+// Cache operations (C3: 0600 permissions on Unix)
+// ---------------------------------------------------------------------------
 
 fn cache_file_path() -> PathBuf {
     let dir = std::env::var("WEBVIEW_BRIDGE_DATA_PATH")
@@ -219,10 +252,35 @@ fn write_cache(path: &PathBuf, release: &ReleaseInfo) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    if let Ok(json) = serde_json::to_string(&cache) {
+    let Ok(json) = serde_json::to_string(&cache) else {
+        return;
+    };
+
+    // C3: Write cache with restricted permissions (0600 on Unix)
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+        {
+            f.write_all(json.as_bytes()).ok();
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
         std::fs::write(path, json).ok();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Binary validation
+// ---------------------------------------------------------------------------
 
 fn validate_binary(bytes: &[u8]) -> Result<(), UpdateError> {
     if bytes.len() < 4 {
@@ -244,6 +302,10 @@ fn validate_binary(bytes: &[u8]) -> Result<(), UpdateError> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// C1: Atomic binary replacement (write-tmp → rename)
+// ---------------------------------------------------------------------------
+
 fn replace_binary(new_bytes: &[u8]) -> Result<(), UpdateError> {
     let current_exe =
         std::env::current_exe().map_err(|e| UpdateError::Io(format!("Cannot find self: {e}")))?;
@@ -252,39 +314,68 @@ fn replace_binary(new_bytes: &[u8]) -> Result<(), UpdateError> {
     let actual_path = std::fs::canonicalize(&current_exe)
         .map_err(|e| UpdateError::Io(format!("Cannot resolve path: {e}")))?;
 
-    let backup_path = actual_path.with_extension(if cfg!(windows) {
-        "old.exe"
+    // Write new binary to a temp file in the SAME directory (required for atomic rename)
+    let tmp_path = actual_path.with_extension(if cfg!(windows) {
+        "new.exe"
     } else {
-        "old"
+        "new"
     });
 
-    // Rename current → backup
-    std::fs::rename(&actual_path, &backup_path)
-        .map_err(|e| UpdateError::Io(format!("Cannot rename current binary: {e}")))?;
+    // Write new bytes to temp file
+    std::fs::write(&tmp_path, new_bytes).map_err(|e| {
+        UpdateError::Io(format!("Cannot write temp binary: {e}"))
+    })?;
 
-    // Write new binary
-    if let Err(e) = std::fs::write(&actual_path, new_bytes) {
-        // Rollback: restore backup
-        std::fs::rename(&backup_path, &actual_path).ok();
-        return Err(UpdateError::Io(format!("Cannot write new binary: {e}")));
-    }
-
-    // Set executable permission on Unix
+    // Set executable permission on Unix before rename
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&actual_path, perms).ok();
+        // Preserve original permissions, fallback to 0o755
+        let perms = std::fs::metadata(&actual_path)
+            .map(|m| m.permissions())
+            .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o755));
+        std::fs::set_permissions(&tmp_path, perms).ok();
     }
 
-    // Remove backup (on Windows this may fail if the old binary is still loaded,
-    // which is fine — it will be cleaned up on next launch)
-    std::fs::remove_file(&backup_path).ok();
+    // On Unix: atomic rename replaces the target
+    // On Windows: cannot rename over a running exe, so rename old away first
+    #[cfg(unix)]
+    {
+        if let Err(e) = std::fs::rename(&tmp_path, &actual_path) {
+            std::fs::remove_file(&tmp_path).ok();
+            return Err(UpdateError::Io(format!("Cannot replace binary: {e}")));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let backup_path = actual_path.with_extension("old.exe");
+        // Clean up any leftover .old from previous update
+        std::fs::remove_file(&backup_path).ok();
+
+        // Rename running exe → .old (Windows allows renaming a running exe)
+        std::fs::rename(&actual_path, &backup_path).map_err(|e| {
+            std::fs::remove_file(&tmp_path).ok();
+            UpdateError::Io(format!("Cannot rename current binary: {e}"))
+        })?;
+
+        // Rename new → actual
+        if let Err(e) = std::fs::rename(&tmp_path, &actual_path) {
+            // Rollback: restore old binary
+            std::fs::rename(&backup_path, &actual_path).ok();
+            return Err(UpdateError::Io(format!("Cannot place new binary: {e}")));
+        }
+        // .old.exe will be cleaned up on next successful launch
+    }
 
     Ok(())
 }
 
-/// Clean up leftover .old backup from a previous Windows update
+// ---------------------------------------------------------------------------
+// H6: Cleanup leftover .old binary (called AFTER successful command, not at startup)
+// ---------------------------------------------------------------------------
+
+/// Clean up leftover .old backup from a previous update
 pub fn cleanup_old_binary() {
     if let Ok(exe) = std::env::current_exe() {
         if let Ok(actual) = std::fs::canonicalize(&exe) {
@@ -295,6 +386,15 @@ pub fn cleanup_old_binary() {
             });
             if old.exists() {
                 std::fs::remove_file(&old).ok();
+            }
+            // Also clean up any leftover .new temp file from interrupted update
+            let tmp = actual.with_extension(if cfg!(windows) {
+                "new.exe"
+            } else {
+                "new"
+            });
+            if tmp.exists() {
+                std::fs::remove_file(&tmp).ok();
             }
         }
     }
