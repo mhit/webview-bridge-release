@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
 
-use super::SessionOptions;
+use super::{SessionManager, SessionOptions, SessionStatus};
 
 /// V2 Session Handle - holds the v1 session ID
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +198,8 @@ pub struct SessionManagerV2 {
     max_sessions: usize,
     /// Idle timeout for cleanup
     idle_timeout: Duration,
+    /// Reference to V1 session manager for health checks
+    core_manager: OnceLock<Arc<SessionManager>>,
 }
 
 impl SessionManagerV2 {
@@ -213,6 +215,7 @@ impl SessionManagerV2 {
             persistence_path,
             max_sessions,
             idle_timeout: Duration::from_secs(300), // 5 minutes default
+            core_manager: OnceLock::new(),
         };
         
         // Load persisted sessions on startup
@@ -230,6 +233,11 @@ impl SessionManagerV2 {
     pub fn with_idle_timeout(mut self, timeout_secs: u64) -> Self {
         self.idle_timeout = Duration::from_secs(timeout_secs);
         self
+    }
+
+    /// Set V1 core session manager reference (called after both managers are initialized)
+    pub fn set_core_manager(&self, manager: Arc<SessionManager>) {
+        let _ = self.core_manager.set(manager);
     }
     
     // ========================================================================
@@ -357,7 +365,23 @@ impl SessionManagerV2 {
                 session.meta.last_accessed = now.clone();
                 session.acquired = true;
                 
-                // If handle is None (session loaded from disk), we need to create a new window
+                // Health check: if V1 session is dead/error, clear handle for recreation
+                if let Some(ref h) = session.handle {
+                    if let Some(core_mgr) = self.core_manager.get() {
+                        match core_mgr.get_session_status(&h.id) {
+                            Some(SessionStatus::Error) | None => {
+                                tracing::warn!(
+                                    "[SessionV2] Stale handle in acquire for '{}' (v1 id={}), recreating",
+                                    request.name, h.id
+                                );
+                                session.handle = None;
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                }
+
+                // If handle is None (loaded from disk or stale), create a new window
                 if session.handle.is_none() {
                     let options = SessionOptions {
                         profile: session.meta.profile.clone(),
@@ -890,10 +914,33 @@ impl SessionManagerV2 {
         sessions.get(name).cloned()
     }
     
-    /// Get session handle for sending commands
+    /// Get session handle for sending commands.
+    /// Performs a health check: if V2 has a handle but V1 session is dead or in
+    /// error state, the stale handle is cleared and None is returned.
     pub fn get_handle(&self, name: &str) -> Option<SessionHandle> {
-        let sessions = self.sessions.read().ok()?;
-        sessions.get(name)?.handle.clone()
+        let handle = {
+            let sessions = self.sessions.read().ok()?;
+            sessions.get(name)?.handle.clone()
+        };
+        let handle = handle?;
+
+        // Health check against V1 session manager
+        if let Some(core_mgr) = self.core_manager.get() {
+            match core_mgr.get_session_status(&handle.id) {
+                Some(SessionStatus::Error) | None => {
+                    // V1 session is gone or broken — clear stale handle
+                    tracing::warn!(
+                        "[SessionV2] Stale/dead handle for '{}' (v1 id={}), clearing",
+                        name, handle.id
+                    );
+                    self.clear_handle_by_id(&handle.id);
+                    return None;
+                }
+                Some(_) => {} // Alive (Initializing, Ready, Busy)
+            }
+        }
+
+        Some(handle)
     }
     
     /// Update auth status for a session

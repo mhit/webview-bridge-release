@@ -45,6 +45,10 @@ pub fn init_session_manager_v2(data_dir: PathBuf, max_sessions: usize) {
 
 /// Set the core session manager reference (called from main)
 pub fn set_core_session_manager(manager: Arc<crate::core::SessionManager>) {
+    // Also inject into V2 manager for get_handle() health checks
+    if let Some(v2) = SESSION_MANAGER_V2.get() {
+        v2.set_core_manager(Arc::clone(&manager));
+    }
     let _ = CORE_SESSION_MANAGER.set(manager);
 }
 
@@ -629,11 +633,11 @@ async fn session_acquire(
     let manager = get_session_manager_v2();
     let should_restore = request.restore;
     let session_name = request.name.clone();
-    
+
     let create_fn = |options: SessionOptions| -> Result<(String, SessionHandle), String> {
         (state.create_session_fn)(options)
     };
-    
+
     match manager.acquire(request, create_fn).await {
         Ok(mut response) => {
             // Auto-restore: navigate to last URL if requested and available
