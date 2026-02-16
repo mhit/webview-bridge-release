@@ -144,20 +144,33 @@ async fn route_tool_inner(
 // ============================================================================
 
 async fn execute_script(session: &str, script: String, state: &V2AppState, timeout_ms: u64) -> Result<String, String> {
+    execute_script_in(session, script, state, timeout_ms, None).await
+}
+
+async fn execute_script_in(session: &str, script: String, state: &V2AppState, timeout_ms: u64, frame: Option<&str>) -> Result<String, String> {
     let manager = get_session_manager_v2();
-    
+
     let handle = manager.get_handle(session)
         .ok_or_else(|| format!("Session '{}' not found", session))?;
-    
+
     let (tx, rx) = oneshot::channel();
-    let cmd = AppCommand::ExecuteScript {
-        id: handle.id.clone(),
-        script,
-        resp_tx: tx,
+    let cmd = if let Some(frame_spec) = frame {
+        AppCommand::ExecuteInFrame {
+            id: handle.id.clone(),
+            script,
+            frame: frame_spec.to_string(),
+            resp_tx: tx,
+        }
+    } else {
+        AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        }
     };
-    
+
     state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
-    
+
     match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
@@ -321,6 +334,7 @@ async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolRes
             action,
             &req.options,
             state,
+            req.frame.as_deref(),
         ).await;
         
         match result {
@@ -382,6 +396,7 @@ async fn execute_action_with_retry(
     action: &Action,
     options: &InteractOptions,
     state: &V2AppState,
+    frame: Option<&str>,
 ) -> Result<Option<String>, String> {
     let mut last_error = String::new();
     
@@ -397,7 +412,7 @@ async fn execute_action_with_retry(
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         
-        match execute_action(session, action, options.wait_timeout_ms, state, options.human_mode).await {
+        match execute_action(session, action, options.wait_timeout_ms, state, options.human_mode, frame).await {
             Ok(screenshot) => {
                 // Human mode: add random delay after action (50-200ms)
                 if options.human_mode {
@@ -423,6 +438,7 @@ async fn execute_action(
     timeout_ms: u64,
     state: &V2AppState,
     human_mode: bool,
+    frame: Option<&str>,
 ) -> Result<Option<String>, String> {
     match action {
         Action::Click { target, wait_after_ms } => {
@@ -436,15 +452,15 @@ async fn execute_action(
                     return JSON.stringify({{ success: true }});
                 }})()
             "#, target.replace('"', "\\\""));
-            let check_result = execute_script(session, check_script, state, 5000).await?;
-            
+            let check_result = execute_script_in(session, check_script, state, 5000, frame).await?;
+
             let parsed: serde_json::Value = serde_json::from_str(&check_result)
                 .map_err(|e| format!("Failed to parse check result: {}", e))?;
-            
+
             if !parsed["success"].as_bool().unwrap_or(false) {
                 return Err(parsed["error"].as_str().unwrap_or("Element not clickable").to_string());
             }
-            
+
             // Human mode: add delay before click
             if human_mode {
                 let delay = 50 + (rand::random::<u64>() % 100);
@@ -491,8 +507,8 @@ async fn execute_action(
                     return JSON.stringify({{ success: true }});
                 }})()
             "#, target.replace('"', "\\\""));
-            let _ = execute_script(session, check_script, state, 5000).await?;
-            
+            let _ = execute_script_in(session, check_script, state, 5000, frame).await?;
+
             // CDP type (instant=true uses 0 delay, normal uses 20ms, human_mode uses random)
             let char_delay = if *instant { 0 } else if human_mode { 50 + (rand::random::<u64>() % 100) } else { 20 };
             tracing::info!("[cdp] Type via CDP: {} chars, delay={}ms, instant={}", value.len(), char_delay, instant);
@@ -527,7 +543,7 @@ async fn execute_action(
                             if (el) {{ el.value = ""; el.dispatchEvent(new Event('input', {{bubbles: true}})); }}
                         }})()
                     "#, target.replace('"', "\\\""));
-                    let _ = execute_script(session, clear_script, state, 2000).await;
+                    let _ = execute_script_in(session, clear_script, state, 2000, frame).await;
                 }
                 
                 // Type via CDP
@@ -577,7 +593,7 @@ async fn execute_action(
                 *wait_timeout,
             );
             
-            let result = execute_script(session, script, state, *wait_timeout + 1000).await?;
+            let result = execute_script_in(session, script, state, *wait_timeout + 1000, frame).await?;
             
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .map_err(|e| format!("Failed to parse wait result: {}", e))?;
@@ -668,10 +684,10 @@ async fn execute_action(
                 "#, x, y)
             };
             
-            execute_script(session, scroll_script, state, timeout_ms).await?;
+            execute_script_in(session, scroll_script, state, timeout_ms, frame).await?;
             Ok(None)
         }
-        
+
         Action::Hover { target } => {
             let hover_script = format!(r#"
                 const el = document.querySelector("{}");
@@ -684,7 +700,7 @@ async fn execute_action(
                 }}
             "#, target.replace('"', "\\\""));
             
-            execute_script(session, hover_script, state, timeout_ms).await?;
+            execute_script_in(session, hover_script, state, timeout_ms, frame).await?;
             Ok(None)
         }
         
@@ -700,7 +716,7 @@ async fn execute_action(
                 }}
             "#, target.replace('"', "\\\""), value.replace('"', "\\\""));
             
-            execute_script(session, select_script, state, timeout_ms).await?;
+            execute_script_in(session, select_script, state, timeout_ms, frame).await?;
             Ok(None)
         }
     }
@@ -764,20 +780,21 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
 
 async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolResponse {
     // 1. Force load lazy images
+    let frame = req.frame.as_deref();
     let lazy_script = crate::core::screenshot_v2::generate_force_load_lazy_images_script(5000);
-    let _ = execute_script(&req.session, lazy_script, state, 10000).await;
-    
+    let _ = execute_script_in(&req.session, lazy_script, state, 10000, frame).await;
+
     // 2. Wait for images to load
     let wait_images_script = crate::core::screenshot_v2::generate_wait_for_images_script(5000);
-    let _ = execute_script(&req.session, wait_images_script, state, 10000).await;
-    
+    let _ = execute_script_in(&req.session, wait_images_script, state, 10000, frame).await;
+
     // 3. Wait for skeletons to disappear
     let skeleton_script = generate_wait_for_no_skeleton_script(3000);
-    let _ = execute_script(&req.session, skeleton_script, state, 5000).await;
-    
+    let _ = execute_script_in(&req.session, skeleton_script, state, 5000, frame).await;
+
     // 4. Extract interactive elements for AI context
     let elements_script = generate_extract_interactive_elements_script();
-    let elements_result = execute_script(&req.session, elements_script, state, 5000).await
+    let elements_result = execute_script_in(&req.session, elements_script, state, 5000, frame).await
         .unwrap_or_else(|_| r#"{"error": "Failed to extract elements"}"#.to_string());
     
     let parsed: serde_json::Value = serde_json::from_str(&elements_result)
@@ -1149,7 +1166,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                 })();
             "#;
             
-            match execute_script(&req.session, screenshot_script.to_string(), state, 5000).await {
+            match execute_script_in(&req.session, screenshot_script.to_string(), state, 5000, frame).await {
                 Ok(result) => {
                     text.push_str(&format!("\n【ページ情報】\n{}", result));
                 }
@@ -1194,7 +1211,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }});
         "#, max_chars);
         
-        if let Ok(result) = execute_script(&req.session, text_script, state, 5000).await {
+        if let Ok(result) = execute_script_in(&req.session, text_script, state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(full_text) = parsed["text"].as_str() {
                     text.push_str(&format!("\n\n【ページテキスト】\n{}", full_text));
@@ -1211,7 +1228,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }});
         "#, max_chars);
         
-        if let Ok(result) = execute_script(&req.session, html_script, state, 5000).await {
+        if let Ok(result) = execute_script_in(&req.session, html_script, state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(html) = parsed["html"].as_str() {
                     text.push_str(&format!("\n\n【HTML】({}文字)\n{}", html.len(), html));
@@ -1223,7 +1240,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     if req.include.contains(&CaptureInclude::Images) {
         let images_script = generate_collect_images_script(None, 50, 50, 30);
         
-        if let Ok(result) = execute_script(&req.session, images_script, state, 5000).await {
+        if let Ok(result) = execute_script_in(&req.session, images_script, state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(images) = parsed["images"].as_array() {
                     text.push_str(&format!("\n\n【画像】({}件)\n", images.len()));
@@ -1251,7 +1268,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             });
         "#;
         
-        if let Ok(result) = execute_script(&req.session, text_script.to_string(), state, 5000).await {
+        if let Ok(result) = execute_script_in(&req.session, text_script.to_string(), state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(page_text) = parsed["text"].as_str() {
                     // Create AI client
@@ -1325,6 +1342,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
 // ============================================================================
 
 async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolResponse {
+    let frame = req.frame.as_deref();
     // Smart wait: always ensure elements exist before extraction
     // If wait_for_count is specified, use that; otherwise auto-wait for at least 1 element
     let min_count = req.wait_for_count.unwrap_or(1);
@@ -1349,7 +1367,7 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
         }})();
     "#, auto_wait_timeout, req.selector.replace('"', "\\\""), min_count, req.selector.replace('"', "\\\""));
     
-    let wait_result = execute_script(&req.session, wait_script, state, auto_wait_timeout + 1000).await;
+    let wait_result = execute_script_in(&req.session, wait_script, state, auto_wait_timeout + 1000, frame).await;
     
     // Log wait result for diagnostics
     if let Ok(ref wr) = wait_result {
@@ -1364,7 +1382,7 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                 window.scrollTo(0, document.body.scrollHeight);
                 JSON.stringify({ scrolled: true });
             "#;
-            let _ = execute_script(&req.session, scroll_script.to_string(), state, 5000).await;
+            let _ = execute_script_in(&req.session, scroll_script.to_string(), state, 5000, frame).await;
             
             // Wait for new content (increasing delay for lazy-load pages)
             let delay = 500 + (i as u64 * 200);
@@ -1374,7 +1392,7 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
     
     // Extract data
     let extract_script = generate_extract_data_script(&req.selector, &req.fields, req.limit);
-    let result = execute_script(&req.session, extract_script, state, 10000).await
+    let result = execute_script_in(&req.session, extract_script, state, 10000, frame).await
         .map_err(|e| format!("Extract failed: {}", e));
     
     match result {
@@ -1397,7 +1415,7 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                         url: window.location.href
                     }})
                 "#, req.selector.replace('"', "\\\""));
-                let diag = execute_script(&req.session, diag_script, state, 3000).await
+                let diag = execute_script_in(&req.session, diag_script, state, 3000, frame).await
                     .unwrap_or_else(|_| "diagnostic unavailable".to_string());
                 
                 tracing::warn!("[extract] 0 items extracted. Diagnostics: {}", diag);
@@ -2326,7 +2344,7 @@ Output JSON only, no explanation."#,
                             wait_after_ms: Some(500) 
                         };
                         
-                        let result = execute_action(&req.session, &click_action, 10000, state, human_mode).await;
+                        let result = execute_action(&req.session, &click_action, 10000, state, human_mode, None).await;
                         
                         steps.push(serde_json::json!({
                             "step": step_num,
@@ -2371,7 +2389,7 @@ Output JSON only, no explanation."#,
                             instant: instant_type,
                         };
                         
-                        let result = execute_action(&req.session, &type_action, type_timeout, state, human_mode).await;
+                        let result = execute_action(&req.session, &type_action, type_timeout, state, human_mode, None).await;
                         
                         // If submit requested, press Enter
                         let submit_result = if should_submit && result.is_ok() {
@@ -2531,7 +2549,7 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
             req.script.clone()
         }
     };
-    match execute_script(&req.session, script, state, req.timeout_ms).await {
+    match execute_script_in(&req.session, script, state, req.timeout_ms, req.frame.as_deref()).await {
         Ok(result) => {
             // Parse to proper JSON type for structured response
             let typed = serde_json::from_str::<serde_json::Value>(&result)
@@ -2650,7 +2668,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                             "human_mode": { "type": "boolean", "default": false, "description": "Simulate human behavior: bezier-curve mouse movement, random micro-jitter, 10% overshoot, 3% typo rate with self-correction, variable delays. Essential for bot-protected sites (Amazon, banks, social media)." },
                             "slow_mode_ms": { "type": "integer", "default": 0, "description": "Add fixed delay (ms) between each action" }
                         }
-                    }
+                    },
+                    "frame": { "type": "string", "description": "Target iframe for script execution. Specify by URL substring (e.g. 'flow.shopifyapps.com'), frame name, or frame ID. Use 'session' tool's frames list to discover available frames. When omitted, actions run in the main page frame." }
                 },
                 "required": ["actions"]
             }
@@ -2669,7 +2688,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "text_max_chars": { "type": "integer", "description": "Truncate text content to this many characters" },
                     "summarize": { "type": "boolean", "default": false, "description": "Use AI to generate a summary of page content" },
                     "analyze_vision": { "type": "boolean", "default": false, "description": "Use Vision LLM to describe images that have no alt text" },
-                    "use_cdp": { "type": "boolean", "default": true, "description": "Use CDP for screenshots (higher quality, supports full_page)" }
+                    "use_cdp": { "type": "boolean", "default": true, "description": "Use CDP for screenshots (higher quality, supports full_page)" },
+                    "frame": { "type": "string", "description": "Target iframe for capture. Specify by URL substring (e.g. 'flow.shopifyapps.com'), frame name, or frame ID. When omitted, captures the main page frame." }
                 }
             }
         },
@@ -2686,7 +2706,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "wait_for_count": { "type": "integer", "description": "Wait until at least this many containers exist before extracting" },
                     "wait_timeout_ms": { "type": "integer", "default": 10000, "description": "Timeout for wait_for_count" },
                     "scroll_for_more": { "type": "boolean", "default": false, "description": "Scroll down repeatedly to trigger infinite-scroll loading before extracting" },
-                    "scroll_max": { "type": "integer", "default": 5, "description": "Maximum number of scroll iterations when scroll_for_more is true" }
+                    "scroll_max": { "type": "integer", "default": 5, "description": "Maximum number of scroll iterations when scroll_for_more is true" },
+                    "frame": { "type": "string", "description": "Target iframe for extraction. Specify by URL substring, frame name, or frame ID. When omitted, extracts from the main page frame." }
                 },
                 "required": ["selector", "fields"]
             }
@@ -2742,7 +2763,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                 "properties": {
                     "session": { "type": "string", "default": "default", "description": "Session name" },
                     "script": { "type": "string", "description": "JavaScript code to execute in page context. Has full DOM access (document, window, etc.). Use 'return' to return values — scripts are auto-wrapped in IIFE if needed. Examples: 'document.title', 'return document.querySelector(\"#price\").textContent', 'return [...document.querySelectorAll(\"a\")].map(a=>({text:a.textContent,href:a.href}))'" },
-                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Maximum execution time in milliseconds" }
+                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Maximum execution time in milliseconds" },
+                    "frame": { "type": "string", "description": "Target iframe for script execution. Specify by URL substring, frame name, or frame ID. When omitted, executes in the main page frame." }
                 },
                 "required": ["script"]
             }

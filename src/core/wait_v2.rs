@@ -79,6 +79,9 @@ pub struct WaitRequest {
     /// Wait for all selectors (true) or any (false)
     #[serde(default)]
     pub wait_all: bool,
+    /// Target iframe (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -434,8 +437,9 @@ mod tests {
             extract: None,
             selectors: None,
             wait_all: false,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("visible"));
         assert!(script.contains("#submit"));
@@ -456,8 +460,9 @@ mod tests {
             extract: None,
             selectors: None,
             wait_all: false,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("text_contains"));
         assert!(script.contains("Success"));
@@ -477,8 +482,9 @@ mod tests {
             extract: None,
             selectors: None,
             wait_all: false,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("attribute_equals"));
         assert!(script.contains("disabled"));
@@ -502,8 +508,9 @@ mod tests {
             }),
             selectors: None,
             wait_all: false,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("innerHTML"));
         assert!(script.contains("true")); // extractAll
@@ -523,8 +530,9 @@ mod tests {
             extract: None,
             selectors: Some(vec!["#a".to_string(), "#b".to_string(), "#c".to_string()]),
             wait_all: true,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("#a"));
         assert!(script.contains("#b"));
@@ -546,8 +554,9 @@ mod tests {
             extract: None,
             selectors: None,
             wait_all: false,
+            frame: None,
         };
-        
+
         let script = generate_wait_script(&request);
         assert!(script.contains("stable"));
         assert!(script.contains("2000")); // stable_ms
@@ -581,8 +590,9 @@ mod tests {
                 extract: None,
                 selectors: None,
                 wait_all: false,
+                frame: None,
             };
-            
+
             let script = generate_wait_script(&request);
             // Should not panic and should contain the condition name
             assert!(!script.is_empty());

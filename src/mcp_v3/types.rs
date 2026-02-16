@@ -90,6 +90,9 @@ pub struct InteractRequest {
     pub actions: Vec<Action>,
     #[serde(default)]
     pub options: InteractOptions,
+    /// Target iframe (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -211,6 +214,9 @@ pub struct CaptureRequest {
     /// Use CDP for screenshot (better full-page support)
     #[serde(default = "default_true")]
     pub use_cdp: bool,
+    /// Target iframe (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 
@@ -246,6 +252,9 @@ pub struct ExtractRequest {
     pub scroll_for_more: bool,
     #[serde(default = "default_scroll_max")]
     pub scroll_max: usize,
+    /// Target iframe (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 fn default_scroll_max() -> usize { 5 }
@@ -370,6 +379,9 @@ pub struct ExecuteRequest {
     pub script: String,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    /// Target iframe (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 // ============================================================================
