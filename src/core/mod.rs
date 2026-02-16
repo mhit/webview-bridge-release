@@ -78,6 +78,7 @@ pub enum AppCommand {
         id: String,
         selector: String,
         timeout_ms: u64,
+        frame: Option<String>,
         resp_tx: oneshot::Sender<Result<bool, String>>,
     },
     SetVisibility {
@@ -102,12 +103,13 @@ pub enum AppCommand {
         user_agent: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
     },
-    // CDP screenshot (supports full page)
+    // CDP screenshot (supports full page and iframe)
     ScreenshotCdp {
         id: String,
         full_page: bool,
         format: String,
         quality: Option<u32>,
+        frame: Option<String>,
         resp_tx: oneshot::Sender<Result<Vec<u8>, String>>,
     },
     // Reset device emulation
@@ -200,6 +202,7 @@ pub enum SessionCommand {
     WaitForSelector {
         selector: String,
         timeout_ms: u64,
+        frame: Option<String>,
         resp_tx: oneshot::Sender<Result<bool, String>>,
     },
     Extract {
@@ -231,11 +234,12 @@ pub enum SessionCommand {
         user_agent: String,
         resp_tx: oneshot::Sender<Result<(), String>>,
     },
-    // CDP Screenshot with full page support
+    // CDP Screenshot with full page and iframe support
     ScreenshotCdp {
         full_page: bool,
         format: String,
         quality: Option<u32>,
+        frame: Option<String>,
         resp_tx: oneshot::Sender<Result<Vec<u8>, String>>,
     },
     // Reset device emulation
@@ -799,13 +803,13 @@ impl SessionManager {
                             let result = webview.set_cookies_json(&cookies);
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::WaitForSelector { selector, timeout_ms, resp_tx } => {
-                            tracing::debug!("[Session:{}] WaitForSelector: {}", id, selector);
+                        SessionCommand::WaitForSelector { selector, timeout_ms, frame, resp_tx } => {
+                            tracing::debug!("[Session:{}] WaitForSelector: {} frame={:?}", id, selector, frame);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("WebView is not ready".to_string()));
                                 continue;
                             }
-                            let result = webview.wait_for_selector(&selector, timeout_ms);
+                            let result = webview.wait_for_selector(&selector, timeout_ms, frame.as_deref());
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::Extract { selector, attribute, extract_all, resp_tx } => {
@@ -858,13 +862,17 @@ impl SessionManager {
                                 .map_err(|e| format!("Set user agent failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::ScreenshotCdp { full_page, format, quality, resp_tx } => {
-                            tracing::debug!("[Session:{}] ScreenshotCdp: full_page={}", id, full_page);
+                        SessionCommand::ScreenshotCdp { full_page, format, quality, frame, resp_tx } => {
+                            tracing::debug!("[Session:{}] ScreenshotCdp: full_page={}, frame={:?}", id, full_page, frame);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("WebView is not ready".to_string()));
                                 continue;
                             }
-                            let result = webview.capture_screenshot_cdp(full_page, &format, quality);
+                            let result = if let Some(ref frame_spec) = frame {
+                                webview.capture_screenshot_frame(frame_spec, &format, quality)
+                            } else {
+                                webview.capture_screenshot_cdp(full_page, &format, quality)
+                            };
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::ResetDeviceEmulation { resp_tx } => {
@@ -1154,7 +1162,7 @@ impl SessionManager {
         }
     }
 
-    pub async fn wait_for_selector(&self, id: &str, selector: String, timeout_ms: u64) -> Result<bool, String> {
+    pub async fn wait_for_selector(&self, id: &str, selector: String, timeout_ms: u64, frame: Option<String>) -> Result<bool, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1164,7 +1172,7 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::WaitForSelector { selector, timeout_ms, resp_tx: tx })?;
+        handle.send_command(SessionCommand::WaitForSelector { selector, timeout_ms, frame, resp_tx: tx })?;
 
         match rx.await {
             Ok(Ok(result)) => Ok(result),
@@ -1292,8 +1300,8 @@ impl SessionManager {
         }
     }
 
-    /// CDP screenshot with full page support
-    pub async fn screenshot_cdp(&self, id: &str, full_page: bool, format: &str, quality: Option<u32>) -> Result<Vec<u8>, String> {
+    /// CDP screenshot with full page and iframe support
+    pub async fn screenshot_cdp(&self, id: &str, full_page: bool, format: &str, quality: Option<u32>, frame: Option<String>) -> Result<Vec<u8>, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1307,6 +1315,7 @@ impl SessionManager {
             full_page,
             format: format.to_string(),
             quality,
+            frame,
             resp_tx: tx 
         })?;
 

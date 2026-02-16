@@ -1942,6 +1942,7 @@ async fn wait_v2(
         id: session_id,
         selector: request.selector.clone(),
         timeout_ms: request.timeout_ms,
+        frame: request.frame.clone(),
         resp_tx: tx,
     };
     
@@ -2080,7 +2081,88 @@ async fn screenshot_v2(
     
     let session_id = handle.id.clone();
     
-    // Use Screenshot command
+    // If frame is specified, use CDP screenshot with clip
+    if request.frame.is_some() {
+        let (tx, rx) = oneshot::channel();
+        let cmd = AppCommand::ScreenshotCdp {
+            id: session_id,
+            full_page: false,
+            format: format!("{:?}", request.format).to_lowercase(),
+            quality: match request.format { crate::core::screenshot_v2::ImageFormat::Png => None, _ => Some(request.quality as u32) },
+            frame: request.frame.clone(),
+            resp_tx: tx,
+        };
+        
+        if state.cmd_tx.send(cmd).is_err() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "INTERNAL_ERROR",
+                        "message": "Failed to send command"
+                    }
+                })),
+            );
+        }
+        
+        return match tokio::time::timeout(
+            std::time::Duration::from_millis(request.timeout_ms),
+            rx
+        ).await {
+            Ok(Ok(Ok(bytes))) => {
+                use base64::Engine;
+                let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "session": request.session,
+                        "mode": "frame",
+                        "frame": request.frame,
+                        "format": format!("{:?}", request.format).to_lowercase(),
+                        "data": base64_data,
+                    })),
+                )
+            }
+            Ok(Ok(Err(e))) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "SCREENSHOT_ERROR",
+                        "message": e
+                    }
+                })),
+            ),
+            Ok(Err(_)) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "INTERNAL_ERROR",
+                        "message": "Screenshot channel closed"
+                    }
+                })),
+            ),
+            Err(_) => (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "TIMEOUT",
+                        "message": "Screenshot timed out"
+                    }
+                })),
+            ),
+        };
+    }
+    
+    // Use Screenshot command (main frame)
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::Screenshot {
         id: session_id,
@@ -2466,10 +2548,12 @@ async fn goal_execute(
         GoalType::Wait => {
             // Use WaitForSelector command
             let (tx, rx) = oneshot::channel();
+            let frame = request.params.get("frame").and_then(|v| v.as_str()).map(|s| s.to_string());
             let cmd = AppCommand::WaitForSelector {
                 id: session_id.clone(),
                 selector: request.target.clone(),
                 timeout_ms: request.timeout_ms,
+                frame,
                 resp_tx: tx,
             };
             
@@ -2538,7 +2622,77 @@ async fn goal_execute(
         }
         
         GoalType::Screenshot => {
-            // Use Screenshot command
+            let frame = request.params.get("frame").and_then(|v| v.as_str()).map(|s| s.to_string());
+            
+            // If frame is specified, use CDP screenshot
+            if frame.is_some() {
+                let (tx, rx) = oneshot::channel();
+                let cmd = AppCommand::ScreenshotCdp {
+                    id: session_id.clone(),
+                    full_page: false,
+                    format: "png".to_string(),
+                    quality: None,
+                    frame,
+                    resp_tx: tx,
+                };
+                
+                if state.cmd_tx.send(cmd).is_err() {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "success": false,
+                            "error": {
+                                "code": "WBP2_099",
+                                "name": "INTERNAL_ERROR",
+                                "message": "Failed to send command"
+                            }
+                        })),
+                    );
+                }
+                
+                return match tokio::time::timeout(
+                    std::time::Duration::from_millis(request.timeout_ms),
+                    rx
+                ).await {
+                    Ok(Ok(Ok(bytes))) => {
+                        use base64::Engine;
+                        let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        (
+                            StatusCode::OK,
+                            Json(json!({
+                                "success": true,
+                                "goal_type": goal_type_str,
+                                "session": request.session,
+                                "image": base64_data
+                            })),
+                        )
+                    }
+                    Ok(Ok(Err(e))) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "success": false,
+                            "error": {
+                                "code": "WBP2_099",
+                                "name": "SCREENSHOT_ERROR",
+                                "message": e
+                            }
+                        })),
+                    ),
+                    Ok(Err(_)) | Err(_) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "success": false,
+                            "error": {
+                                "code": "WBP2_099",
+                                "name": "TIMEOUT",
+                                "message": "Screenshot timed out"
+                            }
+                        })),
+                    ),
+                };
+            }
+            
+            // Use Screenshot command (main frame)
             let (tx, rx) = oneshot::channel();
             let cmd = AppCommand::Screenshot {
                 id: session_id.clone(),

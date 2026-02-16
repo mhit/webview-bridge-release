@@ -141,6 +141,10 @@ enum Command {
         /// Output file path
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Target iframe (index, name, or URL substring)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Execute JavaScript in the browser
@@ -407,8 +411,8 @@ fn main() -> ExitCode {
         Command::Type { target, text, session, clear, frame } => {
             commands::type_cmd::run(&client, &opts, &session, &target, &text, clear, frame.as_deref())
         }
-        Command::Screenshot { session, device, output } => {
-            commands::screenshot::run(&client, &opts, &session, device.as_deref(), output.as_deref())
+        Command::Screenshot { session, device, output, frame } => {
+            commands::screenshot::run(&client, &opts, &session, device.as_deref(), output.as_deref(), frame.as_deref())
         }
         Command::Execute { script, session, file, timeout, output, frame } => {
             commands::execute::run(&client, &opts, &session, script.as_deref(), file.as_deref(), timeout, output.as_deref(), frame.as_deref())

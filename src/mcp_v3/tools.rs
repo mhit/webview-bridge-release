@@ -755,6 +755,7 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
         full_page: false,
         format: "png".to_string(),
         quality: None,
+        frame: None,
         resp_tx: tx,
     };
     
@@ -1113,6 +1114,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                     full_page: req.full_page,
                     format: "png".to_string(),
                     quality: None,
+                    frame: None,
                     resp_tx: tx,
                 };
                 

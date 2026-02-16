@@ -311,8 +311,8 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.set_cookies(&id, cookies).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::WaitForSelector { id, selector, timeout_ms, resp_tx } => {
-            let result = manager.wait_for_selector(&id, selector, timeout_ms).await;
+        AppCommand::WaitForSelector { id, selector, timeout_ms, frame, resp_tx } => {
+            let result = manager.wait_for_selector(&id, selector, timeout_ms, frame).await;
             let _ = resp_tx.send(result);
         }
         AppCommand::SetVisibility { id, visible, resp_tx } => {
@@ -331,8 +331,8 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.set_user_agent(&id, user_agent).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::ScreenshotCdp { id, full_page, format, quality, resp_tx } => {
-            let result = manager.screenshot_cdp(&id, full_page, &format, quality).await;
+        AppCommand::ScreenshotCdp { id, full_page, format, quality, frame, resp_tx } => {
+            let result = manager.screenshot_cdp(&id, full_page, &format, quality, frame).await;
             let _ = resp_tx.send(result);
         }
         AppCommand::ResetDeviceEmulation { id, resp_tx } => {

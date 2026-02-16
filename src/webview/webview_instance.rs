@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use uuid::Uuid;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::{Error, Result as WinResult, HRESULT, HSTRING};
+use windows::core::{Error, Interface, Result as WinResult, HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_USER};
 
@@ -351,6 +351,66 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkResp
                         });
                     }
                 });
+            }
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------
+// Target.attachedToTarget Handler — enables Network.enable in child sessions (iframes)
+// ----------------------------------------------------------------
+#[windows::core::implement(ICoreWebView2DevToolsProtocolEventReceivedEventHandler)]
+struct TargetAttachedHandler;
+
+impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for TargetAttachedHandler {
+    fn Invoke(
+        &self,
+        sender: &Option<ICoreWebView2>,
+        args: &Option<ICoreWebView2DevToolsProtocolEventReceivedEventArgs>,
+    ) -> WinResult<()> {
+        if let (Some(sender), Some(args)) = (sender, args) {
+            let json_str = unsafe {
+                let mut pwstr = windows::core::PWSTR::null();
+                args.ParameterObjectAsJson(&mut pwstr)?;
+                let s = pwstr.to_string().unwrap_or_default();
+                if !pwstr.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(pwstr.0 as *const std::ffi::c_void);
+                }
+                s
+            };
+
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                let session_id = json["sessionId"].as_str().unwrap_or_default();
+                let target_type = json["targetInfo"]["type"].as_str().unwrap_or_default();
+                let target_url = json["targetInfo"]["url"].as_str().unwrap_or_default();
+
+                tracing::info!(
+                    "[network] Target attached: type={}, url={}, sessionId={}",
+                    target_type, target_url, session_id
+                );
+
+                // Enable Network domain in the child session (iframe/worker)
+                if !session_id.is_empty() {
+                    // Cast ICoreWebView2 → ICoreWebView2_11 for CallDevToolsProtocolMethodForSession
+                    let webview11: WinResult<ICoreWebView2_11> = sender.cast();
+                    match webview11 {
+                        Ok(wv11) => {
+                            unsafe {
+                                let _ = wv11.CallDevToolsProtocolMethodForSession(
+                                    &HSTRING::from(session_id),
+                                    &HSTRING::from("Network.enable"),
+                                    &HSTRING::from("{}"),
+                                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                                );
+                            }
+                            tracing::info!("[network] Enabled Network.enable for session {}", session_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("[network] Failed to cast to ICoreWebView2_11: {:?}", e);
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -1409,6 +1469,113 @@ impl WebViewInstance {
             log_webview_error("WebViewInstance::capture_screenshot_cdp", "WebView not ready");
             Err("WebView not ready".to_string())
         }
+    }
+
+    /// Capture screenshot of an iframe by getting its bounding rect and using CDP clip
+    pub fn capture_screenshot_frame(&self, frame_spec: &str, format: &str, quality: Option<u32>) -> Result<Vec<u8>, String> {
+        log_webview_start("WebViewInstance::capture_screenshot_frame", &format!("frame={}, format={}", frame_spec, format));
+        
+        // Step 1: Resolve the frame and get iframe element's bounding rect from the main page
+        // We need to find the iframe element in the main page DOM
+        let frame_id = self.resolve_frame_id(frame_spec)?;
+        tracing::info!("[ScreenshotFrame] Resolved '{}' → frame_id={}", frame_spec, frame_id);
+        
+        // Get iframe bounding rect using the frame_id to find the corresponding iframe element
+        let rect_script = format!(r#"
+            (function() {{
+                // Try to find iframe by various methods
+                var iframes = document.querySelectorAll('iframe');
+                for (var i = 0; i < iframes.length; i++) {{
+                    var iframe = iframes[i];
+                    // Match by index
+                    if ('{}' === String(i)) {{
+                        var rect = iframe.getBoundingClientRect();
+                        return JSON.stringify({{
+                            x: rect.x + window.scrollX,
+                            y: rect.y + window.scrollY,
+                            width: rect.width,
+                            height: rect.height
+                        }});
+                    }}
+                    // Match by name
+                    if (iframe.name === '{}' || iframe.id === '{}') {{
+                        var rect = iframe.getBoundingClientRect();
+                        return JSON.stringify({{
+                            x: rect.x + window.scrollX,
+                            y: rect.y + window.scrollY,
+                            width: rect.width,
+                            height: rect.height
+                        }});
+                    }}
+                    // Match by URL substring
+                    try {{
+                        if (iframe.src && iframe.src.includes('{}')) {{
+                            var rect = iframe.getBoundingClientRect();
+                            return JSON.stringify({{
+                                x: rect.x + window.scrollX,
+                                y: rect.y + window.scrollY,
+                                width: rect.width,
+                                height: rect.height
+                            }});
+                        }}
+                    }} catch(e) {{}}
+                }}
+                return JSON.stringify({{ error: "iframe not found for frame spec: {}" }});
+            }})();
+        "#, frame_spec, frame_spec, frame_spec, frame_spec, frame_spec);
+        
+        let rect_result = self.execute_script_sync(&rect_script)?;
+        let rect: serde_json::Value = serde_json::from_str(&rect_result)
+            .map_err(|e| format!("Failed to parse iframe rect: {}", e))?;
+        
+        if let Some(error) = rect.get("error") {
+            return Err(error.as_str().unwrap_or("iframe not found").to_string());
+        }
+        
+        let x = rect["x"].as_f64().unwrap_or(0.0);
+        let y = rect["y"].as_f64().unwrap_or(0.0);
+        let width = rect["width"].as_f64().unwrap_or(800.0);
+        let height = rect["height"].as_f64().unwrap_or(600.0);
+        
+        tracing::info!("[ScreenshotFrame] iframe rect: x={}, y={}, w={}, h={}", x, y, width, height);
+        
+        // Step 2: Use CDP Page.captureScreenshot with clip
+        let cdp_format = match format {
+            "jpeg" | "jpg" => "jpeg",
+            "webp" => "webp",
+            _ => "png",
+        };
+        
+        let mut params = serde_json::json!({
+            "format": cdp_format,
+            "clip": {
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "scale": 1.0
+            }
+        });
+        
+        if let Some(q) = quality {
+            if cdp_format != "png" {
+                params["quality"] = serde_json::json!(q);
+            }
+        }
+        
+        let result = self.call_cdp_sync("Page.captureScreenshot", &params.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&result)
+            .map_err(|e| format!("Failed to parse screenshot result: {}", e))?;
+        
+        let data_str = parsed["data"].as_str()
+            .ok_or("No data in screenshot response")?;
+        
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(data_str)
+            .map_err(|e| format!("Base64 decode error: {}", e))?;
+        
+        log_webview_success("WebViewInstance::capture_screenshot_frame", None);
+        Ok(bytes)
     }
 
     pub fn close(&mut self) -> WinResult<()> {
@@ -2486,19 +2653,38 @@ impl WebViewInstance {
     }
 
     /// Wait for a selector to appear in the DOM
-    pub fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool, String> {
-        log_webview_start("WebViewInstance::wait_for_selector", &format!("selector={}, timeout={}ms", selector, timeout_ms));
+    pub fn wait_for_selector(&self, selector: &str, timeout_ms: u64, frame: Option<&str>) -> Result<bool, String> {
+        log_webview_start("WebViewInstance::wait_for_selector", &format!("selector={}, timeout={}ms, frame={:?}", selector, timeout_ms, frame));
         
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
         let escaped_selector = selector.replace("'", "\\'");
+        let check_script = format!(
+            "(function() {{ return document.querySelector('{}') !== null; }})()",
+            escaped_selector
+        );
+
+        // If frame is specified, use CDP-based execution in the iframe
+        if let Some(frame_spec) = frame {
+            while start.elapsed() < timeout {
+                match self.execute_in_frame(&check_script, frame_spec) {
+                    Ok(val) => {
+                        if val == "true" {
+                            log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+                            return Ok(true);
+                        }
+                    }
+                    Err(_) => {} // Frame not ready yet, keep polling
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+            return Ok(false);
+        }
         
+        // Main frame: use ExecuteScript with message pump
         while start.elapsed() < timeout {
-            // Simple synchronous check script
-            let script = format!(
-                "(function() {{ return document.querySelector('{}') !== null; }})()",
-                escaped_selector
-            );
+            let script = check_script.clone();
             
             if let Some(controller) = &self.controller {
                 unsafe {
@@ -2687,9 +2873,31 @@ impl WebViewInstance {
                             &HSTRING::from("{}"),
                             &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
                         ).map_err(|e| format!("{:?}", e))?;
+
+                        // Enable auto-attach to iframe/worker targets so their network
+                        // events are forwarded to the main CDP session (flatten=true).
+                        webview.CallDevToolsProtocolMethod(
+                            &HSTRING::from("Target.setAutoAttach"),
+                            &HSTRING::from(r#"{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}"#),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        ).map_err(|e| format!("{:?}", e))?;
+
+                        // Listen for Target.attachedToTarget to enable Network in child sessions
+                        let attach_receiver = webview.GetDevToolsProtocolEventReceiver(
+                            &HSTRING::from("Target.attachedToTarget"),
+                        ).map_err(|e| format!("{:?}", e))?;
+                        let mut token_attach: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
+                        attach_receiver.add_DevToolsProtocolEventReceived(
+                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(TargetAttachedHandler),
+                            &mut token_attach,
+                        ).map_err(|e| format!("{:?}", e))?;
+
+                        NETWORK_EVENT_TOKENS.with(|map| {
+                            map.borrow_mut().insert("attachedToTarget".to_string(), token_attach);
+                        });
                     }
                 }
-                Ok("Network monitoring enabled".to_string())
+                Ok("Network monitoring enabled (with iframe support)".to_string())
             },
              crate::core::NetworkAction::Disable => {
                  NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = false);
@@ -2705,6 +2913,13 @@ impl WebViewInstance {
                             &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
                         ).map_err(|e| format!("{:?}", e))?;
                         
+                        // Disable auto-attach to iframe targets
+                        webview.CallDevToolsProtocolMethod(
+                            &HSTRING::from("Target.setAutoAttach"),
+                            &HSTRING::from(r#"{"autoAttach":false,"waitForDebuggerOnStart":false}"#),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        ).map_err(|e| format!("{:?}", e))?;
+
                         // Unregister event handlers via GetDevToolsProtocolEventReceiver
                         NETWORK_EVENT_TOKENS.with(|map| {
                             let mut m = map.borrow_mut();
@@ -2715,6 +2930,11 @@ impl WebViewInstance {
                             }
                             if let Some(token) = m.remove("responseReceived") {
                                 if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Network.responseReceived")) {
+                                    let _ = receiver.remove_DevToolsProtocolEventReceived(token);
+                                }
+                            }
+                            if let Some(token) = m.remove("attachedToTarget") {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Target.attachedToTarget")) {
                                     let _ = receiver.remove_DevToolsProtocolEventReceived(token);
                                 }
                             }

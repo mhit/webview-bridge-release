@@ -8,16 +8,21 @@ pub fn run(
     session: &str,
     device: Option<&str>,
     output_path: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     let mut body = serde_json::json!({ "session": session });
     if let Some(d) = device {
         body["device"] = serde_json::Value::String(d.to_string());
     }
+    if let Some(f) = frame {
+        body["frame"] = serde_json::Value::String(f.to_string());
+    }
     let resp = client.post("/screenshot", &body)?;
     resp.check_success("Screenshot failed")?;
 
-    // Server returns base64 image data in "image" field
+    // Server returns base64 image data in "image" or "data" field
     let b64 = resp.body.get("image")
+        .or_else(|| resp.body.get("data"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| WbError::general("No image data in response"))?;
 

@@ -54,6 +54,10 @@ pub struct ScreenshotRequest {
     /// Timeout in ms
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    
+    /// Target iframe (index, name, or URL substring)
+    #[serde(default)]
+    pub frame: Option<String>,
 }
 
 fn default_quality() -> u8 {
