@@ -229,6 +229,8 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/click", post(click_v2))
         .route("/type", post(type_v2))
         .route("/execute", post(execute_v2))
+        // Frame (iframe) operations
+        .route("/frames", get(frames_list))
         // Wait v2
         .route("/wait", post(wait_v2))
         // Screenshot v2
@@ -1624,6 +1626,8 @@ struct ClickRequest {
     selector: String,
     #[serde(default)]
     wait_after_ms: Option<u64>,
+    #[serde(default)]
+    frame: Option<String>,
 }
 
 /// POST /v2/click - Click element and wait
@@ -1650,10 +1654,19 @@ async fn click_v2(
     );
 
     let (tx, rx) = oneshot::channel();
-    let cmd = AppCommand::ExecuteScript {
-        id: handle.id.clone(),
-        script,
-        resp_tx: tx,
+    let cmd = if let Some(ref frame) = request.frame {
+        AppCommand::ExecuteInFrame {
+            id: handle.id.clone(),
+            script,
+            frame: frame.clone(),
+            resp_tx: tx,
+        }
+    } else {
+        AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        }
     };
 
     if state.cmd_tx.send(cmd).is_err() {
@@ -1693,6 +1706,8 @@ struct TypeRequest {
     text: String,
     #[serde(default)]
     clear_first: bool,
+    #[serde(default)]
+    frame: Option<String>,
 }
 
 /// POST /v2/type - Type text into input
@@ -1723,16 +1738,25 @@ async fn type_v2(
     );
     
     let (tx, rx) = oneshot::channel();
-    let cmd = AppCommand::ExecuteScript {
-        id: handle.id.clone(),
-        script,
-        resp_tx: tx,
+    let cmd = if let Some(ref frame) = request.frame {
+        AppCommand::ExecuteInFrame {
+            id: handle.id.clone(),
+            script,
+            frame: frame.clone(),
+            resp_tx: tx,
+        }
+    } else {
+        AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        }
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return error_response(Wbp2Error::InternalError, "Failed to send command");
     }
-    
+
     match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
         Ok(Ok(Ok(result))) => {
             if result.contains("error") {
@@ -1759,6 +1783,10 @@ struct ExecuteRequest {
     script: String,
     #[serde(default = "default_execute_timeout")]
     timeout_ms: u64,
+    /// Optional frame specifier (URL substring, frame name, or frame ID).
+    /// When set, executes the script inside the matching iframe via CDP.
+    #[serde(default)]
+    frame: Option<String>,
 }
 
 fn default_execute_timeout() -> u64 { 30000 }
@@ -1791,10 +1819,19 @@ async fn execute_v2(
     };
 
     let (tx, rx) = oneshot::channel();
-    let cmd = AppCommand::ExecuteScript {
-        id: handle.id.clone(),
-        script,
-        resp_tx: tx,
+    let cmd = if let Some(ref frame) = request.frame {
+        AppCommand::ExecuteInFrame {
+            id: handle.id.clone(),
+            script,
+            frame: frame.clone(),
+            resp_tx: tx,
+        }
+    } else {
+        AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        }
     };
 
     if state.cmd_tx.send(cmd).is_err() {
@@ -1823,6 +1860,46 @@ async fn execute_v2(
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
         Err(_) => error_response(Wbp2Error::InternalError, "Execution timed out"),
+    }
+}
+
+/// Query params for GET /frames
+#[derive(serde::Deserialize)]
+struct FramesQuery {
+    session: String,
+}
+
+/// GET /frames - List all frames (iframes) in the page via CDP
+async fn frames_list(
+    State(state): State<V2AppState>,
+    axum::extract::Query(query): axum::extract::Query<FramesQuery>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+
+    let handle = match manager.get_handle(&query.session) {
+        Some(h) => h,
+        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", query.session)),
+    };
+
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::GetFrames {
+        id: handle.id.clone(),
+        resp_tx: tx,
+    };
+
+    if state.cmd_tx.send(cmd).is_err() {
+        return error_response(Wbp2Error::InternalError, "Failed to send command");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(result))) => {
+            let parsed = serde_json::from_str::<serde_json::Value>(&result)
+                .unwrap_or(serde_json::Value::String(result));
+            (StatusCode::OK, Json(parsed)).into_response()
+        }
+        Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
+        Err(_) => error_response(Wbp2Error::InternalError, "GetFrames timed out"),
     }
 }
 

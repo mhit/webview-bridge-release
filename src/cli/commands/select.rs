@@ -8,6 +8,7 @@ pub fn run(
     session: &str,
     target: &str,
     value: &str,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     let selector = refs::resolve_target(target);
     // Critical fix: return error instead of fallback
@@ -34,6 +35,7 @@ pub fn run(
     let body = serde_json::json!({
         "session": session,
         "script": script,
+        "frame": frame,
     });
     let resp = client.post("/execute", &body)?;
 

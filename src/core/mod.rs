@@ -149,6 +149,17 @@ pub enum AppCommand {
         action: NetworkAction,
         resp_tx: oneshot::Sender<Result<String, String>>,
     },
+    // Frame (iframe) operations
+    GetFrames {
+        id: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    ExecuteInFrame {
+        id: String,
+        script: String,
+        frame: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 /// Session thread command enum
@@ -257,6 +268,15 @@ pub enum SessionCommand {
     },
     ManageNetwork {
         action: NetworkAction,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // Frame (iframe) operations
+    GetFrames {
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    ExecuteInFrame {
+        script: String,
+        frame: String,
         resp_tx: oneshot::Sender<Result<String, String>>,
     },
 }
@@ -903,6 +923,25 @@ impl SessionManager {
                              let result = webview.manage_network(action);
                              let _ = resp_tx.send(result);
                         }
+                        SessionCommand::GetFrames { resp_tx } => {
+                            tracing::debug!("[Session:{}] GetFrames", id);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.get_frames()
+                                .map(|v| v.to_string());
+                            let _ = resp_tx.send(result);
+                        }
+                        SessionCommand::ExecuteInFrame { script, frame, resp_tx } => {
+                            tracing::debug!("[Session:{}] ExecuteInFrame: frame={}, script_len={}", id, frame, script.len());
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                continue;
+                            }
+                            let result = webview.execute_in_frame(&script, &frame);
+                            let _ = resp_tx.send(result);
+                        }
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
@@ -1409,6 +1448,48 @@ impl SessionManager {
         match rx.await {
             Ok(result) => result,
             Err(_) => Err("ManageNetwork response channel closed".to_string()),
+        }
+    }
+
+    /// Get all frames (iframes) in a session via CDP
+    pub async fn get_frames(&self, id: &str) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::GetFrames { resp_tx: tx })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("GetFrames response channel closed".to_string()),
+        }
+    }
+
+    /// Execute script in a specific frame (iframe) via CDP
+    pub async fn execute_in_frame(&self, id: &str, script: &str, frame: &str) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::ExecuteInFrame {
+            script: script.to_string(),
+            frame: frame.to_string(),
+            resp_tx: tx,
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("ExecuteInFrame response channel closed".to_string()),
         }
     }
 

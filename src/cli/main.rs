@@ -43,6 +43,13 @@ enum Command {
     /// Show server status and active sessions
     Status,
 
+    /// List all frames (iframes) in the page
+    Frames {
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+    },
+
     /// Manage browser sessions
     Session {
         #[command(subcommand)]
@@ -80,6 +87,10 @@ enum Command {
         /// Output file path
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(short, long)]
+        frame: Option<String>,
     },
 
     /// Click an element (accepts e1, e2... refs or CSS selector)
@@ -90,6 +101,10 @@ enum Command {
         /// Session name
         #[arg(short, long, default_value = "default")]
         session: String,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Type text into an element
@@ -107,6 +122,10 @@ enum Command {
         /// Clear field before typing
         #[arg(long)]
         clear: bool,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Take a screenshot
@@ -134,7 +153,7 @@ enum Command {
         session: String,
 
         /// Read script from file
-        #[arg(short, long)]
+        #[arg(short = 'F', long)]
         file: Option<String>,
 
         /// Execution timeout in milliseconds
@@ -144,6 +163,10 @@ enum Command {
         /// Output file path
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(short, long)]
+        frame: Option<String>,
     },
 
     /// Scroll the page or an element
@@ -162,6 +185,10 @@ enum Command {
         /// CSS selector to scroll (default: window)
         #[arg(long)]
         target: Option<String>,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Wait for an element or condition
@@ -184,6 +211,10 @@ enum Command {
         /// Text to match (for text_contains/text_matches conditions)
         #[arg(long)]
         text: Option<String>,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Select an option in a <select> dropdown
@@ -197,6 +228,10 @@ enum Command {
         /// Session name
         #[arg(short, long, default_value = "default")]
         session: String,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Extract data from page elements
@@ -209,7 +244,7 @@ enum Command {
         session: String,
 
         /// Field mappings: "name=.sub-selector,price=.price"
-        #[arg(short, long)]
+        #[arg(short = 'F', long)]
         fields: Option<String>,
 
         /// Maximum number of items
@@ -219,6 +254,10 @@ enum Command {
         /// Output file path
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Target iframe (URL substring, frame name, or frame ID)
+        #[arg(long)]
+        frame: Option<String>,
     },
 
     /// Manage cookies for a session
@@ -344,6 +383,9 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Status => commands::status::run(&client, &opts),
+        Command::Frames { session } => {
+            commands::frames::run(&client, &opts, &session)
+        }
         Command::Session { action } => match action {
             SessionAction::Acquire { name } => {
                 commands::session::acquire(&client, &opts, &name)
@@ -356,32 +398,32 @@ fn main() -> ExitCode {
         Command::Open { url, session } => {
             commands::open::run(&client, &opts, &session, &url)
         }
-        Command::Snapshot { session, all, within, limit, output } => {
-            commands::snapshot::run(&client, &opts, &session, all, within.as_deref(), limit, output.as_deref())
+        Command::Snapshot { session, all, within, limit, output, frame } => {
+            commands::snapshot::run(&client, &opts, &session, all, within.as_deref(), limit, output.as_deref(), frame.as_deref())
         }
-        Command::Click { target, session } => {
-            commands::click::run(&client, &opts, &session, &target)
+        Command::Click { target, session, frame } => {
+            commands::click::run(&client, &opts, &session, &target, frame.as_deref())
         }
-        Command::Type { target, text, session, clear } => {
-            commands::type_cmd::run(&client, &opts, &session, &target, &text, clear)
+        Command::Type { target, text, session, clear, frame } => {
+            commands::type_cmd::run(&client, &opts, &session, &target, &text, clear, frame.as_deref())
         }
         Command::Screenshot { session, device, output } => {
             commands::screenshot::run(&client, &opts, &session, device.as_deref(), output.as_deref())
         }
-        Command::Execute { script, session, file, timeout, output } => {
-            commands::execute::run(&client, &opts, &session, script.as_deref(), file.as_deref(), timeout, output.as_deref())
+        Command::Execute { script, session, file, timeout, output, frame } => {
+            commands::execute::run(&client, &opts, &session, script.as_deref(), file.as_deref(), timeout, output.as_deref(), frame.as_deref())
         }
-        Command::Scroll { direction, session, amount, target } => {
-            commands::scroll::run(&client, &opts, &session, &direction, amount, target.as_deref())
+        Command::Scroll { direction, session, amount, target, frame } => {
+            commands::scroll::run(&client, &opts, &session, &direction, amount, target.as_deref(), frame.as_deref())
         }
-        Command::Wait { selector, session, condition, timeout, text } => {
-            commands::wait::run(&client, &opts, &session, &selector, &condition, timeout, text.as_deref())
+        Command::Wait { selector, session, condition, timeout, text, frame } => {
+            commands::wait::run(&client, &opts, &session, &selector, &condition, timeout, text.as_deref(), frame.as_deref())
         }
-        Command::Select { target, value, session } => {
-            commands::select::run(&client, &opts, &session, &target, &value)
+        Command::Select { target, value, session, frame } => {
+            commands::select::run(&client, &opts, &session, &target, &value, frame.as_deref())
         }
-        Command::Extract { selector, session, fields, limit, output } => {
-            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref())
+        Command::Extract { selector, session, fields, limit, output, frame } => {
+            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref(), frame.as_deref())
         }
         Command::Cookies { action } => match action {
             CookieAction::Get { session, output } => {

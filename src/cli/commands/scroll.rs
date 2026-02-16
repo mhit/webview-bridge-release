@@ -8,6 +8,7 @@ pub fn run(
     direction: &str,
     amount: i64,
     selector: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     let pixels = match direction {
         "down" => amount,
@@ -32,6 +33,7 @@ pub fn run(
     let body = serde_json::json!({
         "session": session,
         "script": script,
+        "frame": frame,
     });
     let resp = client.post("/execute", &body)?;
 

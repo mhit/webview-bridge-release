@@ -359,5 +359,13 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.manage_network(&id, action).await;
             let _ = resp_tx.send(result);
         }
+        AppCommand::GetFrames { id, resp_tx } => {
+            let result = manager.get_frames(&id).await;
+            let _ = resp_tx.send(result);
+        }
+        AppCommand::ExecuteInFrame { id, script, frame, resp_tx } => {
+            let result = manager.execute_in_frame(&id, &script, &frame).await;
+            let _ = resp_tx.send(result);
+        }
     }
 }

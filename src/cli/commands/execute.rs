@@ -9,6 +9,7 @@ pub fn run(
     file: Option<&str>,
     timeout_ms: u64,
     output_path: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     let script_content = if let Some(path) = file {
         let content = std::fs::read_to_string(path)
@@ -28,6 +29,7 @@ pub fn run(
         "session": session,
         "script": script_content,
         "timeout_ms": timeout_ms,
+        "frame": frame,
     });
 
     let resp = client.post("/execute", &body)?;

@@ -3,6 +3,7 @@ pub mod click;
 pub mod cookies;
 pub mod execute;
 pub mod extract;
+pub mod frames;
 pub mod open;
 pub mod screenshot;
 pub mod scroll;

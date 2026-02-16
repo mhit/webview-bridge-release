@@ -45,6 +45,8 @@ thread_local! {
     pub static PENDING_CDP_SCREENSHOTS: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
     // CDP cookie results (Network.getCookies returns JSON)
     pub static PENDING_CDP_COOKIES: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
+    // Generic CDP method results (for frame operations, Runtime.evaluate, etc.)
+    pub static PENDING_CDP_RESULTS: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
     static NAVIGATION_COMPLETION: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
     static PENDING_SCRIPT_COUNT: RefCell<std::sync::atomic::AtomicUsize> = RefCell::new(std::sync::atomic::AtomicUsize::new(0));
 
@@ -202,6 +204,32 @@ impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpCookieH
         } else {
             tracing::warn!("[CDP Cookie] Failed: {:?}", error_code);
             PENDING_CDP_COOKIES.with(|map| {
+                map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
+            });
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------
+// Generic CDP Result Handler (for frames, Runtime.evaluate, etc.)
+// ----------------------------------------------------------------
+#[windows::core::implement(ICoreWebView2CallDevToolsProtocolMethodCompletedHandler)]
+struct CdpResultHandler {
+    request_id: String,
+}
+
+impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpResultHandler {
+    fn Invoke(&self, error_code: HRESULT, return_object_as_json: &windows::core::PCWSTR) -> WinResult<()> {
+        if error_code.is_ok() {
+            let result = unsafe { return_object_as_json.to_string().unwrap_or_default() };
+            tracing::debug!("[CDP Result] Completed, request_id={}", self.request_id);
+            PENDING_CDP_RESULTS.with(|map| {
+                map.borrow_mut().insert(self.request_id.clone(), Ok(result));
+            });
+        } else {
+            tracing::warn!("[CDP Result] Failed: {:?}, request_id={}", error_code, self.request_id);
+            PENDING_CDP_RESULTS.with(|map| {
                 map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
             });
         }
@@ -1912,7 +1940,181 @@ impl WebViewInstance {
     }
 
     // ========================================================================
-    // New Methods: Snapshot, Cookie
+    // Frame (iframe) Support via CDP
+    // ========================================================================
+
+    /// Call a CDP method and wait for the result synchronously
+    fn call_cdp_sync(&self, method: &str, params: &str) -> Result<String, String> {
+        if let Some(controller) = &self.controller {
+            unsafe {
+                let webview = controller.CoreWebView2()
+                    .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
+                let request_id = Uuid::new_v4().to_string();
+
+                webview.CallDevToolsProtocolMethod(
+                    &HSTRING::from(method),
+                    &HSTRING::from(params),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpResultHandler { request_id: request_id.clone() }
+                    ),
+                ).map_err(|e| format!("CDP call failed: {:?}", e))?;
+
+                // Wait for result (same pattern as wait_for_script_result)
+                let start = std::time::Instant::now();
+                loop {
+                    let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                    while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
+                        &mut msg, HWND::default(), 0, 0,
+                        windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
+                    ).as_bool() {
+                        windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                        windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                    }
+
+                    if let Some(result) = PENDING_CDP_RESULTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                        return result;
+                    }
+
+                    if start.elapsed() > std::time::Duration::from_secs(30) {
+                        return Err(format!("CDP timeout for {}", method));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        } else {
+            Err("WebView not ready".to_string())
+        }
+    }
+
+    /// Get all frames in the page via CDP Page.getFrameTree
+    pub fn get_frames(&self) -> Result<serde_json::Value, String> {
+        let result = self.call_cdp_sync("Page.getFrameTree", "{}")?;
+        let parsed: serde_json::Value = serde_json::from_str(&result)
+            .map_err(|e| format!("Failed to parse frame tree: {}", e))?;
+
+        fn collect_frames(node: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+            if let Some(frame) = node.get("frame") {
+                out.push(serde_json::json!({
+                    "id": frame.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "url": frame.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+                    "name": frame.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    "security_origin": frame.get("securityOrigin").and_then(|v| v.as_str()).unwrap_or(""),
+                    "parent_id": frame.get("parentId").and_then(|v| v.as_str()),
+                }));
+            }
+            if let Some(children) = node.get("childFrames").and_then(|v| v.as_array()) {
+                for child in children {
+                    collect_frames(child, out);
+                }
+            }
+        }
+
+        let mut frames = Vec::new();
+        if let Some(tree) = parsed.get("frameTree") {
+            collect_frames(tree, &mut frames);
+        }
+        Ok(serde_json::json!({ "frames": frames }))
+    }
+
+    /// Resolve a frame specifier (URL substring or frame ID) to a CDP frame ID
+    fn resolve_frame_id(&self, frame_spec: &str) -> Result<String, String> {
+        let result = self.call_cdp_sync("Page.getFrameTree", "{}")?;
+        let parsed: serde_json::Value = serde_json::from_str(&result)
+            .map_err(|e| format!("Failed to parse frame tree: {}", e))?;
+
+        fn find_frame(node: &serde_json::Value, spec: &str) -> Option<String> {
+            if let Some(frame) = node.get("frame") {
+                let id = frame.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let url = frame.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let name = frame.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                // Match by: exact frame ID, URL contains, or name matches
+                if id == spec || url.contains(spec) || (!name.is_empty() && name == spec) {
+                    return Some(id.to_string());
+                }
+            }
+            if let Some(children) = node.get("childFrames").and_then(|v| v.as_array()) {
+                for child in children {
+                    if let Some(found) = find_frame(child, spec) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+
+        if let Some(tree) = parsed.get("frameTree") {
+            find_frame(tree, frame_spec)
+                .ok_or_else(|| format!("Frame not found matching: {}", frame_spec))
+        } else {
+            Err("No frame tree in response".to_string())
+        }
+    }
+
+    /// Execute a script in a specific frame via CDP Runtime.evaluate
+    /// Uses Page.createIsolatedWorld to get an executionContextId for the frame,
+    /// then calls Runtime.evaluate with that contextId.
+    pub fn execute_in_frame(&self, script: &str, frame_spec: &str) -> Result<String, String> {
+        let frame_id = self.resolve_frame_id(frame_spec)?;
+        tracing::info!("[Frame] Resolved '{}' → frame_id={}", frame_spec, frame_id);
+
+        // Create an isolated world in the target frame to get a contextId
+        let create_params = serde_json::json!({
+            "frameId": frame_id,
+            "worldName": "webview-bridge-frame"
+        });
+        let world_result = self.call_cdp_sync(
+            "Page.createIsolatedWorld",
+            &create_params.to_string(),
+        )?;
+        let world_parsed: serde_json::Value = serde_json::from_str(&world_result)
+            .map_err(|e| format!("Failed to parse isolated world: {}", e))?;
+        let context_id = world_parsed.get("executionContextId")
+            .and_then(|v| v.as_i64())
+            .ok_or("No executionContextId in response")?;
+
+        tracing::info!("[Frame] Got contextId={} for frame_id={}", context_id, frame_id);
+
+        // Execute the script in that context
+        let eval_params = serde_json::json!({
+            "expression": script,
+            "contextId": context_id,
+            "returnByValue": true,
+            "awaitPromise": true,
+        });
+        let eval_result = self.call_cdp_sync(
+            "Runtime.evaluate",
+            &eval_params.to_string(),
+        )?;
+        let eval_parsed: serde_json::Value = serde_json::from_str(&eval_result)
+            .map_err(|e| format!("Failed to parse eval result: {}", e))?;
+
+        // Check for exceptions
+        if let Some(exception) = eval_parsed.get("exceptionDetails") {
+            let msg = exception.get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Script exception in frame");
+            return Err(format!("Frame script error: {}", msg));
+        }
+
+        // Extract the result value
+        if let Some(result) = eval_parsed.get("result") {
+            if let Some(val) = result.get("value") {
+                Ok(val.to_string())
+            } else {
+                // No value (void return) — return the type/description
+                let desc = result.get("description")
+                    .or_else(|| result.get("type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("undefined");
+                Ok(format!("\"{}\"", desc))
+            }
+        } else {
+            Ok(eval_result)
+        }
+    }
+
+    // ========================================================================
+    // Snapshot, Cookie, etc.
     // ========================================================================
 
     /// Check if the WebView controller is ready

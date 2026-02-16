@@ -9,6 +9,7 @@ pub fn run(
     fields: Option<&str>,
     limit: usize,
     output_path: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     // Build field extraction map: "title=.title,price=.price" → [["title",".title"], ...]
     let field_pairs: Vec<(&str, &str)> = if let Some(f) = fields {
@@ -73,6 +74,7 @@ pub fn run(
     let body = serde_json::json!({
         "session": session,
         "script": script,
+        "frame": frame,
     });
     let resp = client.post("/execute", &body)?;
 

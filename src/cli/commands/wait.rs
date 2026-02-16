@@ -15,6 +15,7 @@ pub fn run(
     condition: &str,
     timeout_ms: u64,
     text: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     if !VALID_CONDITIONS.contains(&condition) {
         return Err(WbError::general(format!(
@@ -29,6 +30,7 @@ pub fn run(
         "selector": resolved,
         "condition": condition,
         "timeout_ms": timeout_ms,
+        "frame": frame,
     });
 
     if let Some(t) = text {

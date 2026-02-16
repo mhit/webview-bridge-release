@@ -53,11 +53,13 @@ pub fn run(
     within: Option<&str>,
     limit: usize,
     output_path: Option<&str>,
+    frame: Option<&str>,
 ) -> Result<(), WbError> {
     let script = snapshot_script(all, within, limit);
     let body = serde_json::json!({
         "session": session,
         "script": script,
+        "frame": frame,
     });
     let resp = client.post("/execute", &body)?;
 
