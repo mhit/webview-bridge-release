@@ -1614,7 +1614,7 @@ async fn navigate_v2(
             })),
         ).into_response(),
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "Navigation timed out. The page may be slow or unresponsive. Try: increase timeout_ms or check the URL."),
     }
 }
@@ -1693,7 +1693,7 @@ async fn click_v2(
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "Click timed out. The element may be missing or hidden. Try: check selector, wait for page load, or increase timeout."),
     }
 }
@@ -1771,7 +1771,7 @@ async fn type_v2(
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "Type timed out. The input element may not be focused or visible. Try: click the element first, then type."),
     }
 }
@@ -1858,7 +1858,7 @@ async fn execute_v2(
             ).into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms."),
     }
 }
@@ -1898,7 +1898,7 @@ async fn frames_list(
             (StatusCode::OK, Json(parsed)).into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "Frame enumeration timed out. The page may still be loading. Try: wait for page load first."),
     }
 }
@@ -2052,7 +2052,7 @@ async fn screenshot_v2(
                     "error": {
                         "code": "WBP2_090",
                         "name": "INVALID_REQUEST",
-                        "message": format!("Unknown device preset '{}'. Available: iPhone 15, Pixel 8, iPad, desktop, etc. See GET /device-list for full list.", device_name)
+                        "message": format!("Unknown device preset '{}'. Available: iPhone 15, Pixel 8, iPad, desktop, etc. See GET /screenshot/devices for full list.", device_name)
                     }
                 })),
             );

@@ -8,13 +8,25 @@ mod refs;
 mod updater;
 
 #[derive(Parser)]
-#[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation")]
+#[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation", after_help = "\
+ENVIRONMENT VARIABLES:
+  WB_HOST              Server address (default: http://127.0.0.1:9400)
+  WB_TOKEN             Bearer token for authentication
+  WB_NO_UPDATE_CHECK   Set to 1 to disable update checks
+  WEBVIEW_BRIDGE_DATA_PATH  Override data directory (default: %APPDATA%/webview-bridge)
+
+QUICK START:
+  wb auth save <TOKEN>       Save server token (shown at server startup)
+  wb session acquire mysite  Create/activate a browser session
+  wb open https://example.com -s mysite
+  wb snapshot -s mysite      View interactive elements
+  wb click e3 -s mysite      Click element #3 from snapshot")]
 struct Cli {
-    /// Server address
+    /// Server address [env: WB_HOST]
     #[arg(long, default_value = "http://127.0.0.1:9400", global = true, env = "WB_HOST")]
     host: String,
 
-    /// Bearer token for authentication
+    /// Bearer token for authentication [env: WB_TOKEN]
     #[arg(long, global = true, env = "WB_TOKEN")]
     token: Option<String>,
 
@@ -30,8 +42,8 @@ struct Cli {
     #[arg(long, global = true)]
     no_file: bool,
 
-    /// Disable automatic update check at startup
-    #[arg(long, global = true)]
+    /// Disable automatic update check at startup [env: WB_NO_UPDATE_CHECK]
+    #[arg(long, global = true, env = "WB_NO_UPDATE_CHECK")]
     no_update_check: bool,
 
     #[command(subcommand)]
@@ -366,8 +378,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // H7: Background update check via channel (non-blocking, 1s timeout on exit)
-    let skip_check = cli.no_update_check
-        || std::env::var("WB_NO_UPDATE_CHECK").is_ok_and(|v| !v.is_empty() && v != "0" && v != "false");
+    // cli.no_update_check is set by --no-update-check flag OR WB_NO_UPDATE_CHECK env var (via clap)
+    let skip_check = cli.no_update_check;
     let bg_rx = if !skip_check && !matches!(cli.command, Command::Update { .. }) {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {

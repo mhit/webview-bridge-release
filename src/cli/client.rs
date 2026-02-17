@@ -157,7 +157,7 @@ impl WbClient {
                     WbError::timeout("Request timed out. The server may be overloaded. Try again or increase timeout.")
                 } else {
                     WbError::connection(format!(
-                        "Cannot connect to server at {}. Is the server running?\n\
+                        "Cannot connect to server. Is the server running? ({})\n\
                          Check: 1) Server is started  2) Host/port is correct  3) Firewall allows access",
                         detail
                     ))
