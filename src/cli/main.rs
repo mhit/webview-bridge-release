@@ -9,18 +9,32 @@ mod updater;
 
 #[derive(Parser)]
 #[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation", after_help = "\
-ENVIRONMENT VARIABLES:
-  WB_HOST              Server address (default: http://127.0.0.1:9400)
-  WB_TOKEN             Bearer token for authentication
-  WB_NO_UPDATE_CHECK   Set to 1 to disable update checks
-  WEBVIEW_BRIDGE_DATA_PATH  Override data directory (default: %APPDATA%/webview-bridge)
-
 QUICK START:
   wb auth save <TOKEN>       Save server token (shown at server startup)
   wb session acquire mysite  Create/activate a browser session
   wb open https://example.com -s mysite
-  wb snapshot -s mysite      View interactive elements
-  wb click e3 -s mysite      Click element #3 from snapshot")]
+  wb snapshot -s mysite      View interactive elements (e1, e2... refs)
+  wb click e3 -s mysite      Click element #3 from snapshot
+
+EFFICIENT USAGE (for AI agents):
+  wb snapshot -s S --all --within \".main\" --limit 30   Focused full-page capture
+  wb snapshot -s S --limit 20                           Minimal interactive-only view
+  wb extract \".items\" -F \"name=h3,price=.cost\" -s S    Structured data extraction
+  wb execute \"document.title\" -s S                      Quick JS data retrieval
+  wb wait \"#result\" -s S && wb snapshot -s S            Wait then capture
+  Use --json for machine-readable output. Use --no-file to skip file saving.
+  For autonomous multi-step tasks, use the MCP 'agent' tool or POST /goal API.
+
+IFRAME SUPPORT:
+  wb frames -s S                       List all iframes
+  wb snapshot -s S --frame \"embed.co\"  Capture inside an iframe
+  wb click e2 -s S --frame \"content\"   Interact inside an iframe
+
+ENVIRONMENT VARIABLES:
+  WB_HOST              Server address (default: http://127.0.0.1:9400)
+  WB_TOKEN             Bearer token for authentication
+  WB_NO_UPDATE_CHECK   Set to 1 to disable update checks
+  WEBVIEW_BRIDGE_DATA_PATH  Override data directory (default: %APPDATA%/webview-bridge)")]
 struct Cli {
     /// Server address [env: WB_HOST]
     #[arg(long, default_value = "http://127.0.0.1:9400", global = true, env = "WB_HOST")]
