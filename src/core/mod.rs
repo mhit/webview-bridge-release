@@ -508,7 +508,7 @@ impl SessionManager {
                             // Ensure controller is ready
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err(
-                                    "WebView is not ready (controller missing)".to_string(),
+                                    "Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string(),
                                 ));
                                 continue;
                             }
@@ -529,7 +529,7 @@ impl SessionManager {
                         SessionCommand::ExecuteScript { script, resp_tx } => {
                             tracing::debug!("[Session:{}] Executing script", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview
@@ -554,7 +554,7 @@ impl SessionManager {
                         SessionCommand::Act { action, resp_tx } => {
                             tracing::debug!("[Session:{}] Act: {:?}", id, action.kind);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = match action.kind.as_str() {
@@ -584,7 +584,7 @@ impl SessionManager {
                         SessionCommand::Snapshot { format, resp_tx } => {
                             tracing::debug!("[Session:{}] Snapshot: format={}", id, format);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.snapshot(&format);
@@ -594,7 +594,7 @@ impl SessionManager {
                             tracing::info!("[Session:{}] Screenshot command received", id);
                             if !webview.is_ready() {
                                 tracing::warn!("[Session:{}] WebView not ready", id);
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             
@@ -788,7 +788,7 @@ impl SessionManager {
                         SessionCommand::GetCookies { resp_tx } => {
                             tracing::debug!("[Session:{}] GetCookies", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.get_cookies_json();
@@ -797,7 +797,7 @@ impl SessionManager {
                         SessionCommand::SetCookies { cookies, resp_tx } => {
                             tracing::debug!("[Session:{}] SetCookies", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.set_cookies_json(&cookies);
@@ -806,7 +806,7 @@ impl SessionManager {
                         SessionCommand::WaitForSelector { selector, timeout_ms, frame, resp_tx } => {
                             tracing::debug!("[Session:{}] WaitForSelector: {} frame={:?}", id, selector, frame);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.wait_for_selector(&selector, timeout_ms, frame.as_deref());
@@ -815,7 +815,7 @@ impl SessionManager {
                         SessionCommand::Extract { selector, attribute, extract_all, resp_tx } => {
                             tracing::debug!("[Session:{}] Extract: {} attr={}", id, selector, attribute);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.extract(&selector, &attribute, extract_all);
@@ -835,7 +835,7 @@ impl SessionManager {
                         SessionCommand::SimulateDevice { device_name, resp_tx } => {
                             tracing::debug!("[Session:{}] SimulateDevice: {}", id, device_name);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.simulate_device(&device_name)
@@ -845,7 +845,7 @@ impl SessionManager {
                         SessionCommand::SetViewport { width, height, resp_tx } => {
                             tracing::debug!("[Session:{}] SetViewport: {}x{}", id, width, height);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.set_viewport(width, height)
@@ -855,7 +855,7 @@ impl SessionManager {
                         SessionCommand::SetUserAgent { user_agent, resp_tx } => {
                             tracing::debug!("[Session:{}] SetUserAgent", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.set_user_agent(&user_agent)
@@ -865,7 +865,7 @@ impl SessionManager {
                         SessionCommand::ScreenshotCdp { full_page, format, quality, frame, resp_tx } => {
                             tracing::debug!("[Session:{}] ScreenshotCdp: full_page={}, frame={:?}", id, full_page, frame);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = if let Some(ref frame_spec) = frame {
@@ -878,7 +878,7 @@ impl SessionManager {
                         SessionCommand::ResetDeviceEmulation { resp_tx } => {
                             tracing::debug!("[Session:{}] ResetDeviceEmulation", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.reset_device_emulation()
@@ -888,7 +888,7 @@ impl SessionManager {
                         SessionCommand::SetViewportCdp { width, height, device_scale_factor, is_mobile, resp_tx } => {
                             tracing::debug!("[Session:{}] SetViewportCdp: {}x{}", id, width, height);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.set_viewport_cdp(width, height, device_scale_factor, is_mobile)
@@ -898,7 +898,7 @@ impl SessionManager {
                         SessionCommand::ClickCdp { selector, human_mode, resp_tx } => {
                             tracing::debug!("[Session:{}] ClickCdp: {}, human={}", id, selector, human_mode);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.click_selector_cdp(&selector, human_mode);
@@ -907,7 +907,7 @@ impl SessionManager {
                         SessionCommand::TypeCdp { text, char_delay_ms, human_mode, resp_tx } => {
                             tracing::debug!("[Session:{}] TypeCdp: {} chars, human={}", id, text.len(), human_mode);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.type_cdp(&text, char_delay_ms, human_mode);
@@ -916,7 +916,7 @@ impl SessionManager {
                         SessionCommand::PressKeyCdp { key, resp_tx } => {
                             tracing::debug!("[Session:{}] PressKeyCdp: {}", id, key);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.press_key_cdp(&key);
@@ -925,7 +925,7 @@ impl SessionManager {
                         SessionCommand::ManageNetwork { action, resp_tx } => {
                              tracing::debug!("[Session:{}] ManageNetwork: {:?}", id, action);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                              let result = webview.manage_network(action);
@@ -934,7 +934,7 @@ impl SessionManager {
                         SessionCommand::GetFrames { resp_tx } => {
                             tracing::debug!("[Session:{}] GetFrames", id);
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.get_frames()
@@ -944,7 +944,7 @@ impl SessionManager {
                         SessionCommand::ExecuteInFrame { script, frame, resp_tx } => {
                             tracing::debug!("[Session:{}] ExecuteInFrame: frame={}, script_len={}", id, frame, script.len());
                             if !webview.is_ready() {
-                                let _ = resp_tx.send(Err("WebView is not ready".to_string()));
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = webview.execute_in_frame(&script, &frame);
