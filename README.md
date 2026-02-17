@@ -564,6 +564,9 @@ curl -X POST http://localhost:9400/frames \
 ### v3.9.0
 - CDP iframe サポート (`wb frames`, 全コマンドに `--frame` フラグ)
 - MCP ツールに `frame` パラメータ追加 (interact, capture, extract, execute)
+- エラーメッセージ改善 — 全インターフェース (REST API / MCP / CLI) でアクション可能なガイダンスを追加
+- セッション未取得エラーに具体的な解決コマンドを提示
+- CLI ヘルプに環境変数一覧 (`WB_HOST`, `WB_TOKEN`, `WB_NO_UPDATE_CHECK`) とクイックスタートガイドを追加
 
 ### v3.8.0
 - stale セッションの自動復旧 (V1 ヘルスチェック)
