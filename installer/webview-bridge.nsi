@@ -1,5 +1,5 @@
 ﻿; ============================================================
-; WebView Bridge v3.7 — NSIS Installer
+; WebView Bridge v3.9 — NSIS Installer
 ; ============================================================
 ;
 ; Build:  installer\build_installer.bat
