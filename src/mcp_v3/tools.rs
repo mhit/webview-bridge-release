@@ -65,7 +65,7 @@ pub async fn route_tool(
                     }
                     // Acquire failed — return original error with hint
                     return McpToolResponse::error("SESSION_NOT_FOUND",
-                        &format!("Session '{}' not found and auto-reacquire failed. The session may have been permanently deleted. Use the session tool with acquire to create it.", session_name));
+                        &format!("Session '{}' not found. Auto-reacquire failed — the session may have been deleted. Create a new session: use the session tool with {{\"acquire\": \"{}\"}}", session_name, session_name));
                 }
             }
         }
@@ -135,7 +135,7 @@ async fn route_tool_inner(
                 Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid network params: {}", e)),
             }
         }
-        _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: {}", tool)),
+        _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: '{}'. Available tools: navigate, interact, capture, extract, session, media, execute, agent, network", tool)),
     }
 }
 
@@ -169,13 +169,13 @@ async fn execute_script_in(session: &str, script: String, state: &V2AppState, ti
         }
     };
 
-    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
 
     match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("Channel closed".to_string()),
-        Err(_) => Err("Script execution timed out".to_string()),
+        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+        Err(_) => Err("Script execution timed out. The script may have an infinite loop or be waiting for a resource.".to_string()),
     }
 }
 
@@ -195,13 +195,13 @@ async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, St
         resp_tx: tx,
     };
     
-    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
     
     match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("Channel closed".to_string()),
-        Err(_) => Err("GetCookies timed out".to_string()),
+        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+        Err(_) => Err("GetCookies timed out. The session may be unresponsive. Try: re-acquire the session.".to_string()),
     }
 }
 
@@ -222,13 +222,13 @@ async fn set_cookies_cdp(session: &str, cookies_json: String, state: &V2AppState
         resp_tx: tx,
     };
 
-    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+    state.cmd_tx.send(cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
 
     match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("Channel closed".to_string()),
-        Err(_) => Err("SetCookies timed out".to_string()),
+        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+        Err(_) => Err("SetCookies timed out. The session may be unresponsive. Try: re-acquire the session.".to_string()),
     }
 }
 
@@ -300,7 +300,7 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
                 let script = generate_wait_for_condition_script("element", Some(selector), req.timeout_ms);
                 execute_script(&req.session, script, state, req.timeout_ms).await
             } else {
-                Err("wait_selector required for Selector condition".to_string())
+                Err("wait_selector is required when using 'Selector' condition. Example: {\"condition\": \"Selector\", \"wait_selector\": \".my-element\"}".to_string())
             }
         }
     };
@@ -458,7 +458,7 @@ async fn execute_action(
                 .map_err(|e| format!("Failed to parse check result: {}", e))?;
 
             if !parsed["success"].as_bool().unwrap_or(false) {
-                return Err(parsed["error"].as_str().unwrap_or("Element not clickable").to_string());
+                return Err(parsed["error"].as_str().unwrap_or("Element not clickable. It may be hidden, disabled, or covered by another element. Try: scroll to the element, wait for it to be visible, or use a more specific selector.").to_string());
             }
 
             // Human mode: add delay before click
@@ -479,12 +479,12 @@ async fn execute_action(
                     human_mode,
                     resp_tx: tx,
                 };
-                state.cmd_tx.send(cmd).map_err(|_| "Failed to send command")?;
+                state.cmd_tx.send(cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
                 match tokio::time::timeout(Duration::from_secs(10), rx).await {
                     Ok(Ok(Ok(()))) => tracing::info!("[cdp] Click succeeded"),
                     Ok(Ok(Err(e))) => return Err(format!("CDP click failed: {}", e)),
-                    Ok(Err(_)) => return Err("Channel closed".to_string()),
-                    Err(_) => return Err("CDP click timed out".to_string()),
+                    Ok(Err(_)) => return Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+                    Err(_) => return Err("Click timed out. The element may not be interactable. Try: wait for it to be visible, or use a different selector.".to_string()),
                 }
             } else {
                 return Err(format!("Session '{}' not found", session));
@@ -523,12 +523,12 @@ async fn execute_action(
                     human_mode: false, // Focus click doesn't need human movements
                     resp_tx: click_tx,
                 };
-                state.cmd_tx.send(click_cmd).map_err(|_| "Failed to send command")?;
+                state.cmd_tx.send(click_cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
                 match tokio::time::timeout(Duration::from_secs(10), click_rx).await {
                     Ok(Ok(Ok(()))) => tracing::info!("[cdp] Focus click succeeded"),
                     Ok(Ok(Err(e))) => return Err(format!("CDP focus click failed: {}", e)),
-                    Ok(Err(_)) => return Err("Channel closed".to_string()),
-                    Err(_) => return Err("CDP focus click timed out".to_string()),
+                    Ok(Err(_)) => return Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+                    Err(_) => return Err("Focus click timed out. The input element may not be visible. Try: scroll to the element first.".to_string()),
                 }
                 
                 if !*instant {
@@ -555,14 +555,14 @@ async fn execute_action(
                     human_mode,
                     resp_tx: type_tx,
                 };
-                state.cmd_tx.send(type_cmd).map_err(|_| "Failed to send command")?;
+                state.cmd_tx.send(type_cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
                 
                 let type_timeout_secs = if *instant { 10 } else { (value.len() as u64 * char_delay / 1000) + 10 };
                 match tokio::time::timeout(Duration::from_secs(type_timeout_secs), type_rx).await {
                     Ok(Ok(Ok(()))) => tracing::info!("[cdp] Type succeeded: {} chars", value.len()),
                     Ok(Ok(Err(e))) => return Err(format!("CDP type failed: {}", e)),
-                    Ok(Err(_)) => return Err("Channel closed".to_string()),
-                    Err(_) => return Err("CDP type timed out".to_string()),
+                    Ok(Err(_)) => return Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+                    Err(_) => return Err("Type timed out. The input may not be focused. Try: click the input element first, then type.".to_string()),
                 }
             } else {
                 return Err(format!("Session '{}' not found", session));
@@ -759,7 +759,7 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
         resp_tx: tx,
     };
     
-    state.cmd_tx.send(cdp_cmd).map_err(|_| "Failed to send command")?;
+    state.cmd_tx.send(cdp_cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: re-acquire the session.")?;
     
     match tokio::time::timeout(Duration::from_secs(30), rx).await {
         Ok(Ok(Ok(bytes))) => {
@@ -770,8 +770,8 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
             Ok(to_screenshot_uri(session, &filename))
         }
         Ok(Ok(Err(e))) => Err(format!("Screenshot failed: {}", e)),
-        Ok(Err(_)) => Err("Channel closed".to_string()),
-        Err(_) => Err("Screenshot timed out".to_string()),
+        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: re-acquire the session.".to_string()),
+        Err(_) => Err("Screenshot timed out. The page may be very large or still rendering. Try: wait for page load first.".to_string()),
     }
 }
 

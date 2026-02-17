@@ -188,7 +188,7 @@ async fn auth_middleware(req: Request, next: Next) -> impl IntoResponse {
                 "error": {
                     "code": "AUTH_001",
                     "name": "UNAUTHORIZED",
-                    "message": "Missing or invalid Bearer token"
+                    "message": "Missing or invalid Bearer token. Use 'wb auth save <TOKEN>' or set WB_TOKEN env var. The token is shown at server startup."
                 }
             })),
         )
@@ -873,7 +873,7 @@ async fn session_visibility(
                 "error": {
                     "code": "WBP2_010",
                     "name": "SESSION_NOT_FOUND",
-                    "message": format!("Session '{}' not found or not active", name)
+                    "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
                 }
             })),
         ),
@@ -949,7 +949,7 @@ async fn session_focus(
                 "error": {
                     "code": "WBP2_010",
                     "name": "SESSION_NOT_FOUND",
-                    "message": format!("Session '{}' not found or not active", name)
+                    "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
                 }
             })),
         ),
@@ -1614,8 +1614,8 @@ async fn navigate_v2(
             })),
         ).into_response(),
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Navigation channel closed"),
-        Err(_) => error_response(Wbp2Error::InternalError, "Navigation timed out"),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Err(_) => error_response(Wbp2Error::InternalError, "Navigation timed out. The page may be slow or unresponsive. Try: increase timeout_ms or check the URL."),
     }
 }
 
@@ -1693,8 +1693,8 @@ async fn click_v2(
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
-        Err(_) => error_response(Wbp2Error::InternalError, "Click timed out"),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Err(_) => error_response(Wbp2Error::InternalError, "Click timed out. The element may be missing or hidden. Try: check selector, wait for page load, or increase timeout."),
     }
 }
 
@@ -1771,8 +1771,8 @@ async fn type_v2(
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
-        Err(_) => error_response(Wbp2Error::InternalError, "Type timed out"),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Err(_) => error_response(Wbp2Error::InternalError, "Type timed out. The input element may not be focused or visible. Try: click the element first, then type."),
     }
 }
 
@@ -1858,8 +1858,8 @@ async fn execute_v2(
             ).into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
-        Err(_) => error_response(Wbp2Error::InternalError, "Execution timed out"),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Err(_) => error_response(Wbp2Error::InternalError, "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms."),
     }
 }
 
@@ -1898,8 +1898,8 @@ async fn frames_list(
             (StatusCode::OK, Json(parsed)).into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Channel closed"),
-        Err(_) => error_response(Wbp2Error::InternalError, "GetFrames timed out"),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: re-acquire the session."),
+        Err(_) => error_response(Wbp2Error::InternalError, "Frame enumeration timed out. The page may still be loading. Try: wait for page load first."),
     }
 }
 
@@ -2004,7 +2004,7 @@ async fn wait_v2(
                 "error": {
                     "code": "WBP2_099",
                     "name": "TIMEOUT",
-                    "message": "Wait timed out"
+                    "message": "Wait condition not met within timeout. The element may not exist on this page. Try: check the selector, increase timeout_ms, or take a screenshot to verify page state."
                 }
             })),
         ),
@@ -2052,7 +2052,7 @@ async fn screenshot_v2(
                     "error": {
                         "code": "WBP2_090",
                         "name": "INVALID_REQUEST",
-                        "message": format!("Unknown device preset: {}", device_name)
+                        "message": format!("Unknown device preset '{}'. Available: iPhone 15, Pixel 8, iPad, desktop, etc. See GET /device-list for full list.", device_name)
                     }
                 })),
             );
@@ -2155,7 +2155,7 @@ async fn screenshot_v2(
                     "error": {
                         "code": "WBP2_099",
                         "name": "TIMEOUT",
-                        "message": "Screenshot timed out"
+                        "message": "Screenshot timed out. The page may be very large or still rendering. Try: wait for page load, or capture a smaller viewport."
                     }
                 })),
             ),
@@ -2228,7 +2228,7 @@ async fn screenshot_v2(
                 "error": {
                     "code": "WBP2_099",
                     "name": "TIMEOUT",
-                    "message": "Screenshot timed out"
+                    "message": "Screenshot timed out. The page may be very large or still rendering. Try: wait for page load, or capture a smaller viewport."
                 }
             })),
         ),
@@ -2383,7 +2383,7 @@ async fn goal_execute(
                         "error": {
                             "code": "WBP2_099",
                             "name": "TIMEOUT",
-                            "message": "Navigation timed out"
+                            "message": "Navigation timed out. The page may be slow or unreachable. Try: check URL, increase timeout_ms, or use wait_for='load' instead of 'stable'."
                         }
                     })),
                 ),
@@ -2538,7 +2538,7 @@ async fn goal_execute(
                         "error": {
                             "code": "WBP2_099",
                             "name": "TIMEOUT",
-                            "message": "Extraction timed out"
+                            "message": "Extraction timed out. The selector may not match any elements. Try: take a snapshot to verify page content, check the CSS selector, or increase timeout."
                         }
                     })),
                 ),
@@ -2614,7 +2614,7 @@ async fn goal_execute(
                         "error": {
                             "code": "WBP2_099",
                             "name": "TIMEOUT",
-                            "message": "Wait timed out"
+                            "message": "Wait condition not met within timeout. The element may not exist on this page. Try: check the selector, increase timeout_ms, or take a screenshot to verify page state."
                         }
                     })),
                 ),
@@ -2685,7 +2685,7 @@ async fn goal_execute(
                             "error": {
                                 "code": "WBP2_099",
                                 "name": "TIMEOUT",
-                                "message": "Screenshot timed out"
+                                "message": "Screenshot timed out. The page may be very large or still rendering. Try: wait for page load, or capture a smaller viewport."
                             }
                         })),
                     ),
@@ -2755,7 +2755,7 @@ async fn goal_execute(
                         "error": {
                             "code": "WBP2_099",
                             "name": "TIMEOUT",
-                            "message": "Screenshot timed out"
+                            "message": "Screenshot timed out. The page may be very large or still rendering. Try: wait for page load, or capture a smaller viewport."
                         }
                     })),
                 ),
@@ -2828,7 +2828,7 @@ async fn goal_execute(
                         "error": {
                             "code": "WBP2_099",
                             "name": "TIMEOUT",
-                            "message": "Execution timed out"
+                            "message": "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms."
                         }
                     })),
                 ),

@@ -24,7 +24,10 @@ pub fn run(
     let b64 = resp.body.get("image")
         .or_else(|| resp.body.get("data"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| WbError::general("No image data in response"))?;
+        .ok_or_else(|| WbError::general(
+            "No image data in response. The page may not have loaded yet.\n\
+             Try: 1) wb open <url> first  2) wb wait \"body\" to ensure page is ready  3) Retry"
+        ))?;
 
     let image_data = base64_decode(b64)
         .map_err(|e| WbError::general(format!("Base64 decode error: {e}")))?;

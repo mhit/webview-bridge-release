@@ -397,7 +397,10 @@ impl SessionManager {
         let mut sessions = self.sessions.lock().unwrap();
 
         if sessions.len() >= self.max_sessions {
-            return Err("Maximum session limit reached".to_string());
+            return Err(format!(
+                "Maximum session limit reached ({}/{}). Release unused sessions: wb session release <name> or POST /session/release",
+                sessions.len(), self.max_sessions
+            ));
         }
 
         let id = Uuid::new_v4().to_string();
@@ -464,7 +467,7 @@ impl SessionManager {
 
         // Initialize WebView2
         if let Err(e) = webview.initialize(&user_data_folder) {
-            tracing::error!("[Session:{}] Failed to initialize WebView2: {:?}", id, e);
+            tracing::error!("[Session:{}] Failed to initialize WebView2: {:?}. Ensure WebView2 Runtime is installed (comes with Microsoft Edge). Install: winget install Microsoft.EdgeWebView2Runtime", id, e);
             if let Some(handle) = sessions.lock().unwrap().get(&id) {
                 *handle.status.lock().unwrap() = SessionStatus::Error;
             }

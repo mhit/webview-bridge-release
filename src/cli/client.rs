@@ -134,21 +134,33 @@ impl WbClient {
     fn map_ureq_error(e: ureq::Error) -> WbError {
         match e {
             ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => {
-                WbError::auth("Authentication failed. Set WB_TOKEN or use --token.")
+                WbError::auth(
+                    "Authentication failed. Run: wb auth save <TOKEN>\n\
+                     The token is displayed when the server starts. You can also set WB_TOKEN env var."
+                )
             }
             ureq::Error::Status(code, resp) => {
                 let msg = resp.into_string().unwrap_or_default();
                 if msg.contains("SESSION_NOT_FOUND") {
-                    WbError::session("Session not found. Run: wb session acquire")
+                    WbError::session("Session not found. Run: wb session acquire <name>")
+                } else if msg.contains("Session is not acquired") {
+                    WbError::session("Session exists but is not acquired. Run: wb session acquire <name>")
+                } else if msg.contains("SESSION_LIMIT") {
+                    WbError::general("Maximum session limit reached. Release unused sessions: wb session release <name>")
                 } else {
                     WbError::general(format!("HTTP {code}: {msg}"))
                 }
             }
             ureq::Error::Transport(t) => {
-                if t.to_string().contains("timed out") {
-                    WbError::timeout("Request timed out")
+                let detail = t.to_string();
+                if detail.contains("timed out") {
+                    WbError::timeout("Request timed out. The server may be overloaded. Try again or increase timeout.")
                 } else {
-                    WbError::connection(format!("Cannot connect to server: {t}"))
+                    WbError::connection(format!(
+                        "Cannot connect to server at {}. Is the server running?\n\
+                         Check: 1) Server is started  2) Host/port is correct  3) Firewall allows access",
+                        detail
+                    ))
                 }
             }
         }
