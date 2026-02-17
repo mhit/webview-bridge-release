@@ -14,8 +14,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.5.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.9.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4" alt="Platform">
+  <img src="https://img.shields.io/badge/CLI-Windows%20%7C%20Linux%20%7C%20macOS-brightgreen" alt="CLI">
   <img src="https://img.shields.io/badge/protocol-MCP-purple" alt="MCP">
   <img src="https://img.shields.io/badge/engine-WebView2%20%2B%20CDP-orange" alt="Engine">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
@@ -92,6 +93,8 @@ HTML を LLM に丸投げしない。MCP サーバー側でページを**視覚�
 | **セッション維持** | 単発実行が基本 | 単発実行が基本 | **WebView2 常時起動 + 永続ログイン** |
 | **ボット対策** | なし (検知されやすい) | 人間らしさは有り | **自律的 CAPTCHA 対応 + 自己復旧** |
 | **推論コスト** | 高 (都度 LLM 往復) | 高 (画像を毎回送信) | **低 (MCP 側で前処理)** |
+| **CLI** | なし | なし | **クロスプラットフォーム CLI (`wb`)** |
+| **iframe 操作** | 制限あり | 制限あり | **CDP ベースの完全な iframe サポート** |
 
 <p align="center">
   <img src="docs/slides/slide-07.png" alt="比較分析" width="680">
@@ -127,9 +130,12 @@ WebView Bridge が目指すのは、人間がスクリプトを書き、機械�
 - ページ遷移・クリック・入力・スクロール
 - スクリーンショット・DOM キャプチャ
 - 構造化データ抽出
-- ネットワーク監視
+- ネットワーク監視 (リクエスト/レスポンスキャプチャ)
+- CDP iframe サポート (フレーム内要素の操作・キャプチャ)
 - AI による自律ブラウジング (Agentic モード)
 - システムトレイ常駐・バックグラウンド動作
+- **`wb` CLI** — トークン効率型のクロスプラットフォーム CLI (Windows / Linux / macOS)
+- 自動アップデート (`wb update`)
 
 ---
 
@@ -163,7 +169,7 @@ HTTP サーバーのバインドアドレス・ポート・最大セッション
 
 ### MCP ツール一覧
 
-利用可能な 9 つの MCP ツールとそのパラメータを確認できます。
+利用可能な MCP ツールとそのパラメータを確認できます。
 
 ![MCPツール](docs/screenshots/05-mcp-tools.png)
 
@@ -173,20 +179,148 @@ HTTP サーバーのバインドアドレス・ポート・最大セッション
 
 ### インストーラー (推奨)
 
-1. [Releases](https://github.com/mhit/webview-bridge-release/releases) から `WebViewBridge-3.5.0-Setup.exe` をダウンロード
+1. [Releases](https://github.com/mhit/webview-bridge-release/releases) から最新の `WebViewBridge-Setup.exe` をダウンロード
 2. インストーラーを実行
 3. インストール完了後、自動的にシステムトレイに常駐
 
 ### 前提条件
 
-- **Windows 10/11** (64-bit)
-- **WebView2 Runtime** - 通常 Microsoft Edge と共にインストール済み。未インストールの場合、インストーラが `winget` 経由で自動インストールを試みます。
+- **Windows 10/11** (64-bit) — サーバー
+- **WebView2 Runtime** — 通常 Microsoft Edge と共にインストール済み。未インストールの場合、インストーラが `winget` 経由で自動インストールを試みます。
 
 ---
 
-## 使い方
+## wb CLI
 
-### 起動
+`wb` は WebView Bridge のクロスプラットフォーム CLI です。MCP を使わずに、ターミナルから直接ブラウザを操作できます。AI エージェントのツールチェーンとしても最適化されています。
+
+### インストール
+
+[Releases](https://github.com/mhit/webview-bridge-release/releases) からプラットフォームに対応するバイナリをダウンロード:
+
+| プラットフォーム | バイナリ名 |
+|---|---|
+| Windows | `wb-windows.exe` |
+| Linux (x86_64) | `wb-linux` |
+| macOS (Apple Silicon) | `wb-macos` |
+
+ダウンロード後、PATH の通った場所に `wb` としてリネーム配置してください。
+
+```bash
+# Linux / macOS
+chmod +x wb-linux
+mv wb-linux ~/.local/bin/wb
+
+# Windows (PowerShell)
+Rename-Item wb-windows.exe wb.exe
+# wb.exe を PATH の通ったディレクトリに配置
+```
+
+### 初期設定
+
+```bash
+# サーバーの認証トークンを保存 (サーバー起動時にコンソールに表示される)
+wb auth save <TOKEN>
+
+# リモートサーバーに接続する場合
+wb --host http://192.168.1.100:9400 status
+# または環境変数で指定
+export WB_HOST=http://192.168.1.100:9400
+export WB_TOKEN=<TOKEN>
+```
+
+### コマンド一覧
+
+| コマンド | 説明 | 例 |
+|---|---|---|
+| `wb status` | サーバーの稼働状態とセッション一覧 | `wb status` |
+| `wb session acquire` | セッションを作成/再利用 | `wb session acquire mysite` |
+| `wb session release` | セッションを解放 | `wb session release mysite` |
+| `wb session list` | 全セッション一覧 | `wb session list` |
+| `wb open` | URL に遷移 | `wb open https://example.com -s mysite` |
+| `wb snapshot` | ページの操作可能要素をテキスト表示 | `wb snapshot -s mysite` |
+| `wb click` | 要素をクリック | `wb click e3 -s mysite` |
+| `wb type` | テキストを入力 | `wb type e5 "検索テキスト" -s mysite` |
+| `wb screenshot` | スクリーンショットを保存 | `wb screenshot -s mysite` |
+| `wb execute` | JavaScript を実行 | `wb execute "document.title" -s mysite` |
+| `wb scroll` | ページをスクロール | `wb scroll down -s mysite` |
+| `wb wait` | 要素/条件を待機 | `wb wait "#result" -s mysite` |
+| `wb select` | ドロップダウンを選択 | `wb select e7 "Tokyo" -s mysite` |
+| `wb extract` | 構造化データを抽出 | `wb extract ".item" -F "name=h3,price=.cost"` |
+| `wb frames` | ページ内の全 iframe を一覧 | `wb frames -s mysite` |
+| `wb cookies get` | Cookie を取得 | `wb cookies get -s mysite` |
+| `wb cookies set` | Cookie を設定 | `wb cookies set cookies.json -s mysite` |
+| `wb cookies import` | ブラウザから Cookie をインポート | `wb cookies import -b chrome -d example.com` |
+| `wb auth save` | 認証トークンを保存 | `wb auth save abc123` |
+| `wb update` | CLI を最新版に更新 | `wb update` |
+
+### スナップショットと要素参照 (e1, e2...)
+
+`wb snapshot` はページの操作可能要素をトークン効率の良いテキスト形式で表示します。各要素に `e1`, `e2`, `e3`... の参照IDが付与され、後続のコマンドでそのまま使えます。
+
+```bash
+$ wb snapshot -s demo
+[e1] link "Home" href="/"
+[e2] link "About" href="/about"
+[e3] button "Search"
+[e4] input[type=text] placeholder="Search..."
+[e5] link "Login" href="/login"
+
+$ wb click e3 -s demo        # e3 (Search ボタン) をクリック
+$ wb type e4 "AI" -s demo    # e4 (検索ボックス) にテキスト入力
+```
+
+### iframe 操作 (`--frame`)
+
+`--frame` フラグで iframe 内の要素を操作できます。URL の一部、フレーム名、またはフレームIDで指定します。
+
+```bash
+# iframe 一覧を確認
+$ wb frames -s demo
+[0] "ad-frame" https://ads.example.com/banner
+[1] "content" https://embed.example.com/widget
+
+# iframe 内のスナップショットを取得
+$ wb snapshot -s demo --frame "embed.example"
+
+# iframe 内の要素をクリック
+$ wb click e2 -s demo --frame "content"
+
+# iframe のスクリーンショットを取得
+$ wb screenshot -s demo --frame "content"
+```
+
+### グローバルフラグ
+
+| フラグ | 環境変数 | 説明 |
+|---|---|---|
+| `--host <URL>` | `WB_HOST` | サーバーアドレス (デフォルト: `http://127.0.0.1:9400`) |
+| `--token <TOKEN>` | `WB_TOKEN` | Bearer 認証トークン |
+| `--json` | — | JSON 形式で出力 |
+| `--quiet` / `-q` | — | ファイルパスのみ出力 |
+| `--no-file` | — | ファイル保存せず stdout に出力 |
+| `--no-update-check` | `WB_NO_UPDATE_CHECK` | 起動時の自動アップデートチェックを無効化 |
+
+### 自動アップデート
+
+`wb` は起動時にバックグラウンドで最新バージョンをチェックします (24時間キャッシュ)。新しいバージョンがある場合、stderr に通知が表示されます。
+
+```bash
+# 手動でアップデート
+$ wb update
+Current: v3.8.0 → Latest: v3.9.0
+Downloading wb-v3.9.0-x86_64-unknown-linux-gnu... 4.2 MB
+Updated successfully! Restart to use v3.9.0.
+
+# チェックのみ (ダウンロードしない)
+$ wb update --check
+```
+
+---
+
+## サーバー起動
+
+### GUI (推奨)
 
 インストーラーでインストールした場合、スタートメニューまたはデスクトップのショートカットから起動できます。
 起動するとシステムトレイにアイコンが表示されます。
@@ -194,15 +328,30 @@ HTTP サーバーのバインドアドレス・ポート・最大セッション
 - **右クリック → ダッシュボードを開く**: ブラウザでダッシュボードを表示
 - **右クリック → 終了**: サーバーを停止
 
-### コマンドラインオプション
+### コマンドライン
 
 ```
 webview-bridge-rust.exe [OPTIONS]
 
 Options:
-  --bind <IP>       バインドアドレス (デフォルト: 0.0.0.0)
-  --port <PORT>     ポート番号 (デフォルト: 9400)
+  --bind <IP>       バインドアドレス (デフォルト: config.toml の値 or 127.0.0.1)
+  --port <PORT>     ポート番号 (デフォルト: config.toml の値 or 9400)
+  --no-auth         認証を無効化
+  --mcp-stdio       MCP stdio モードで起動 (サーバーなし)
   --help, -h        ヘルプを表示
+```
+
+### 認証
+
+サーバー起動時に 32 文字のランダムな Bearer トークンが生成され、コンソールに表示されます。すべての API リクエストにこのトークンが必要です。
+
+```bash
+# config.toml で無効化する場合
+[server]
+no_auth = true
+
+# またはコマンドラインで
+webview-bridge-rust.exe --no-auth
 ```
 
 ---
@@ -246,12 +395,12 @@ MCP 設定ファイルに以下を追加してください:
 
 | ツール | 説明 |
 |--------|------|
-| `session` | セッション管理 (作成・削除・一覧・Cookie インポート) |
+| `session` | セッション管理 (作成・削除・一覧・クローン・Cookie インポート・デバイスエミュレーション) |
 | `navigate` | URL 遷移 (load/stable/networkidle/selector 待機) |
-| `interact` | ブラウザ操作 (click/type/scroll/hover/select/wait) |
-| `capture` | ページ状態キャプチャ (スクリーンショット・DOM・要素一覧) |
-| `extract` | 構造化データ抽出 (CSS セレクタベース) |
-| `execute` | JavaScript 実行 |
+| `interact` | ブラウザ操作 (click/type/scroll/hover/select/wait、`--frame` 対応) |
+| `capture` | ページ状態キャプチャ (スクリーンショット・DOM・要素一覧、`--frame` 対応) |
+| `extract` | 構造化データ抽出 (CSS セレクタベース、`--frame` 対応) |
+| `execute` | JavaScript 実行 (`--frame` 対応) |
 | `media` | メディア操作 (YouTube ダウンロード・画像収集) |
 | `agent` | AI 自律ブラウジング (ゴールベース) |
 | `network` | ネットワーク監視 (リクエスト/レスポンスキャプチャ) |
@@ -300,6 +449,19 @@ MCP 設定ファイルに以下を追加してください:
 
 > `human_mode: true` を指定すると、ベジェ曲線のマウス移動・タイプミス・ランダム遅延で人間らしい操作を行います。
 
+#### iframe 内の操作
+
+```json
+{
+  "tool": "interact",
+  "session": "demo",
+  "actions": [
+    {"type": "click", "target": "button.submit"}
+  ],
+  "frame": "embed.example.com"
+}
+```
+
 ---
 
 ## config.toml
@@ -309,47 +471,82 @@ MCP 設定ファイルに以下を追加してください:
 
 ```toml
 [server]
-bind = "0.0.0.0"
-port = 9400
-max_sessions = 10
+bind = "127.0.0.1"        # バインドアドレス
+port = 9400                # ポート番号
+max_sessions = 10          # 最大同時セッション数
+no_auth = false            # true で認証を無効化
 
 [ai]
-enabled = false
-provider = "ollama"       # "ollama" or "gemini"
-model = "gemma3:12b"      # Ollama のモデル名
-# api_key = "your-key"    # Gemini 使用時に必要
+enabled = true
+provider = "gemini"        # "gemini" or "ollama"
+model = "gemini-1.5-flash" # モデル名
+# api_key = "your-key"     # Gemini 使用時に必要
+# ollama_host = "http://localhost:11434"
 # timeout_ms = 30000
 # daily_budget_usd = 1.0
 
 [session]
-# default_ttl_hours = 168  # セッション有効期間 (デフォルト: 1週間)
+default_headless = false   # ヘッドレスモード
+default_width = 1280       # デフォルトウィンドウ幅
+default_height = 720       # デフォルトウィンドウ高さ
+timeout_seconds = 0        # セッションタイムアウト (0=無制限)
+persist_profiles = true    # プロファイルの永続化
 
 [media]
-# download_dir = "downloads"
+# download_dir = "path"            # ダウンロード保存先
+# screenshots_dir = "path"         # スクリーンショット保存先
+# max_download_size = 0            # 最大ダウンロードサイズ (0=無制限)
+default_video_quality = "hd"       # 動画品質 (best/hd/sd/low)
 ```
+
+### データディレクトリ構造
+
+```
+%APPDATA%\webview-bridge\
+├── config.toml              設定ファイル
+├── sessions.json            セッション永続化メタデータ
+├── profiles/
+│   └── {profile_name}/
+│       ├── (WebView2 userdata)  ブラウザデータ (Cookie, Cache)
+│       └── screenshots/         スクリーンショット保存
+├── downloads/               ダウンロード出力
+├── subtitles/               字幕抽出出力
+└── analysis/                動画分析出力
+```
+
+環境変数 `WEBVIEW_BRIDGE_DATA_PATH` でデータディレクトリを変更できます。
 
 ---
 
 ## REST API
 
-MCP 経由でなく、REST API を直接利用することもできます。
+MCP 経由でなく、REST API を直接利用することもできます。認証が有効な場合は `Authorization: Bearer <TOKEN>` ヘッダーが必要です。
 
 ```bash
-# ヘルスチェック
+# ヘルスチェック (認証不要)
 curl http://localhost:9400/health
 
 # セッション作成
 curl -X POST http://localhost:9400/session/acquire \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-session"}'
 
 # セッション一覧
-curl http://localhost:9400/session/list
+curl http://localhost:9400/session/list \
+  -H "Authorization: Bearer YOUR_TOKEN"
 
-# MCP ツール呼び出し
-curl -X POST http://localhost:9400/mcp \
+# スクリーンショット
+curl -X POST http://localhost:9400/screenshot \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"tool": "navigate", "session": "my-session", "url": "https://example.com"}'
+  -d '{"session": "my-session"}'
+
+# iframe 一覧
+curl -X POST http://localhost:9400/frames \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"session": "my-session"}'
 ```
 
 ---
@@ -359,6 +556,32 @@ curl -X POST http://localhost:9400/mcp \
 1. システムトレイのアイコンを右クリック → **終了**
 2. Windows の **設定 → アプリ → WebView Bridge** からアンインストール
 3. アンインストーラーで「セッションデータも削除」を選択すると Cookie 等も削除されます
+
+---
+
+## 更新履歴
+
+### v3.9.0
+- CDP iframe サポート (`wb frames`, 全コマンドに `--frame` フラグ)
+- MCP ツールに `frame` パラメータ追加 (interact, capture, extract, execute)
+
+### v3.8.0
+- stale セッションの自動復旧 (V1 ヘルスチェック)
+
+### v3.7.x
+- `wb update` コマンド (自動アップデート)
+- クロスプラットフォーム CLI リリース (Windows / Linux / macOS)
+- NSIS Windows インストーラー
+
+### v3.6.0
+- 管理ダッシュボード全面刷新
+- 認証トグル、セッションクリーンアップ
+
+### v3.5.0
+- MCP v3 プロトコル対応
+- Visual Interactivity Analysis
+- human_mode (ベジェ曲線マウス移動)
+- Cookie 永続化セッション
 
 ---
 
