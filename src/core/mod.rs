@@ -20,6 +20,7 @@ pub mod session_v2;
 pub mod wait_v2;
 pub mod websocket;
 pub mod network;
+pub mod upload;
 
 // Export Network Types
 pub use network::*;
@@ -162,6 +163,14 @@ pub enum AppCommand {
         frame: String,
         resp_tx: oneshot::Sender<Result<String, String>>,
     },
+    // Form file injection via CDP
+    FormInjectFile {
+        id: String,
+        selector: String,
+        file_paths: Vec<String>,
+        frame: Option<String>,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 /// Session thread command enum
@@ -281,6 +290,13 @@ pub enum SessionCommand {
     ExecuteInFrame {
         script: String,
         frame: String,
+        resp_tx: oneshot::Sender<Result<String, String>>,
+    },
+    // Form file injection via CDP
+    FormInjectFile {
+        selector: String,
+        file_paths: Vec<String>,
+        frame: Option<String>,
         resp_tx: oneshot::Sender<Result<String, String>>,
     },
 }
@@ -953,6 +969,19 @@ impl SessionManager {
                             let result = webview.execute_in_frame(&script, &frame);
                             let _ = resp_tx.send(result);
                         }
+                        SessionCommand::FormInjectFile { selector, file_paths, frame, resp_tx } => {
+                            tracing::info!("[Session:{}] FormInjectFile: selector={}, files={:?}", id, selector, file_paths);
+                            if !webview.is_ready() {
+                                let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
+                                continue;
+                            }
+                            let result = if let Some(ref frame_spec) = frame {
+                                webview.set_file_input_files_in_frame(&selector, &file_paths, frame_spec)
+                            } else {
+                                webview.set_file_input_files(&selector, &file_paths)
+                            };
+                            let _ = resp_tx.send(result);
+                        }
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
@@ -1502,6 +1531,30 @@ impl SessionManager {
         match rx.await {
             Ok(result) => result,
             Err(_) => Err("ExecuteInFrame response channel closed".to_string()),
+        }
+    }
+
+    /// Inject file(s) into a WebView file input via CDP DOM.setFileInputFiles
+    pub async fn form_inject_file(&self, id: &str, selector: &str, file_paths: &[String], frame: Option<String>) -> Result<String, String> {
+        let handle = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session not found: {}", id))?
+        };
+
+        let (tx, rx) = oneshot::channel();
+        handle.send_command(SessionCommand::FormInjectFile {
+            selector: selector.to_string(),
+            file_paths: file_paths.to_vec(),
+            frame,
+            resp_tx: tx,
+        })?;
+
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => Err("FormInjectFile response channel closed".to_string()),
         }
     }
 

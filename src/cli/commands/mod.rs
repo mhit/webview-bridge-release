@@ -13,4 +13,6 @@ pub mod snapshot;
 pub mod status;
 pub mod type_cmd;
 pub mod update;
+pub mod upload;
+pub mod inject_file;
 pub mod wait;

@@ -2217,6 +2217,104 @@ impl WebViewInstance {
         }
     }
 
+    /// Inject files into a <input type="file"> element via CDP DOM.setFileInputFiles
+    pub fn set_file_input_files(&self, selector: &str, file_paths: &[String]) -> Result<String, String> {
+        // Step 1: DOM.getDocument to get root nodeId
+        let doc_result = self.call_cdp_sync("DOM.getDocument", r#"{"depth": 0}"#)?;
+        let doc: serde_json::Value = serde_json::from_str(&doc_result)
+            .map_err(|e| format!("Failed to parse DOM.getDocument result: {e}"))?;
+        let root_node_id = doc["root"]["nodeId"].as_i64()
+            .ok_or_else(|| "No root nodeId in DOM.getDocument response".to_string())?;
+
+        // Step 2: DOM.querySelector to find the target element
+        let query_params = serde_json::json!({
+            "nodeId": root_node_id,
+            "selector": selector,
+        });
+        let query_result = self.call_cdp_sync("DOM.querySelector", &query_params.to_string())?;
+        let query: serde_json::Value = serde_json::from_str(&query_result)
+            .map_err(|e| format!("Failed to parse DOM.querySelector result: {e}"))?;
+        let node_id = query["nodeId"].as_i64()
+            .ok_or_else(|| format!("Element not found for selector: {selector}"))?;
+        if node_id == 0 {
+            return Err(format!("Element not found for selector: {selector}"));
+        }
+
+        // Step 3: DOM.setFileInputFiles to inject files
+        let set_params = serde_json::json!({
+            "nodeId": node_id,
+            "files": file_paths,
+        });
+        let result = self.call_cdp_sync("DOM.setFileInputFiles", &set_params.to_string())?;
+        tracing::info!("[FormInject] Set {} file(s) on '{}' (nodeId={})", file_paths.len(), selector, node_id);
+        Ok(result)
+    }
+
+    /// Inject files into a <input type="file"> inside an iframe
+    pub fn set_file_input_files_in_frame(&self, selector: &str, file_paths: &[String], frame_spec: &str) -> Result<String, String> {
+        let frame_id = self.resolve_frame_id(frame_spec)?;
+
+        // Step 1: DOM.getDocument with depth to include iframes
+        let doc_result = self.call_cdp_sync("DOM.getDocument", r#"{"depth": -1, "pierce": true}"#)?;
+        let doc: serde_json::Value = serde_json::from_str(&doc_result)
+            .map_err(|e| format!("Failed to parse DOM.getDocument result: {e}"))?;
+        let root_node_id = doc["root"]["nodeId"].as_i64()
+            .ok_or_else(|| "No root nodeId in DOM.getDocument response".to_string())?;
+
+        // Step 2: Find frame owner element, then querySelector within it
+        // Use Runtime.evaluate in the frame context to find the element's backendNodeId
+        let create_params = serde_json::json!({
+            "frameId": frame_id,
+            "worldName": "webview-bridge-inject"
+        });
+        let world_result = self.call_cdp_sync("Page.createIsolatedWorld", &create_params.to_string())?;
+        let world: serde_json::Value = serde_json::from_str(&world_result)
+            .map_err(|e| format!("Failed to create isolated world: {e}"))?;
+        let context_id = world["executionContextId"].as_i64()
+            .ok_or_else(|| "No executionContextId from createIsolatedWorld".to_string())?;
+
+        // Use Runtime.evaluate to get the element in the frame
+        let js = format!(
+            r#"(() => {{ const el = document.querySelector("{}"); return el ? true : false; }})()"#,
+            selector.replace('"', "\\\"")
+        );
+        let eval_params = serde_json::json!({
+            "expression": js,
+            "contextId": context_id,
+            "returnByValue": true,
+        });
+        let eval_result = self.call_cdp_sync("Runtime.evaluate", &eval_params.to_string())?;
+        let eval_val: serde_json::Value = serde_json::from_str(&eval_result)
+            .map_err(|e| format!("Failed to evaluate in frame: {e}"))?;
+        let found = eval_val["result"]["value"].as_bool().unwrap_or(false);
+        if !found {
+            return Err(format!("Element '{}' not found in frame '{}'", selector, frame_spec));
+        }
+
+        // Use DOM.querySelector on the frame's document node
+        // First, find the frame's document node by traversing from root
+        let query_params = serde_json::json!({
+            "nodeId": root_node_id,
+            "selector": selector,
+        });
+        let query_result = self.call_cdp_sync("DOM.querySelector", &query_params.to_string())?;
+        let query: serde_json::Value = serde_json::from_str(&query_result)
+            .map_err(|e| format!("Failed to parse DOM.querySelector result: {e}"))?;
+        let node_id = query["nodeId"].as_i64()
+            .ok_or_else(|| format!("Element not found in frame for selector: {selector}"))?;
+        if node_id == 0 {
+            return Err(format!("Element not found in frame for selector: {selector}"));
+        }
+
+        let set_params = serde_json::json!({
+            "nodeId": node_id,
+            "files": file_paths,
+        });
+        let result = self.call_cdp_sync("DOM.setFileInputFiles", &set_params.to_string())?;
+        tracing::info!("[FormInject] Set {} file(s) on '{}' in frame '{}' (nodeId={})", file_paths.len(), selector, frame_spec, node_id);
+        Ok(result)
+    }
+
     /// Execute a script in a specific frame via CDP Runtime.evaluate
     /// Uses Page.createIsolatedWorld to get an executionContextId for the frame,
     /// then calls Runtime.evaluate with that contextId.

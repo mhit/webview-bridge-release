@@ -2249,6 +2249,112 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                 Err(e) => McpToolResponse::error("COLLECT_IMAGES_FAILED", &e),
             }
         }
+        MediaAction::Upload { data, filename, mime_type: _ } => {
+            use base64::{Engine as _, engine::general_purpose::STANDARD};
+            use crate::core::upload;
+
+            let bytes = match STANDARD.decode(data.trim()) {
+                Ok(b) => b,
+                Err(e) => return McpToolResponse::error("UPLOAD_DECODE_ERROR", &format!("Base64 decode error: {e}")),
+            };
+
+            if bytes.len() as u64 > upload::MAX_UPLOAD_SIZE {
+                return McpToolResponse::error("UPLOAD_TOO_LARGE", &format!("File too large: {} bytes (max {})", bytes.len(), upload::MAX_UPLOAD_SIZE));
+            }
+
+            let dir = upload::uploads_dir(&req.session);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                return McpToolResponse::error("UPLOAD_DIR_ERROR", &format!("Failed to create upload dir: {e}"));
+            }
+
+            let stored = upload::sanitize_and_store_filename(&filename);
+            let file_path = dir.join(&stored);
+            if let Err(e) = std::fs::write(&file_path, &bytes) {
+                return McpToolResponse::error("UPLOAD_WRITE_ERROR", &format!("File write error: {e}"));
+            }
+
+            let url = format!("/uploads/{}/{}", req.session, stored);
+            McpToolResponse::success_json(serde_json::json!({
+                "success": true,
+                "filename": filename,
+                "stored_filename": stored,
+                "size": bytes.len(),
+                "url": url,
+                "file_path": file_path.to_string_lossy(),
+            }))
+        }
+        MediaAction::InjectFile { selector, file, frame } => {
+            use crate::core::upload;
+
+            // Resolve file path
+            let file_path = if file.starts_with("/uploads/") {
+                let parts: Vec<&str> = file.trim_start_matches("/uploads/").splitn(2, '/').collect();
+                if parts.len() != 2 {
+                    return McpToolResponse::error("INVALID_FILE_URL", "Invalid upload URL format");
+                }
+                upload::uploads_dir(parts[0]).join(parts[1]).to_string_lossy().to_string()
+            } else {
+                file.clone()
+            };
+
+            let win_path = file_path.replace('/', "\\");
+
+            // Send CDP command via AppCommand
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            let cmd = crate::core::AppCommand::FormInjectFile {
+                id: req.session.clone(),
+                selector: selector.clone(),
+                file_paths: vec![win_path],
+                frame,
+                resp_tx,
+            };
+
+            if state.cmd_tx.send(cmd).is_err() {
+                return McpToolResponse::error("SESSION_COMMAND_ERROR", "Failed to send command");
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_secs(10), resp_rx).await {
+                Ok(Ok(Ok(result))) => McpToolResponse::success_json(serde_json::json!({
+                    "success": true,
+                    "selector": selector,
+                    "file": file_path,
+                    "method": "cdp_dom_set_file_input_files",
+                    "result": result,
+                })),
+                Ok(Ok(Err(e))) => McpToolResponse::error("INJECT_FAILED", &e),
+                Ok(Err(_)) => McpToolResponse::error("INJECT_TIMEOUT", "Channel closed"),
+                Err(_) => McpToolResponse::error("INJECT_TIMEOUT", "Timed out waiting for file injection"),
+            }
+        }
+        MediaAction::ListUploads => {
+            use crate::core::upload;
+
+            let dir = upload::uploads_dir(&req.session);
+            let mut files = Vec::new();
+
+            if dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.is_file() {
+                                let fname = entry.file_name().to_string_lossy().to_string();
+                                files.push(serde_json::json!({
+                                    "filename": fname,
+                                    "size": meta.len(),
+                                    "url": format!("/uploads/{}/{}", req.session, fname),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            McpToolResponse::success_json(serde_json::json!({
+                "session": req.session,
+                "files": files,
+                "count": files.len(),
+            }))
+        }
     }
 }
 
@@ -2864,7 +2970,11 @@ pub fn get_mcp_tools() -> serde_json::Value {
                         "type": "object",
                         "description": "Media action to perform",
                         "properties": {
-                            "type": { "type": "string", "enum": ["youtube_download", "youtube_subtitles", "video_analyze", "collect_images"], "description": "'youtube_subtitles' = get captions/transcript from current YouTube page. 'youtube_download' = download video file. 'collect_images' = list all images on current page with metadata." }
+                            "type": { "type": "string", "enum": ["youtube_download", "youtube_subtitles", "video_analyze", "collect_images", "upload", "inject_file", "list_uploads"], "description": "'youtube_subtitles' = get captions/transcript. 'youtube_download' = download video. 'collect_images' = list images. 'upload' = upload file (base64 data+filename). 'inject_file' = inject uploaded file into <input type=file> via CDP. 'list_uploads' = list uploaded files for session." },
+                            "data": { "type": "string", "description": "Base64-encoded file data (for 'upload' action)" },
+                            "filename": { "type": "string", "description": "Filename (for 'upload' action)" },
+                            "selector": { "type": "string", "description": "CSS selector for file input (for 'inject_file' action, default: input[type=file])" },
+                            "file": { "type": "string", "description": "Upload URL or absolute path (for 'inject_file' action)" }
                         },
                         "required": ["type"]
                     }

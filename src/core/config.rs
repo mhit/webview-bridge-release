@@ -337,6 +337,16 @@ impl AppConfig {
     pub fn profile_screenshots_dir(name: &str) -> PathBuf {
         Self::profile_dir(name).join("screenshots")
     }
+
+    /// Base directory for uploads: {data_dir}/uploads/
+    pub fn uploads_dir() -> PathBuf {
+        Self::data_dir().join("uploads")
+    }
+
+    /// Uploads directory for a session: {data_dir}/uploads/{session}/
+    pub fn session_uploads_dir(session: &str) -> PathBuf {
+        Self::uploads_dir().join(session)
+    }
 }
 
 // ============================================================================

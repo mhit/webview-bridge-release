@@ -377,6 +377,28 @@ pub enum MediaAction {
         #[serde(default)]
         max_images: Option<usize>,
     },
+    /// Upload a file (base64-encoded data) to session storage
+    Upload {
+        /// Base64-encoded file data
+        data: String,
+        /// Filename
+        filename: String,
+        /// MIME type (auto-detected if omitted)
+        #[serde(default)]
+        mime_type: Option<String>,
+    },
+    /// Inject an uploaded file into a <input type="file"> element
+    InjectFile {
+        /// CSS selector for the file input
+        selector: String,
+        /// Upload URL (e.g. /uploads/session/uuid_file.pdf) or absolute path
+        file: String,
+        /// Target iframe
+        #[serde(default)]
+        frame: Option<String>,
+    },
+    /// List uploaded files for the session
+    ListUploads,
 }
 
 // ============================================================================

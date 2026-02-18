@@ -155,6 +155,7 @@ async fn auth_middleware(req: Request, next: Next) -> impl IntoResponse {
     let path = req.uri().path();
     if matches!(path, "/" | "/favicon.ico" | "/assets/icon.png" | "/health")
         || path.starts_with("/media/screenshots/")
+        || path.starts_with("/uploads/")
     {
         return next.run(req).await;
     }
@@ -266,6 +267,14 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/download/trigger", post(download_trigger))
         .route("/download/status/:id", get(download_status))
         .route("/download/batch", post(download_batch))
+        // Upload API
+        .route("/upload", post(upload_file))
+        .route("/upload/base64", post(upload_base64))
+        .route("/uploads/:session", get(upload_list))
+        .route("/uploads/:session/:filename", get(upload_serve))
+        .route("/uploads/:session/:filename", delete(upload_delete))
+        // Form injection API
+        .route("/form/inject-file", post(form_inject_file))
         // Storage API
         .route("/storage/status", get(storage_status))
         .route("/storage/cleanup", post(storage_cleanup))
@@ -4331,6 +4340,372 @@ async fn mcp_v3_handler(
 /// GET /mcp/v3/tools - Get MCP v3 tool list (simple REST endpoint)
 async fn mcp_v3_tools_list() -> impl IntoResponse {
     Json(crate::mcp_v3::tools::get_mcp_tools())
+}
+
+// ============================================================================
+// Upload API
+// ============================================================================
+
+/// POST /upload - Multipart file upload
+async fn upload_file(
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
+    use crate::core::upload;
+
+    let mut session = String::new();
+    let mut filename_override: Option<String> = None;
+    let mut file_data: Option<(String, Vec<u8>)> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "session" => { session = field.text().await.unwrap_or_default(); }
+            "filename" => { filename_override = Some(field.text().await.unwrap_or_default()); }
+            "file" => {
+                let fname = field.file_name().unwrap_or("upload").to_string();
+                match field.bytes().await {
+                    Ok(bytes) => { file_data = Some((fname, bytes.to_vec())); }
+                    Err(e) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "success": false, "error": format!("Failed to read file: {e}")
+                        })));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Validate
+    if session.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": "Missing 'session' field"
+        })));
+    }
+    if let Err(e) = upload::validate_session_name(&session) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+    }
+
+    let (original_name, data) = match file_data {
+        Some(d) => d,
+        None => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false, "error": "Missing 'file' field"
+            })));
+        }
+    };
+
+    if data.len() as u64 > upload::MAX_UPLOAD_SIZE {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
+        })));
+    }
+
+    let filename = filename_override.as_deref().unwrap_or(&original_name);
+    save_upload_and_respond(&session, filename, &data)
+}
+
+/// POST /upload/base64 - Base64 JSON upload (for CLI/MCP)
+async fn upload_base64(
+    Json(request): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    use crate::core::upload;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let session = request.get("session").and_then(|v| v.as_str()).unwrap_or("");
+    let filename = request.get("filename").and_then(|v| v.as_str()).unwrap_or("upload");
+    let data_b64 = request.get("data").and_then(|v| v.as_str()).unwrap_or("");
+
+    if session.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": "Missing 'session' field"
+        })));
+    }
+    if let Err(e) = upload::validate_session_name(session) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+    }
+    if data_b64.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": "Missing 'data' field (base64-encoded)"
+        })));
+    }
+
+    let data = match STANDARD.decode(data_b64.trim()) {
+        Ok(d) => d,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false, "error": format!("Base64 decode error: {e}")
+            })));
+        }
+    };
+
+    if data.len() as u64 > upload::MAX_UPLOAD_SIZE {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
+        })));
+    }
+
+    save_upload_and_respond(session, filename, &data)
+}
+
+/// Common upload save logic
+fn save_upload_and_respond(session: &str, filename: &str, data: &[u8]) -> (StatusCode, Json<serde_json::Value>) {
+    use crate::core::upload;
+
+    let dir = upload::uploads_dir(session);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": format!("Failed to create upload dir: {e}")
+        })));
+    }
+
+    let stored_filename = upload::sanitize_and_store_filename(filename);
+    let file_path = dir.join(&stored_filename);
+    let mime_type = upload::detect_mime_type(filename);
+    let upload_id = stored_filename.split('_').next().unwrap_or("unknown").to_string();
+
+    if let Err(e) = std::fs::write(&file_path, data) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": format!("File write error: {e}")
+        })));
+    }
+
+    let url = format!("/uploads/{}/{}", session, stored_filename);
+
+    tracing::info!("[upload] Saved {} ({} bytes) → {}", stored_filename, data.len(), file_path.display());
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "success": true,
+        "upload_id": upload_id,
+        "filename": filename,
+        "stored_filename": stored_filename,
+        "size": data.len(),
+        "mime_type": mime_type,
+        "session": session,
+        "url": url,
+        "file_path": file_path.to_string_lossy(),
+    })))
+}
+
+/// GET /uploads/:session - List uploaded files for a session
+async fn upload_list(
+    Path(session): Path<String>,
+) -> impl IntoResponse {
+    use crate::core::upload;
+
+    if let Err(e) = upload::validate_session_name(&session) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+    }
+
+    let dir = upload::uploads_dir(&session);
+    let mut files = Vec::new();
+
+    if dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        let uploaded_at = meta.modified().ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_default())
+                            .unwrap_or_default();
+
+                        files.push(serde_json::json!({
+                            "filename": fname,
+                            "size": meta.len(),
+                            "mime_type": upload::detect_mime_type(&fname),
+                            "url": format!("/uploads/{}/{}", session, fname),
+                            "uploaded_at": uploaded_at,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by uploaded_at descending
+    files.sort_by(|a, b| {
+        let at_a = a["uploaded_at"].as_str().unwrap_or("");
+        let at_b = b["uploaded_at"].as_str().unwrap_or("");
+        at_b.cmp(at_a)
+    });
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "success": true,
+        "session": session,
+        "files": files,
+        "count": files.len(),
+    })))
+}
+
+/// GET /uploads/:session/:filename - Serve an uploaded file
+async fn upload_serve(
+    Path((session, filename)): Path<(String, String)>,
+) -> impl IntoResponse {
+    use axum::body::Body;
+    use axum::http::header;
+    use crate::core::upload;
+
+    // Security: prevent path traversal
+    if let Err(_) = upload::validate_session_name(&session) {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "application/json")],
+            Body::from(r#"{"error": "Invalid session"}"#)).into_response();
+    }
+    if let Err(_) = upload::validate_filename(&filename) {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "application/json")],
+            Body::from(r#"{"error": "Invalid filename"}"#)).into_response();
+    }
+
+    let filepath = upload::uploads_dir(&session).join(&filename);
+
+    match std::fs::read(&filepath) {
+        Ok(data) => {
+            let content_type = upload::detect_mime_type(&filename);
+            (StatusCode::OK, [(header::CONTENT_TYPE, content_type.as_str())],
+                Body::from(data)).into_response()
+        }
+        Err(e) => {
+            (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "application/json")],
+                Body::from(format!(r#"{{"error": "File not found: {e}"}}"#))).into_response()
+        }
+    }
+}
+
+/// DELETE /uploads/:session/:filename - Delete an uploaded file
+async fn upload_delete(
+    Path((session, filename)): Path<(String, String)>,
+) -> impl IntoResponse {
+    use crate::core::upload;
+
+    if let Err(e) = upload::validate_session_name(&session) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+    }
+    if let Err(e) = upload::validate_filename(&filename) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+    }
+
+    let filepath = upload::uploads_dir(&session).join(&filename);
+
+    if !filepath.exists() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "success": false, "error": "File not found"
+        })));
+    }
+
+    match std::fs::remove_file(&filepath) {
+        Ok(()) => {
+            tracing::info!("[upload] Deleted: {}", filepath.display());
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true, "deleted": filename
+            })))
+        }
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "success": false, "error": format!("Delete failed: {e}")
+            })))
+        }
+    }
+}
+
+// ============================================================================
+// Form Injection API
+// ============================================================================
+
+/// POST /form/inject-file - Inject uploaded file into a WebView file input
+async fn form_inject_file(
+    State(state): State<V2AppState>,
+    Json(request): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    use crate::core::upload;
+
+    let session = request.get("session").and_then(|v| v.as_str()).unwrap_or("default");
+    let selector = request.get("selector").and_then(|v| v.as_str()).unwrap_or("input[type=file]");
+    let file_ref = request.get("file").and_then(|v| v.as_str()).unwrap_or("");
+    let frame = request.get("frame").and_then(|v| v.as_str());
+
+    if file_ref.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false, "error": "Missing 'file' field (upload URL or absolute path)"
+        })));
+    }
+
+    // Resolve file path: if starts with /uploads/, resolve to filesystem path
+    let file_path = if file_ref.starts_with("/uploads/") {
+        let parts: Vec<&str> = file_ref.trim_start_matches("/uploads/").splitn(2, '/').collect();
+        if parts.len() != 2 {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false, "error": "Invalid upload URL format"
+            })));
+        }
+        let upload_session = parts[0];
+        let upload_filename = parts[1];
+        if let Err(e) = upload::validate_session_name(upload_session) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        }
+        if let Err(e) = upload::validate_filename(upload_filename) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        }
+        let path = upload::uploads_dir(upload_session).join(upload_filename);
+        if !path.exists() {
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+                "success": false, "error": "Uploaded file not found"
+            })));
+        }
+        path.to_string_lossy().to_string()
+    } else {
+        // Assume absolute filesystem path
+        let path = std::path::PathBuf::from(file_ref);
+        if !path.exists() {
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({
+                "success": false, "error": "File not found at specified path"
+            })));
+        }
+        file_ref.to_string()
+    };
+
+    // Use Windows-style path for CDP (backslashes)
+    let win_path = file_path.replace('/', "\\");
+
+    // Send command via AppCommand → session thread → CDP
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    let cmd = crate::core::AppCommand::FormInjectFile {
+        id: session.to_string(),
+        selector: selector.to_string(),
+        file_paths: vec![win_path.clone()],
+        frame: frame.map(|f| f.to_string()),
+        resp_tx,
+    };
+
+    if state.cmd_tx.send(cmd).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": "Failed to send command to session"
+        })));
+    }
+
+    match resp_rx.await {
+        Ok(Ok(result)) => {
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true,
+                "selector": selector,
+                "file": file_path,
+                "method": "cdp_dom_set_file_input_files",
+                "result": result,
+            })))
+        }
+        Ok(Err(e)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "success": false, "error": e,
+            })))
+        }
+        Err(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "success": false, "error": "Session command channel closed",
+            })))
+        }
+    }
 }
 
 #[cfg(test)]

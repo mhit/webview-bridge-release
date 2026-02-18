@@ -322,6 +322,38 @@ enum Command {
         action: AuthAction,
     },
 
+    /// Upload a file to session storage
+    Upload {
+        /// File path to upload
+        file: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Override filename
+        #[arg(long)]
+        filename: Option<String>,
+    },
+
+    /// Inject uploaded file into a form file input via CDP
+    InjectFile {
+        /// File URL (from upload response) or absolute path
+        file_url: String,
+
+        /// CSS selector for file input
+        #[arg(short = 'S', long, default_value = "input[type=file]")]
+        selector: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Target iframe
+        #[arg(long)]
+        frame: Option<String>,
+    },
+
     /// Check for and install CLI updates
     Update {
         /// Check only, don't download
@@ -491,6 +523,12 @@ fn main() -> ExitCode {
             AuthAction::Show => commands::auth::show(&opts),
             AuthAction::Clear => commands::auth::clear(&opts),
         },
+        Command::Upload { file, session, filename } => {
+            commands::upload::run(&client, &opts, &session, &file, filename.as_deref())
+        }
+        Command::InjectFile { file_url, selector, session, frame } => {
+            commands::inject_file::run(&client, &opts, &session, &file_url, &selector, frame.as_deref())
+        }
         Command::Update { check } => commands::update::run(check),
     };
 

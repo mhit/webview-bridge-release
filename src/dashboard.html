@@ -917,6 +917,14 @@
         .tst.warning { border-color: var(--ylw); }
         .tst.error { border-color: var(--red); }
 
+        /* Upload Dropzone */
+        .ul-drop {
+            border:2px dashed var(--bdr);border-radius:var(--radius-lg);padding:2rem;text-align:center;
+            cursor:pointer;transition:border-color .2s,background .2s;margin-top:.75rem;
+        }
+        .ul-drop:hover,.ul-drop.drag { border-color:var(--acc);background:rgba(0,212,255,.05); }
+        .ul-drop-inner { pointer-events:none; }
+
         /* Reduced motion */
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
@@ -945,6 +953,7 @@
                         id="n-sc">0</span></button>
                 <button class="nb" data-p="ss" type="button"><span class="i" aria-hidden="true">📸</span><span>スクリーンショット</span></button>
                 <button class="nb" data-p="dl" type="button"><span class="i" aria-hidden="true">📥</span><span>ダウンロード</span></button>
+                <button class="nb" data-p="ul" type="button"><span class="i" aria-hidden="true">📤</span><span>アップロード</span></button>
             </div>
             <div class="ng">
                 <div class="nl">設定</div>
@@ -1644,6 +1653,70 @@
                     <pre id="ai-img-result" class="result-pre">Ready...</pre>
                 </div>
             </div>
+
+            <!-- Uploads -->
+            <div id="pg-ul" class="pg">
+                <div class="ph">
+                    <div>
+                        <h1>アップロード</h1>
+                        <p>セッションストレージへのファイル管理</p>
+                    </div>
+                    <div class="bg-r"><button type="button" class="bn bn-s" onclick="loadUL()">🔄 更新</button></div>
+                </div>
+                <div class="sts" id="ul-stats"></div>
+                <!-- Upload Form -->
+                <div class="cd">
+                    <div class="ch"><h3>ファイルアップロード</h3></div>
+                    <div class="fr">
+                        <div class="fg"><label for="ul-sess">セッション</label>
+                            <select class="fi" id="ul-sess"></select></div>
+                    </div>
+                    <div id="ul-drop" class="ul-drop" tabindex="0" role="button" aria-label="ファイルをドロップまたはクリックして選択">
+                        <div class="ul-drop-inner">
+                            <div style="font-size:2rem">📤</div>
+                            <div>ファイルをドラッグ&ドロップ</div>
+                            <div style="color:var(--tx3);font-size:var(--text-xs)">またはクリックして選択（最大100MB）</div>
+                        </div>
+                        <input type="file" id="ul-file" multiple style="display:none">
+                    </div>
+                    <div id="ul-prog" style="display:none;margin-top:.5rem">
+                        <div style="background:var(--bg2);border-radius:4px;overflow:hidden;height:6px">
+                            <div id="ul-bar" style="height:100%;background:var(--acc);width:0%;transition:width .3s"></div>
+                        </div>
+                        <div id="ul-prog-text" style="font-size:var(--text-xs);color:var(--tx2);margin-top:.25rem"></div>
+                    </div>
+                </div>
+                <!-- Inject File -->
+                <div class="cd">
+                    <div class="ch"><h3>フォーム注入（CDP）</h3></div>
+                    <p style="color:var(--tx2);font-size:var(--text-sm);margin-bottom:.75rem">アップロード済みファイルを &lt;input type="file"&gt; に注入します</p>
+                    <div class="fr">
+                        <div class="fg"><label for="ij-sess">セッション</label>
+                            <select class="fi" id="ij-sess"></select></div>
+                        <div class="fg"><label for="ij-file">ファイルURL</label>
+                            <select class="fi" id="ij-file"><option value="">先にアップロードしてください</option></select></div>
+                        <div class="fg"><label for="ij-sel">CSSセレクタ</label>
+                            <input class="fi" id="ij-sel" value="input[type=file]"></div>
+                    </div>
+                    <button type="button" class="bn bn-p" onclick="doInject()">💉 フォーム注入</button>
+                </div>
+                <!-- File List -->
+                <div class="cd">
+                    <div class="ch"><h3>ファイル一覧</h3></div>
+                    <table class="tb">
+                        <caption class="sr-only">アップロードファイル一覧</caption>
+                        <thead>
+                            <tr>
+                                <th>ファイル名</th>
+                                <th>サイズ</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ul-t"></tbody>
+                    </table>
+                </div>
+            </div>
+
         </main>
     </div>
 
@@ -1728,7 +1801,7 @@
             document.querySelector(`.nb[data-p="${p}"]`)?.classList.add('on');
             document.querySelectorAll('.pg').forEach(pg => pg.classList.remove('on'));
             $('pg-' + p)?.classList.add('on');
-            if (p === 'sess') loadSess(); if (p === 'ss') loadSS(); if (p === 'dl') loadDL(); if (p === 'mcp') loadMCP();
+            if (p === 'sess') loadSess(); if (p === 'ss') loadSS(); if (p === 'dl') loadDL(); if (p === 'ul') loadUL(); if (p === 'mcp') loadMCP();
             if (p === 'auto') { loadAutoSess(); loadMacros(); loadGoalFlows(); } if (p === 'aitool') { loadAIUsage(); loadAIToolSess(); }
         }
 
