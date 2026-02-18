@@ -189,6 +189,9 @@ Section "Install" SecInstall
   ; --- Main executable ---
   File "..\target\release\${PRODUCT_EXE}"
 
+  ; --- CLI executable ---
+  File /oname=wb.exe "..\target\release\wb.exe"
+
   ; --- Icon ---
   SetOutPath "$INSTDIR"
   File /oname=icon.ico "..\docs\img\icon.ico"
@@ -234,6 +237,13 @@ Section "Install" SecInstall
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKLM "${UNINST_KEY}" "EstimatedSize" $0
+
+  ; --- Add to system PATH (for wb CLI) ---
+  nsExec::ExecToLog 'powershell -NoProfile -Command "\
+    $$p = [Environment]::GetEnvironmentVariable(''Path'',''Machine''); \
+    if ($$p -notlike ''*$INSTDIR*'') { \
+      [Environment]::SetEnvironmentVariable(''Path'', $$p + '';$INSTDIR'', ''Machine'') \
+    }"'
 SectionEnd
 
 ; ============================================================
@@ -329,10 +339,17 @@ Section "Uninstall"
 
   ; --- Remove files ---
   Delete "$INSTDIR\${PRODUCT_EXE}"
+  Delete "$INSTDIR\wb.exe"
   Delete "$INSTDIR\icon.ico"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\docs"
   RMDir  "$INSTDIR"
+
+  ; --- Remove from system PATH ---
+  nsExec::ExecToLog 'powershell -NoProfile -Command "\
+    $$p = [Environment]::GetEnvironmentVariable(''Path'',''Machine''); \
+    $$n = ($$p -split '';'' | Where-Object { $$_ -ne ''$INSTDIR'' }) -join '';''; \
+    if ($$n -ne $$p) { [Environment]::SetEnvironmentVariable(''Path'', $$n, ''Machine'') }"'
 
   ; --- Remove shortcuts ---
   Delete "$DESKTOP\${PRODUCT_NAME}.lnk"

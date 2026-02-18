@@ -95,6 +95,9 @@ jobs:
       - name: Build server
         run: cargo build --release
 
+      - name: Build CLI
+        run: cargo build --release --bin wb --features cli --no-default-features
+
       - name: Install NSIS
         run: choco install nsis -y --no-progress
 
