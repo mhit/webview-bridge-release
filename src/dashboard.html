@@ -1703,7 +1703,7 @@
             if (toasts.length > 3) { const old = toasts.shift(); old.remove(); }
             setTimeout(() => { el.classList.remove('sh'); setTimeout(() => el.remove(), 300); toasts = toasts.filter(x=>x!==el); }, 4000);
         }
-        const ft = iso => { if (!iso) return '—'; try { return new Date(iso).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+        const ft = v => { if (!v) return '—'; try { return new Date(typeof v === 'number' ? v : v).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return String(v); } };
         const fb = b => { if (!b) return '0 B'; const k = 1024, u = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(b) / Math.log(k)); return (b / Math.pow(k, i)).toFixed(1) + ' ' + u[i]; };
         const sortSess = (a, b) => { const p = s => s.acquired ? 0 : s.active ? 1 : 2; return p(a) - p(b) || new Date(b.last_accessed || 0) - new Date(a.last_accessed || 0); };
 
@@ -1786,7 +1786,7 @@
             if (ssl.length > 0) {
                 sg.innerHTML = ssl.slice(0, 6).map(s => `<div class="sc" data-action="lightbox" data-src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}">
             <img src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}" alt="${escAttr(s.filename)}" loading="lazy">
-            <div class="si"><div class="sn">${escHtml(s.filename)}</div><div class="sm">${escHtml(s.session)} · ${fb(s.size_bytes)}</div></div></div>`).join('');
+            <div class="si"><div class="sn">${escHtml(s.session)}</div><div class="sm">${s.modified_ms ? ft(s.modified_ms) : ''} · ${fb(s.size_bytes)}</div></div></div>`).join('');
             } else { sg.innerHTML = '<div class="emp"><div class="i">📸</div>スクリーンショットなし</div>'; }
             // Load config (initial only; srv page uses loadSrv() for refresh)
             if (!_cfgLoaded) { lCfg(cfg); _cfgLoaded = true; }
@@ -1895,7 +1895,7 @@
             }
             if (ss.length) {
                 html += `<div class="ds"><h4>スクリーンショット (${ss.length}件)</h4><div class="sg" style="grid-template-columns:repeat(2,1fr)">`;
-                html += ss.slice(-6).map(x => `<div class="sc" data-action="lightbox" data-src="/media/screenshots/${escAttr(x.session)}/${escAttr(x.filename)}"><img src="/media/screenshots/${escAttr(x.session)}/${escAttr(x.filename)}" alt="${escAttr(x.filename)}" loading="lazy"><div class="si"><div class="sn">${escHtml(x.filename)}</div><div class="sm">${fb(x.size_bytes)}</div></div></div>`).join('');
+                html += ss.slice(0, 6).map(x => `<div class="sc" data-action="lightbox" data-src="/media/screenshots/${escAttr(x.session)}/${escAttr(x.filename)}"><img src="/media/screenshots/${escAttr(x.session)}/${escAttr(x.filename)}" alt="${escAttr(x.filename)}" loading="lazy"><div class="si"><div class="sn">${escHtml(x.filename)}</div><div class="sm">${x.modified_ms ? ft(x.modified_ms) : ''} · ${fb(x.size_bytes)}</div></div></div>`).join('');
                 html += '</div></div>';
             }
             const na = escAttr(name);
@@ -1917,7 +1917,7 @@
             let h = '';
             for (const [se, items] of Object.entries(g)) {
                 h += `<div class="cd"><div class="ch"><h3>📁 ${escHtml(se)} (${items.length}件)</h3></div><div class="sg">`;
-                h += items.map(s => `<div class="sc" data-action="lightbox" data-src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}"><img src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}" alt="${escAttr(s.filename)}" loading="lazy"><div class="si"><div class="sn">${escHtml(s.filename)}</div><div class="sm">${fb(s.size_bytes)}</div></div></div>`).join('');
+                h += items.map(s => `<div class="sc" data-action="lightbox" data-src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}"><img src="/media/screenshots/${escAttr(s.session)}/${escAttr(s.filename)}" alt="${escAttr(s.filename)}" loading="lazy"><div class="si"><div class="sn">${escHtml(s.filename)}</div><div class="sm">${s.modified_ms ? ft(s.modified_ms) : ''} · ${fb(s.size_bytes)}</div></div></div>`).join('');
                 h += '</div></div>';
             }
             c.innerHTML = h;

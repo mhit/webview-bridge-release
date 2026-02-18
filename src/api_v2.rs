@@ -3692,7 +3692,7 @@ async fn config_storage(
 async fn media_screenshots_list() -> impl IntoResponse {
     let profiles_dir = crate::core::config::AppConfig::profiles_dir();
 
-    let mut files = Vec::new();
+    let mut files: Vec<(u64, serde_json::Value)> = Vec::new();
     // Scan all session profile directories
     if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
         for session_entry in sessions.flatten() {
@@ -3705,13 +3705,18 @@ async fn media_screenshots_list() -> impl IntoResponse {
                             if let Ok(file_meta) = entry.metadata() {
                                 if file_meta.is_file() {
                                     if let Some(name) = entry.file_name().to_str() {
-                                        files.push(serde_json::json!({
+                                        let modified_ms = file_meta.modified().ok()
+                                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                            .map(|d| d.as_millis() as u64)
+                                            .unwrap_or(0);
+                                        files.push((modified_ms, serde_json::json!({
                                             "filename": name,
                                             "session": session_name,
                                             "size_bytes": file_meta.len(),
+                                            "modified_ms": modified_ms,
                                             "url": format!("/media/screenshots/{}/{}", session_name, name),
                                             "uri": format!("browser://screenshots/{}/{}", session_name, name)
-                                        }));
+                                        })));
                                     }
                                 }
                             }
@@ -3721,12 +3726,16 @@ async fn media_screenshots_list() -> impl IntoResponse {
             }
         }
     }
-    
+
+    // Sort by modification time, newest first
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let sorted: Vec<serde_json::Value> = files.into_iter().map(|(_, v)| v).collect();
+
     (
         StatusCode::OK,
         Json(serde_json::json!({
-            "screenshots": files,
-            "count": files.len()
+            "screenshots": sorted,
+            "count": sorted.len()
         })),
     )
 }
