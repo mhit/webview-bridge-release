@@ -367,5 +367,9 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.execute_in_frame(&id, &script, &frame).await;
             let _ = resp_tx.send(result);
         }
+        AppCommand::FormInjectFile { id, selector, file_paths, frame, resp_tx } => {
+            let result = manager.form_inject_file(&id, &selector, &file_paths, frame).await;
+            let _ = resp_tx.send(result);
+        }
     }
 }

@@ -2019,6 +2019,91 @@
         }
         async function clnStorage() { const r = await api('/storage/cleanup', 'POST', { dry_run: false }); toast('クリーンアップ完了'); loadDL(); }
 
+        // =================== UPLOADS ===================
+        async function loadUL() {
+            // Populate session selects
+            const sl = await api('/session/list');
+            const ss = (sl.sessions || []).map(s => s.id || s.name);
+            ['ul-sess', 'ij-sess'].forEach(id => {
+                const el = $(id); const prev = el.value;
+                el.innerHTML = ss.map(s => `<option value="${escAttr(s)}">${escHtml(s)}</option>`).join('') || '<option value="">セッションなし</option>';
+                if (prev && ss.includes(prev)) el.value = prev;
+            });
+            await loadULFiles();
+        }
+        async function loadULFiles() {
+            const sess = $('ul-sess').value;
+            if (!sess) { $('ul-t').innerHTML = '<tr><td colspan="3" class="emp"><div class="i">📤</div>セッションを選択してください</td></tr>'; $('ul-stats').innerHTML = ''; return; }
+            try {
+                const r = await api(`/uploads/${encodeURIComponent(sess)}`);
+                const files = r.files || [];
+                $('ul-stats').innerHTML = `<div class="st"><div class="st-l">ファイル数</div><div class="st-v">${files.length}</div></div>
+                    <div class="st"><div class="st-l">合計サイズ</div><div class="st-v">${fb(files.reduce((a, f) => a + (f.size || 0), 0))}</div></div>`;
+                // Update inject file select
+                const ij = $('ij-file');
+                ij.innerHTML = files.length ? files.map(f => `<option value="${escAttr(f.url)}">${escHtml(f.filename)} (${fb(f.size)})</option>`).join('') : '<option value="">ファイルなし</option>';
+                // Table
+                if (!files.length) { $('ul-t').innerHTML = '<tr><td colspan="3" class="emp"><div class="i">📤</div>ファイルなし</td></tr>'; return; }
+                $('ul-t').innerHTML = files.map(f => { const fn = escAttr(f.filename || ''); const url = escAttr(f.url || ''); return `<tr>
+                    <td><a href="${url}" target="_blank" style="font-size:.75rem">${escHtml(f.filename)}</a></td>
+                    <td>${fb(f.size || 0)}</td>
+                    <td><div class="bg-r">
+                        <a href="${url}" download class="bn bn-sm bn-s" title="ダウンロード">📥</a>
+                        <button type="button" class="bn bn-sm bn-d" onclick="delUpload('${escAttr(sess)}','${fn}')" title="削除">🗑</button>
+                    </div></td></tr>`; }).join('');
+            } catch { $('ul-t').innerHTML = '<tr><td colspan="3" class="emp">取得失敗</td></tr>'; }
+        }
+        // Dropzone events
+        (function() {
+            const drop = document.getElementById('ul-drop');
+            const inp = document.getElementById('ul-file');
+            if (!drop || !inp) return;
+            drop.addEventListener('click', () => inp.click());
+            drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inp.click(); }});
+            drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+            drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+            drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files.length) doUpload(e.dataTransfer.files); });
+            inp.addEventListener('change', () => { if (inp.files.length) doUpload(inp.files); inp.value = ''; });
+        })();
+        async function doUpload(files) {
+            const sess = $('ul-sess').value;
+            if (!sess) { toast('セッションを選択してください', 'err'); return; }
+            $('ul-prog').style.display = 'block';
+            let done = 0;
+            for (const file of files) {
+                $('ul-prog-text').textContent = `${done + 1}/${files.length}: ${file.name}`;
+                $('ul-bar').style.width = `${(done / files.length) * 100}%`;
+                const fd = new FormData();
+                fd.append('file', file);
+                fd.append('session', sess);
+                try {
+                    const o = { method: 'POST', headers: {} };
+                    if (_token) o.headers['Authorization'] = 'Bearer ' + _token;
+                    o.body = fd;
+                    const r = await fetch('/upload', o);
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    done++;
+                } catch (e) { toast(`${file.name}: ${e.message}`, 'err'); }
+            }
+            $('ul-bar').style.width = '100%';
+            $('ul-prog-text').textContent = `${done}/${files.length} 完了`;
+            setTimeout(() => { $('ul-prog').style.display = 'none'; $('ul-bar').style.width = '0%'; }, 2000);
+            if (done) { toast(`${done}件アップロード完了`); loadULFiles(); }
+        }
+        async function delUpload(sess, fn) {
+            if (!confirm(`${fn} を削除しますか？`)) return;
+            await api(`/uploads/${encodeURIComponent(sess)}/${encodeURIComponent(fn)}`, 'DELETE');
+            toast('削除完了'); loadULFiles();
+        }
+        async function doInject() {
+            const sess = $('ij-sess').value, file = $('ij-file').value, sel = $('ij-sel').value;
+            if (!sess || !file || !sel) { toast('全項目を入力してください', 'err'); return; }
+            const r = await api('/form/inject-file', 'POST', { session: sess, file: file, selector: sel });
+            if (r.success) toast('フォーム注入完了');
+            else toast(r.error || '注入失敗', 'err');
+        }
+        $('ul-sess').addEventListener('change', loadULFiles);
+
         // =================== CONFIG ===================
         function lCfg(c) {
             if (c.ai) {
