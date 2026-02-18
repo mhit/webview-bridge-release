@@ -2080,7 +2080,15 @@ async fn screenshot_v2(
     };
     
     let session_id = handle.id.clone();
-    
+
+    // Prepare file save path (auto-save all screenshots)
+    let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(&request.session);
+    let _ = std::fs::create_dir_all(&screenshot_dir);
+    let fmt_ext = format!("{:?}", request.format).to_lowercase();
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let save_filename = format!("cap_{}.{}", timestamp, fmt_ext);
+    let save_path = screenshot_dir.join(&save_filename);
+
     // If frame is specified, use CDP screenshot with clip
     if request.frame.is_some() {
         let (tx, rx) = oneshot::channel();
@@ -2114,6 +2122,8 @@ async fn screenshot_v2(
             Ok(Ok(Ok(bytes))) => {
                 use base64::Engine;
                 let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                // Auto-save to file
+                let saved = std::fs::write(&save_path, &bytes).is_ok();
                 (
                     StatusCode::OK,
                     Json(json!({
@@ -2123,6 +2133,8 @@ async fn screenshot_v2(
                         "frame": request.frame,
                         "format": format!("{:?}", request.format).to_lowercase(),
                         "data": base64_data,
+                        "saved": saved,
+                        "filename": save_filename,
                     })),
                 )
             }
@@ -2187,18 +2199,28 @@ async fn screenshot_v2(
         std::time::Duration::from_millis(request.timeout_ms),
         rx
     ).await {
-        Ok(Ok(Ok(base64_data))) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "session": request.session,
-                "mode": mode_info,
-                "format": format!("{:?}", request.format).to_lowercase(),
-                "quality": request.quality,
-                "device": device_info,
-                "image": base64_data
-            })),
-        ),
+        Ok(Ok(Ok(base64_data))) => {
+            // Auto-save to file (decode base64 → write)
+            use base64::Engine;
+            let saved = base64::engine::general_purpose::STANDARD.decode(&base64_data)
+                .ok()
+                .and_then(|bytes| std::fs::write(&save_path, &bytes).ok())
+                .is_some();
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "session": request.session,
+                    "mode": mode_info,
+                    "format": format!("{:?}", request.format).to_lowercase(),
+                    "quality": request.quality,
+                    "device": device_info,
+                    "image": base64_data,
+                    "saved": saved,
+                    "filename": save_filename,
+                })),
+            )
+        },
         Ok(Ok(Err(e))) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -2623,7 +2645,14 @@ async fn goal_execute(
         
         GoalType::Screenshot => {
             let frame = request.params.get("frame").and_then(|v| v.as_str()).map(|s| s.to_string());
-            
+
+            // Prepare file save path (auto-save)
+            let goal_screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(&request.session);
+            let _ = std::fs::create_dir_all(&goal_screenshot_dir);
+            let goal_timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let goal_save_filename = format!("cap_{}.png", goal_timestamp);
+            let goal_save_path = goal_screenshot_dir.join(&goal_save_filename);
+
             // If frame is specified, use CDP screenshot
             if frame.is_some() {
                 let (tx, rx) = oneshot::channel();
@@ -2657,13 +2686,15 @@ async fn goal_execute(
                     Ok(Ok(Ok(bytes))) => {
                         use base64::Engine;
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        let _ = std::fs::write(&goal_save_path, &bytes);
                         (
                             StatusCode::OK,
                             Json(json!({
                                 "success": true,
                                 "goal_type": goal_type_str,
                                 "session": request.session,
-                                "image": base64_data
+                                "image": base64_data,
+                                "filename": goal_save_filename,
                             })),
                         )
                     }
@@ -2717,15 +2748,23 @@ async fn goal_execute(
                 std::time::Duration::from_millis(request.timeout_ms),
                 rx
             ).await {
-                Ok(Ok(Ok(base64_data))) => (
-                    StatusCode::OK,
-                    Json(json!({
-                        "success": true,
-                        "goal_type": goal_type_str,
-                        "session": request.session,
-                        "image": base64_data
-                    })),
-                ),
+                Ok(Ok(Ok(base64_data))) => {
+                    // Auto-save to file
+                    use base64::Engine;
+                    let _ = base64::engine::general_purpose::STANDARD.decode(&base64_data)
+                        .ok()
+                        .and_then(|bytes| std::fs::write(&goal_save_path, &bytes).ok());
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "success": true,
+                            "goal_type": goal_type_str,
+                            "session": request.session,
+                            "image": base64_data,
+                            "filename": goal_save_filename,
+                        })),
+                    )
+                },
                 Ok(Ok(Err(e))) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({

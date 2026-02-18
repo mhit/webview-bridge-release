@@ -707,8 +707,9 @@
 
         .sc img {
             width: 100%;
-            aspect-ratio: 16/9;
-            object-fit: cover;
+            max-height: 200px;
+            object-fit: contain;
+            background: var(--bg2);
             border-bottom: 1px solid var(--bdr);
         }
 
@@ -2217,7 +2218,14 @@
             if (dev) { body.device = dev; } else { body.viewport = { width: parseInt($('ss-w').value), height: parseInt($('ss-h').value) }; }
             toast('キャプチャ中...');
             const r = await api('/screenshot', 'POST', body);
-            toast(r.success || r.data ? 'キャプチャ完了' : 'キャプチャ失敗: ' + (r.error || ''), (r.success || r.data) ? 'ok' : 'er');
+            if (r.success && r.filename) {
+                toast('キャプチャ完了: ' + r.filename, 'ok');
+                // Show preview in lightbox
+                const url = `/media/screenshots/${encodeURIComponent(sess)}/${encodeURIComponent(r.filename)}`;
+                olb(url);
+            } else {
+                toast('キャプチャ失敗: ' + (r.error?.message || r.error || ''), 'er');
+            }
             loadSS();
         }
 
