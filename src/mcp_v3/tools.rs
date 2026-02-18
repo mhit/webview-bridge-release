@@ -507,7 +507,14 @@ async fn execute_action(
                     return JSON.stringify({{ success: true }});
                 }})()
             "#, target.replace('"', "\\\""));
-            let _ = execute_script_in(session, check_script, state, 5000, frame).await?;
+            let check_result = execute_script_in(session, check_script, state, 5000, frame).await?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&check_result)
+                .map_err(|e| format!("Failed to parse check result: {}", e))?;
+
+            if !parsed["success"].as_bool().unwrap_or(false) {
+                return Err(parsed["error"].as_str().unwrap_or("Element not found for typing. The element may not exist yet. Try: wait for it to appear, or check the selector.").to_string());
+            }
 
             // CDP type (instant=true uses 0 delay, normal uses 20ms, human_mode uses random)
             let char_delay = if *instant { 0 } else if human_mode { 50 + (rand::random::<u64>() % 100) } else { 20 };
@@ -684,7 +691,13 @@ async fn execute_action(
                 "#, x, y)
             };
             
-            execute_script_in(session, scroll_script, state, timeout_ms, frame).await?;
+            let scroll_result = execute_script_in(session, scroll_script, state, timeout_ms, frame).await?;
+
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&scroll_result) {
+                if parsed["success"].as_bool() == Some(false) {
+                    return Err(parsed["error"].as_str().unwrap_or("Scroll target element not found. Try: check the selector or scroll the window instead.").to_string());
+                }
+            }
             Ok(None)
         }
 
@@ -699,11 +712,17 @@ async fn execute_action(
                     JSON.stringify({{ success: false, error: "Element not found" }});
                 }}
             "#, target.replace('"', "\\\""));
-            
-            execute_script_in(session, hover_script, state, timeout_ms, frame).await?;
+
+            let hover_result = execute_script_in(session, hover_script, state, timeout_ms, frame).await?;
+
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&hover_result) {
+                if parsed["success"].as_bool() == Some(false) {
+                    return Err(parsed["error"].as_str().unwrap_or("Hover target element not found. Try: check the selector or wait for the element to appear.").to_string());
+                }
+            }
             Ok(None)
         }
-        
+
         Action::Select { target, value } => {
             let select_script = format!(r#"
                 const el = document.querySelector("{}");
@@ -715,8 +734,14 @@ async fn execute_action(
                     JSON.stringify({{ success: false, error: "Element not found" }});
                 }}
             "#, target.replace('"', "\\\""), value.replace('"', "\\\""));
-            
-            execute_script_in(session, select_script, state, timeout_ms, frame).await?;
+
+            let select_result = execute_script_in(session, select_script, state, timeout_ms, frame).await?;
+
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&select_result) {
+                if parsed["success"].as_bool() == Some(false) {
+                    return Err(parsed["error"].as_str().unwrap_or("Select target element not found. Try: check the selector or wait for the dropdown to appear.").to_string());
+                }
+            }
             Ok(None)
         }
     }
