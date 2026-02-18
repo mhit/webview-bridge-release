@@ -935,7 +935,7 @@
                 <img src="/assets/icon.png" alt="WebView Bridge" class="logo-icon">
                 <div class="logo-text">
                     <div class="logo-n">WebView Bridge</div>
-                    <div class="logo-v">v3.6 — OpenClaw (CDP)</div>
+                    <div class="logo-v" id="logo-ver">— OpenClaw (CDP)</div>
                 </div>
             </div>
             <div class="ng">
@@ -976,7 +976,7 @@
                     </div>
                     <div class="hero-ver">
                         <span class="tag">OpenClaw CDP</span>
-                        <div class="build">v3.6</div>
+                        <div class="build" id="hero-ver">—</div>
                     </div>
                 </div>
                 <div class="ph">
@@ -1757,6 +1757,7 @@
             // Status
             $('d-st').textContent = h.status === 'ok' ? '稼働中' : 'エラー';
             $('d-st').style.color = h.status === 'ok' ? 'var(--grn)' : 'var(--red)';
+            if (h.version) { $('logo-ver').textContent = 'v' + h.version + ' — OpenClaw (CDP)'; $('hero-ver').textContent = 'v' + h.version; }
             // Sessions
             SC = (sl.sessions || []).sort(sortSess);
             const act = SC.filter(s => s.acquired || s.active).length;
