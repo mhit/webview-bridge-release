@@ -1401,32 +1401,119 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
         tracing::info!("[extract] Element wait result: {}", wr);
     }
     
-    // Handle scroll for more if enabled
+    // Handle scroll-and-collect mode: extract → scroll → repeat with dedup
     if req.scroll_for_more {
+        use std::collections::HashSet;
+        use std::hash::{Hash, Hasher};
+
+        let mut accumulated: Vec<serde_json::Value> = Vec::new();
+        let mut seen_keys: HashSet<String> = HashSet::new();
+        let mut no_new_streak: u32 = 0;
+        let scroll_amount = req.scroll_amount;
+        let scroll_delay = req.scroll_delay_ms;
+        let dedup_key = req.scroll_dedup_key.as_deref();
+        let limit = req.limit;
+        let mut total_duplicates: usize = 0;
+
         for i in 0..req.scroll_max {
-            // Scroll to bottom
-            let scroll_script = r#"
-                window.scrollTo(0, document.body.scrollHeight);
-                JSON.stringify({ scrolled: true });
-            "#;
-            let _ = execute_script_in(&req.session, scroll_script.to_string(), state, 5000, frame).await;
-            
-            // Wait for new content (increasing delay for lazy-load pages)
-            let delay = 500 + (i as u64 * 200);
-            tokio::time::sleep(Duration::from_millis(delay)).await;
+            // Extract current visible items
+            let extract_script = generate_extract_data_script(&req.selector, &req.fields, None);
+            let batch_result = execute_script_in(&req.session, extract_script, state, 10000, frame).await;
+
+            let mut new_count = 0usize;
+            if let Ok(json) = batch_result {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if let Some(items) = parsed["data"].as_array() {
+                        for item in items {
+                            // Compute dedup key
+                            let key = if let Some(dk) = dedup_key {
+                                item.get(dk)
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
+                            } else {
+                                // Hash entire JSON object
+                                let s = serde_json::to_string(item).unwrap_or_default();
+                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                s.hash(&mut hasher);
+                                format!("{:x}", hasher.finish())
+                            };
+
+                            if key.is_empty() {
+                                continue;
+                            }
+
+                            if seen_keys.insert(key) {
+                                accumulated.push(item.clone());
+                                new_count += 1;
+                            } else {
+                                total_duplicates += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!("[extract scroll] iteration {}/{}: +{} new, {} total, {} dupes",
+                i + 1, req.scroll_max, new_count, accumulated.len(), total_duplicates);
+
+            // Early exit: 3 consecutive rounds with 0 new items
+            if new_count == 0 {
+                no_new_streak += 1;
+                if no_new_streak >= 3 {
+                    tracing::info!("[extract scroll] stopping: 3 consecutive rounds with no new items");
+                    break;
+                }
+            } else {
+                no_new_streak = 0;
+            }
+
+            // Check limit
+            if let Some(lim) = limit {
+                if accumulated.len() >= lim {
+                    accumulated.truncate(lim);
+                    break;
+                }
+            }
+
+            // Don't scroll after last iteration
+            if i + 1 < req.scroll_max {
+                let scroll_script = format!(
+                    "window.scrollBy(0, {}); JSON.stringify({{ scrolled: true }});",
+                    scroll_amount
+                );
+                let _ = execute_script_in(&req.session, scroll_script, state, 5000, frame).await;
+                tokio::time::sleep(Duration::from_millis(scroll_delay)).await;
+            }
         }
+
+        // Return accumulated results
+        let count = accumulated.len();
+        let data = serde_json::Value::Array(accumulated);
+        let summary = format!("Extracted {} unique items ({} scrolls, {} duplicates removed)",
+            count, req.scroll_max, total_duplicates);
+
+        return McpToolResponse::success_text(
+            serde_json::to_string(&serde_json::json!({
+                "count": count,
+                "data": data,
+                "scroll_mode": true,
+                "duplicates_removed": total_duplicates,
+                "summary": summary,
+            })).unwrap_or_else(|_| "{}".to_string())
+        );
     }
-    
-    // Extract data
+
+    // Non-scroll mode: single extraction
     let extract_script = generate_extract_data_script(&req.selector, &req.fields, req.limit);
     let result = execute_script_in(&req.session, extract_script, state, 10000, frame).await
         .map_err(|e| format!("Extract failed: {}", e));
-    
+
     match result {
         Ok(json) => {
             let parsed: serde_json::Value = serde_json::from_str(&json)
                 .unwrap_or(serde_json::json!({"error": "Parse failed"}));
-            
+
             let count = parsed["count"].as_u64().unwrap_or(0);
             let data = parsed["data"].clone();
             
@@ -2732,8 +2819,11 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "limit": { "type": "integer", "description": "Maximum number of items to return" },
                     "wait_for_count": { "type": "integer", "description": "Wait until at least this many containers exist before extracting" },
                     "wait_timeout_ms": { "type": "integer", "default": 10000, "description": "Timeout for wait_for_count" },
-                    "scroll_for_more": { "type": "boolean", "default": false, "description": "Scroll down repeatedly to trigger infinite-scroll loading before extracting" },
-                    "scroll_max": { "type": "integer", "default": 5, "description": "Maximum number of scroll iterations when scroll_for_more is true" },
+                    "scroll_for_more": { "type": "boolean", "default": false, "description": "Enable scroll-and-collect mode for virtual-scroll sites (e.g. X.com). Extracts items at each scroll position, deduplicates, and accumulates results. Much more effective than scrolling then extracting once." },
+                    "scroll_max": { "type": "integer", "default": 5, "description": "Maximum number of scroll-and-extract iterations. Each iteration: extract visible items → deduplicate → scroll down." },
+                    "scroll_dedup_key": { "type": "string", "description": "Field name to use for deduplication (e.g. 'text'). If omitted, deduplicates by hashing the entire item JSON." },
+                    "scroll_delay_ms": { "type": "integer", "default": 500, "description": "Delay in milliseconds between scroll iterations. Increase for slow-loading sites." },
+                    "scroll_amount": { "type": "integer", "default": 800, "description": "Pixels to scroll per iteration. Adjust based on item height." },
                     "frame": { "type": "string", "description": "Target iframe for extraction. Specify by URL substring, frame name, or frame ID. When omitted, extracts from the main page frame." }
                 },
                 "required": ["selector", "fields"]

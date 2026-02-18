@@ -288,6 +288,26 @@ enum Command {
         /// Target iframe (URL substring, frame name, or frame ID)
         #[arg(long)]
         frame: Option<String>,
+
+        /// Enable scroll-and-collect mode (for virtual-scroll sites like X.com)
+        #[arg(long)]
+        scroll: bool,
+
+        /// Max scroll iterations
+        #[arg(long, default_value = "10")]
+        scroll_max: usize,
+
+        /// Field name for deduplication (omit for full-item hash)
+        #[arg(long)]
+        scroll_dedup: Option<String>,
+
+        /// Delay between scrolls in ms
+        #[arg(long, default_value = "500")]
+        scroll_delay: u64,
+
+        /// Pixels per scroll
+        #[arg(long, default_value = "800")]
+        scroll_amount: u32,
     },
 
     /// Manage cookies for a session
@@ -452,8 +472,8 @@ fn main() -> ExitCode {
         Command::Select { target, value, session, frame } => {
             commands::select::run(&client, &opts, &session, &target, &value, frame.as_deref())
         }
-        Command::Extract { selector, session, fields, limit, output, frame } => {
-            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref(), frame.as_deref())
+        Command::Extract { selector, session, fields, limit, output, frame, scroll, scroll_max, scroll_dedup, scroll_delay, scroll_amount } => {
+            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref(), frame.as_deref(), scroll, scroll_max, scroll_dedup.as_deref(), scroll_delay, scroll_amount)
         }
         Command::Cookies { action } => match action {
             CookieAction::Get { session, output } => {

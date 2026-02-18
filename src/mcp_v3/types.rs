@@ -252,12 +252,23 @@ pub struct ExtractRequest {
     pub scroll_for_more: bool,
     #[serde(default = "default_scroll_max")]
     pub scroll_max: usize,
+    /// Field name for deduplication during scroll-and-collect. If omitted, uses JSON hash of entire item
+    #[serde(default)]
+    pub scroll_dedup_key: Option<String>,
+    /// Delay between scroll iterations (ms)
+    #[serde(default = "default_scroll_delay")]
+    pub scroll_delay_ms: u64,
+    /// Pixels to scroll per iteration
+    #[serde(default = "default_scroll_amount_extract")]
+    pub scroll_amount: u32,
     /// Target iframe (URL substring, frame name, or frame ID)
     #[serde(default)]
     pub frame: Option<String>,
 }
 
 fn default_scroll_max() -> usize { 5 }
+fn default_scroll_delay() -> u64 { 500 }
+fn default_scroll_amount_extract() -> u32 { 800 }
 
 // ============================================================================
 // 5. Session
