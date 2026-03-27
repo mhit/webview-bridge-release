@@ -2587,10 +2587,67 @@ struct NavigateRequest {
     /// charts/graphs after the load event. Defaults to 0.
     #[serde(default)]
     post_load_wait_ms: u64,
+    /// If true (default), include a snapshot of interactive elements in the response.
+    /// Eliminates the need for a separate POST /snapshot call after navigation.
+    #[serde(default = "default_snapshot_after_nav")]
+    snapshot: bool,
 }
 
 fn default_wait_until() -> String { "load".to_string() }
 fn default_nav_timeout() -> u64 { 30000 }
+fn default_snapshot_after_nav() -> bool { true }
+
+/// Execute the standard interactive-element snapshot JS and return the parsed result.
+/// Used by navigate_v2 to bundle snapshot into navigation response.
+pub async fn run_snapshot_for_session(
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<AppCommand>,
+    handle_id: &str,
+) -> Option<serde_json::Value> {
+    let script = format!(
+        r#"(function(){{
+  document.querySelectorAll('[data-wb-ref]').forEach(el => el.removeAttribute('data-wb-ref'));
+  const scope = document.body;
+  const sels = 'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"])';
+  const els = [...scope.querySelectorAll(sels)].filter(el => {{
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  }}).slice(0, 200);
+  let id = 1;
+  const results = els.map(el => {{
+    const ref = 'e' + id++;
+    el.setAttribute('data-wb-ref', ref);
+    return {{
+      ref, tag: el.tagName.toLowerCase(),
+      type: el.type || null,
+      role: el.getAttribute('role'),
+      text: (el.textContent||'').trim().slice(0,80),
+      name: el.getAttribute('name') || el.getAttribute('aria-label'),
+      href: el.href || null,
+      value: el.type === 'password' ? null : (el.value || null),
+      placeholder: el.placeholder || null,
+      checked: el.checked === true ? true : null,
+      disabled: el.disabled === true ? true : null
+    }};
+  }});
+  return JSON.stringify({{ title: document.title, url: location.href, elements: results }});
+}})()"#
+    );
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::ExecuteScript {
+        id: handle_id.to_string(),
+        script,
+        resp_tx: tx,
+    };
+    if cmd_tx.send(cmd).is_err() {
+        return None;
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(8), rx).await {
+        Ok(Ok(Ok(result))) => serde_json::from_str(&result).ok(),
+        _ => None,
+    }
+}
 
 /// POST /v2/navigate - Navigate to URL and wait for load
 async fn navigate_v2(
@@ -2611,7 +2668,7 @@ async fn navigate_v2(
     // Send navigate command
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::Navigate {
-        id: session_id,
+        id: session_id.clone(),
         url: request.url.clone(),
         resp_tx: tx,
     };
@@ -2632,15 +2689,29 @@ async fn navigate_v2(
             if request.post_load_wait_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(request.post_load_wait_ms)).await;
             }
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "success": true,
-                    "session": request.session,
-                    "url": request.url,
-                    "load_time_ms": start.elapsed().as_millis() as u64
-                })),
-            ).into_response()
+            // Include snapshot of interactive elements unless caller opted out
+            let snapshot = if request.snapshot {
+                run_snapshot_for_session(&state.cmd_tx, &session_id).await
+            } else {
+                None
+            };
+            let elem_count = snapshot.as_ref()
+                .and_then(|s| s.get("elements"))
+                .and_then(|e| e.as_array())
+                .map(|a| a.len());
+            let mut resp = json!({
+                "success": true,
+                "session": request.session,
+                "url": request.url,
+                "load_time_ms": start.elapsed().as_millis() as u64
+            });
+            if let Some(snap) = snapshot {
+                resp["snapshot"] = snap;
+                if let Some(n) = elem_count {
+                    resp["element_count"] = json!(n);
+                }
+            }
+            (StatusCode::OK, Json(resp)).into_response()
         },
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),

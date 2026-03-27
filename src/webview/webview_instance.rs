@@ -40,6 +40,8 @@ fn log_webview_debug(operation: &str, details: &str) {
 thread_local! {
     static PENDING_CONTROLLERS: RefCell<HashMap<usize, ICoreWebView2Controller>> = RefCell::new(HashMap::new());
     pub static PENDING_SCRIPT_RESULTS: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
+    /// Set to true when WebView2 browser process exits — prevents further COM calls after crash.
+    pub static WEBVIEW_PROCESS_FAILED: RefCell<bool> = RefCell::new(false);
 
     // CDP screenshot results (Page.captureScreenshot returns base64 data)
     pub static PENDING_CDP_SCREENSHOTS: RefCell<HashMap<String, Result<String, String>>> = RefCell::new(HashMap::new());
@@ -539,7 +541,7 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
                 "Registering NavigationStarting event...",
             );
             let _ = webview.add_NavigationStarting(
-                &ICoreWebView2NavigationStartingEventHandler::from(NavigationStartingHandler {}),
+                &ICoreWebView2NavigationStartingEventHandler::from(NavigationStartingHandler { hwnd: self.hwnd }),
                 &mut Default::default(),
             );
 
@@ -592,7 +594,9 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
 // Event Handlers
 // ----------------------------------------------------------------
 #[windows::core::implement(ICoreWebView2NavigationStartingEventHandler)]
-struct NavigationStartingHandler {}
+struct NavigationStartingHandler {
+    hwnd: HWND,
+}
 
 impl ICoreWebView2NavigationStartingEventHandler_Impl for NavigationStartingHandler {
     fn Invoke(
@@ -606,6 +610,35 @@ impl ICoreWebView2NavigationStartingEventHandler_Impl for NavigationStartingHand
             let uri_str = unsafe { uri.to_string().unwrap_or_default() };
             tracing::info!("Navigation Starting: {}", uri_str);
         }
+
+        // Cancel any pending script executions — navigation invalidates the current JS context.
+        // Without this, pending execute calls block until 30s timeout or channel close.
+        let err = "Script interrupted: page navigation started. Wait for navigation to complete before executing scripts.".to_string();
+        let has_pending = PENDING_SCRIPT_RESULTS.with(|map| !map.borrow().is_empty());
+        if has_pending {
+            tracing::warn!("NavigationStarting: cancelling {} pending script(s)",
+                PENDING_SCRIPT_RESULTS.with(|map| map.borrow().len()));
+            PENDING_SCRIPT_RESULTS.with(|map| {
+                let keys: Vec<String> = map.borrow().keys().cloned().collect();
+                let mut m = map.borrow_mut();
+                for key in keys {
+                    m.insert(key, Err(err.clone()));
+                }
+            });
+            // Also cancel pending CDP operations
+            PENDING_CDP_RESULTS.with(|map| {
+                let keys: Vec<String> = map.borrow().keys().cloned().collect();
+                let mut m = map.borrow_mut();
+                for key in keys {
+                    m.insert(key, Err(err.clone()));
+                }
+            });
+            // Wake up waiting threads
+            unsafe {
+                PostMessageW(self.hwnd, WM_SCRIPT_RESULT, WPARAM(0), LPARAM(0));
+            }
+        }
+
         Ok(())
     }
 }
@@ -717,7 +750,10 @@ impl ICoreWebView2ProcessFailedEventHandler_Impl for ProcessFailedHandler {
 
         tracing::error!("[ProcessFailed] WebView2 process failed: {}", kind_str);
 
-        let err = format!("WebView2 process failed ({})", kind_str);
+        // Mark this WebView as dead — prevents further COM calls that would cause access violations
+        WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow_mut() = true);
+
+        let err = format!("WebView2 process failed ({}). Session must be re-acquired.", kind_str);
 
         // Unblock all pending script executions
         PENDING_SCRIPT_RESULTS.with(|map| {
@@ -859,16 +895,23 @@ impl WebViewInstance {
         unsafe {
             let user_data_folder_h = HSTRING::from(user_data_folder);
 
-            // Set environment variables if not already set (or append)
-            // Note: This applies globally to the process usually.
+            // Build environment options with browser arguments.
+            // These args stabilize headless rendering of JS-heavy pages (Chart.js, D3, etc.):
+            //   --disable-gpu               — no GPU hardware acceleration (stable in headless)
+            //   --disable-software-rasterizer — skip SW fallback rasterizer (reduces memory)
+            //   --disable-extensions         — no extension overhead
+            //   --no-sandbox                 — required in some headless server environments
+            let env_options = webview2_com::CoreWebView2EnvironmentOptions::default();
+            let browser_args = "--disable-gpu --disable-software-rasterizer --disable-extensions --no-sandbox";
             log_webview_debug(
                 "WebViewInstance::initialize",
-                "Setting WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                &format!("Setting browser args: {}", browser_args),
             );
-            std::env::set_var(
-                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                "--disable-gpu --no-sandbox",
+            let args_h = HSTRING::from(browser_args);
+            let _ = env_options.SetAdditionalBrowserArguments(
+                &windows::core::PCWSTR(args_h.as_ptr())
             );
+            let env_options_iface = webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2EnvironmentOptions::from(env_options);
 
             log_webview_debug(
                 "WebViewInstance::initialize",
@@ -877,7 +920,7 @@ impl WebViewInstance {
             webview2_com::Microsoft::Web::WebView2::Win32::CreateCoreWebView2EnvironmentWithOptions(
                 None,
                 &user_data_folder_h,
-                None,
+                &env_options_iface,
                 &ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler::from(EnvHandler { hwnd }),
             )?;
         }
@@ -923,6 +966,14 @@ impl WebViewInstance {
     pub fn navigate(&self, url: &str) -> WinResult<()> {
         log_webview_start("WebViewInstance::navigate", &format!("url={}", url));
 
+        // Refuse COM calls after browser process crash — prevents access violations
+        if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
+            return Err(Error::new(
+                windows::core::HRESULT(0x80004005u32 as i32),
+                HSTRING::from("WebView2 process has crashed. Re-acquire the session."),
+            ));
+        }
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
@@ -946,6 +997,14 @@ impl WebViewInstance {
     }
 
     pub fn execute_script(&self, script: &str, request_id: String) -> Result<String, Error> {
+        // Refuse COM calls after browser process crash — prevents access violations
+        if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
+            return Err(Error::new(
+                windows::core::HRESULT(0x80004005u32 as i32),
+                HSTRING::from("WebView2 process has crashed. Re-acquire the session."),
+            ));
+        }
+
         let script_preview = if script.len() > 50 {
             format!("{}...", &script[..50])
         } else {
@@ -2483,6 +2542,10 @@ impl WebViewInstance {
 
     /// Check if the underlying window handle is still valid (not destroyed by user)
     pub fn is_window_valid(&self) -> bool {
+        // Also treat process failure as invalid — causes session_thread to exit cleanly
+        if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
+            return false;
+        }
         self.window.is_valid()
     }
 

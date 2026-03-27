@@ -4,7 +4,7 @@
 
 use super::types::*;
 use super::robustness::*;
-use crate::api_v2::{get_session_manager_v2, V2AppState};
+use crate::api_v2::{get_session_manager_v2, run_snapshot_for_session, V2AppState};
 use crate::core::AppCommand;
 use tokio::sync::oneshot;
 use std::time::Duration;
@@ -317,11 +317,24 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
             if req.post_load_wait_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(req.post_load_wait_ms)).await;
             }
-            McpToolResponse::success_json(serde_json::json!({
+            // Auto-snapshot: capture interactive elements so caller doesn't need a separate call
+            let snapshot = run_snapshot_for_session(&state.cmd_tx, &handle.id).await;
+            let elem_count = snapshot.as_ref()
+                .and_then(|s| s.get("elements"))
+                .and_then(|e| e.as_array())
+                .map(|a| a.len());
+            let mut result = serde_json::json!({
                 "url": req.url,
                 "wait_for": format!("{:?}", req.wait_for),
                 "status": "navigated"
-            }))
+            });
+            if let Some(snap) = snapshot {
+                result["snapshot"] = snap;
+                if let Some(n) = elem_count {
+                    result["element_count"] = serde_json::json!(n);
+                }
+            }
+            McpToolResponse::success_json(result)
         },
         Err(e) => McpToolResponse::error("WAIT_FAILED", &e),
     }
