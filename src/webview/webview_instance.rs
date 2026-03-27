@@ -57,6 +57,10 @@ thread_local! {
     pub static NETWORK_MONITORING_ENABLED: RefCell<bool> = RefCell::new(false);
     pub static MAX_NETWORK_LOGS: RefCell<usize> = RefCell::new(100);
     pub static NETWORK_EVENT_TOKENS: RefCell<HashMap<String, windows::Win32::System::WinRT::EventRegistrationToken>> = RefCell::new(HashMap::new());
+    /// Tracks depth of in-progress WebView2 COM calls on this thread.
+    /// Used by the vectored exception handler to catch WebView2 assertion crashes
+    /// (STATUS_BREAKPOINT) and continue execution instead of killing the process.
+    pub static IN_WEBVIEW_CALL: RefCell<u32> = RefCell::new(0);
 }
 
 /// Anti-bot detection script that runs on every page load
@@ -1023,13 +1027,18 @@ impl WebViewInstance {
                     "WebViewInstance::execute_script",
                     "Calling webview.ExecuteScript()",
                 );
-                webview.ExecuteScript(
+                // Increment IN_WEBVIEW_CALL so the vectored exception handler can identify
+                // that STATUS_BREAKPOINT originated from within a WebView2 COM call.
+                IN_WEBVIEW_CALL.with(|c| *c.borrow_mut() += 1);
+                let exec_result = webview.ExecuteScript(
                     &HSTRING::from(script),
                     &ICoreWebView2ExecuteScriptCompletedHandler::from(ExecuteScriptHandler {
                         request_id: request_id.clone(),
                         hwnd: self.get_hwnd(),
                     }),
-                )?;
+                );
+                IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
+                exec_result?;
 
                 // Wait for result while pumping messages
                 match self.wait_for_script_result(&request_id) {
@@ -1070,6 +1079,13 @@ impl WebViewInstance {
                     windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
                     windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
                 }
+            }
+
+            // Exit early if process failed (set by ProcessFailed event or exception handler)
+            if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
+                // Remove the pending entry to avoid stale results
+                PENDING_SCRIPT_RESULTS.with(|map| { map.borrow_mut().remove(request_id); });
+                return Err("WebView2 process failed during script execution".to_string());
             }
 
             if let Some(result) =

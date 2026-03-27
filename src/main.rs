@@ -10,6 +10,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use windows::Win32::UI::WindowsAndMessaging::WM_USER;
+use windows::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
 
 use crate::core::{AppCommand, SessionManager, SessionOptions};
 use crate::api_v2::{create_v2_router, init_auth_token, init_session_manager_v2, V2AppState};
@@ -71,7 +72,52 @@ fn parse_args() -> Option<Config> {
     Some(config)
 }
 
+/// Vectored exception handler that catches STATUS_BREAKPOINT from WebView2 DLL.
+///
+/// When a WebView2 render/browser process crashes while an ExecuteScript COM call is in
+/// progress, EmbeddedBrowserWebView.dll fires an internal assertion (`__debugbreak()`)
+/// which raises STATUS_BREAKPOINT (0x80000003) — an SEH exception that would normally
+/// kill the entire process.  This handler intercepts that exception when it occurs during
+/// a known WebView2 COM call (flagged by `IN_WEBVIEW_CALL`), marks the session as dead
+/// via `WEBVIEW_PROCESS_FAILED`, and returns EXCEPTION_CONTINUE_EXECUTION so only the
+/// affected session thread is invalidated while the HTTP server keeps running.
+unsafe extern "system" fn webview_seh_guard(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
+    const STATUS_BREAKPOINT: u32 = 0x80000003;
+    const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+    const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+
+    if exception_info.is_null() { return EXCEPTION_CONTINUE_SEARCH; }
+    let record_ptr = unsafe { (*exception_info).ExceptionRecord };
+    if record_ptr.is_null() { return EXCEPTION_CONTINUE_SEARCH; }
+    let code = unsafe { (*record_ptr).ExceptionCode.0 } as u32;
+    if code != STATUS_BREAKPOINT {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Only intercept if this thread is currently inside a WebView2 COM call.
+    let in_call = crate::webview::webview_instance::IN_WEBVIEW_CALL
+        .try_with(|c| c.try_borrow().map(|v| *v > 0).unwrap_or(false))
+        .unwrap_or(false);
+    if !in_call {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Decrement guard counter to prevent re-catching on the same thread.
+    let _ = crate::webview::webview_instance::IN_WEBVIEW_CALL
+        .try_with(|c| c.try_borrow_mut().map(|mut v| { if *v > 0 { *v -= 1; } }));
+
+    // Mark the session as dead so wait_for_script_result exits immediately.
+    let _ = crate::webview::webview_instance::WEBVIEW_PROCESS_FAILED
+        .try_with(|f| f.try_borrow_mut().map(|mut v| { *v = true; }));
+
+    EXCEPTION_CONTINUE_EXECUTION
+}
+
 fn main() {
+    // Install vectored exception handler to survive WebView2 assertion crashes.
+    // Must be done before any WebView2 sessions are created.
+    unsafe { AddVectoredExceptionHandler(1, Some(webview_seh_guard)); }
+
     // Parse command line arguments
     let cli = match parse_args() {
         Some(c) => c,
