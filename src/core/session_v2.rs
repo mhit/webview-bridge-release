@@ -11,6 +11,18 @@ use std::time::{Duration, SystemTime};
 
 use super::{SessionManager, SessionOptions, SessionStatus};
 
+/// Snapshot of a session's auto-login state (returned by status/list endpoints)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoLoginState {
+    pub op_item_id: Option<String>,
+    pub last_at: Option<String>,
+    pub last_result: Option<String>,
+    pub last_username: Option<String>,
+    pub last_error: Option<String>,
+    pub attempt_count: u32,
+    pub consecutive_failures: u32,
+}
+
 /// V2 Session Handle - holds the v1 session ID
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHandle {
@@ -72,6 +84,29 @@ pub struct NamedSessionMeta {
     /// Whether to auto-restore last URL on acquire
     #[serde(default = "default_auto_restore")]
     pub auto_restore: bool,
+
+    // 1Password auto-login cache & history
+    /// 1Password item ID that last worked for auto-login
+    #[serde(default)]
+    pub auto_login_op_item_id: Option<String>,
+    /// Timestamp of last auto-login attempt (ISO 8601 UTC)
+    #[serde(default)]
+    pub auto_login_last_at: Option<String>,
+    /// Result of last attempt: "success" | "already_logged_in" | "failed"
+    #[serde(default)]
+    pub auto_login_last_result: Option<String>,
+    /// Human-readable username from last successful login
+    #[serde(default)]
+    pub auto_login_last_username: Option<String>,
+    /// Error message from last failed attempt
+    #[serde(default)]
+    pub auto_login_last_error: Option<String>,
+    /// Total number of auto-login attempts (lifetime)
+    #[serde(default)]
+    pub auto_login_attempt_count: u32,
+    /// Number of consecutive failures (reset to 0 on success)
+    #[serde(default)]
+    pub auto_login_consecutive_failures: u32,
 }
 
 fn default_ttl_hours() -> u64 { 168 } // 1 week default
@@ -464,6 +499,13 @@ impl SessionManagerV2 {
             last_url: None,
             navigation_history: Vec::new(),
             auto_restore: true,
+            auto_login_op_item_id: None,
+            auto_login_last_at: None,
+            auto_login_last_result: None,
+            auto_login_last_username: None,
+            auto_login_last_error: None,
+            auto_login_attempt_count: 0,
+            auto_login_consecutive_failures: 0,
         };
         
         let session = NamedSession {
@@ -510,6 +552,13 @@ impl SessionManagerV2 {
             last_url: None,
             navigation_history: Vec::new(),
             auto_restore: true,
+            auto_login_op_item_id: None,
+            auto_login_last_at: None,
+            auto_login_last_result: None,
+            auto_login_last_username: None,
+            auto_login_last_error: None,
+            auto_login_attempt_count: 0,
+            auto_login_consecutive_failures: 0,
         };
         
         let session = NamedSession {
@@ -711,6 +760,123 @@ impl SessionManagerV2 {
         sessions.get(name).and_then(|s| s.meta.last_url.clone())
     }
     
+    /// Get the cached 1Password item ID for auto-login
+    pub fn get_auto_login_op_item_id(&self, name: &str) -> Option<String> {
+        let sessions = self.sessions.read().ok()?;
+        sessions.get(name).and_then(|s| s.meta.auto_login_op_item_id.clone())
+    }
+
+    /// Cache the 1Password item ID that successfully authenticated this session
+    pub fn update_auto_login_op_item_id(&self, name: &str, op_item_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        session.meta.auto_login_op_item_id = Some(op_item_id.to_string());
+        drop(sessions);
+        self.save_sessions()
+    }
+
+    /// Clear the cached 1Password item ID (e.g. after a failed login)
+    pub fn clear_auto_login_op_item_id(&self, name: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if let Some(session) = sessions.get_mut(name) {
+            session.meta.auto_login_op_item_id = None;
+        }
+        drop(sessions);
+        self.save_sessions()
+    }
+
+    /// Record a successful auto-login attempt
+    pub fn record_auto_login_success(&self, name: &str, op_item_id: &str, username: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        session.meta.auto_login_op_item_id = Some(op_item_id.to_string());
+        session.meta.auto_login_last_at = Some(chrono_now_iso8601());
+        session.meta.auto_login_last_result = Some("success".to_string());
+        session.meta.auto_login_last_username = Some(username.to_string());
+        session.meta.auto_login_last_error = None;
+        session.meta.auto_login_attempt_count = session.meta.auto_login_attempt_count.saturating_add(1);
+        session.meta.auto_login_consecutive_failures = 0;
+        session.meta.auth_status = AuthStatus {
+            logged_in: true,
+            checked_at: Some(chrono_now_iso8601()),
+            username: Some(username.to_string()),
+        };
+        drop(sessions);
+        self.save_sessions()
+    }
+
+    /// Record a failed auto-login attempt
+    pub fn record_auto_login_failure(&self, name: &str, error: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let session = sessions.get_mut(name)
+            .ok_or_else(|| format!("Session '{}' not found", name))?;
+        session.meta.auto_login_op_item_id = None;
+        session.meta.auto_login_last_at = Some(chrono_now_iso8601());
+        session.meta.auto_login_last_result = Some("failed".to_string());
+        session.meta.auto_login_last_error = Some(error.to_string());
+        session.meta.auto_login_attempt_count = session.meta.auto_login_attempt_count.saturating_add(1);
+        session.meta.auto_login_consecutive_failures = session.meta.auto_login_consecutive_failures.saturating_add(1);
+        drop(sessions);
+        self.save_sessions()
+    }
+
+    /// Record that login was skipped (already logged in)
+    pub fn record_auto_login_skipped(&self, name: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if let Some(session) = sessions.get_mut(name) {
+            session.meta.auto_login_last_at = Some(chrono_now_iso8601());
+            session.meta.auto_login_last_result = Some("already_logged_in".to_string());
+            session.meta.auto_login_last_error = None;
+            let existing_username = session.meta.auto_login_last_username.clone();
+            session.meta.auth_status = AuthStatus {
+                logged_in: true,
+                checked_at: Some(chrono_now_iso8601()),
+                username: existing_username,
+            };
+        }
+        drop(sessions);
+        self.save_sessions()
+    }
+
+    /// Get auto-login state snapshot for a session (for status endpoint)
+    pub fn get_auto_login_state(&self, name: &str) -> Option<AutoLoginState> {
+        let sessions = self.sessions.read().ok()?;
+        let meta = &sessions.get(name)?.meta;
+        Some(AutoLoginState {
+            op_item_id: meta.auto_login_op_item_id.clone(),
+            last_at: meta.auto_login_last_at.clone(),
+            last_result: meta.auto_login_last_result.clone(),
+            last_username: meta.auto_login_last_username.clone(),
+            last_error: meta.auto_login_last_error.clone(),
+            attempt_count: meta.auto_login_attempt_count,
+            consecutive_failures: meta.auto_login_consecutive_failures,
+        })
+    }
+
+    /// Get auto-login state for all sessions
+    pub fn get_all_auto_login_states(&self) -> Vec<(String, AutoLoginState)> {
+        let Ok(sessions) = self.sessions.read() else { return vec![] };
+        sessions.iter().map(|(name, session)| {
+            let meta = &session.meta;
+            (name.clone(), AutoLoginState {
+                op_item_id: meta.auto_login_op_item_id.clone(),
+                last_at: meta.auto_login_last_at.clone(),
+                last_result: meta.auto_login_last_result.clone(),
+                last_username: meta.auto_login_last_username.clone(),
+                last_error: meta.auto_login_last_error.clone(),
+                attempt_count: meta.auto_login_attempt_count,
+                consecutive_failures: meta.auto_login_consecutive_failures,
+            })
+        }).collect()
+    }
+
     /// Get session's navigation history
     pub fn get_navigation_history(&self, name: &str) -> Vec<String> {
         let sessions = match self.sessions.read() {
@@ -1018,6 +1184,15 @@ impl SessionManagerV2 {
             last_url: source_meta.last_url,
             navigation_history: source_meta.navigation_history,
             auto_restore: source_meta.auto_restore,
+            // Copy auto-login cache (clone shares the same credentials)
+            auto_login_op_item_id: source_meta.auto_login_op_item_id,
+            // Reset history for the new clone
+            auto_login_last_at: None,
+            auto_login_last_result: None,
+            auto_login_last_username: None,
+            auto_login_last_error: None,
+            auto_login_attempt_count: 0,
+            auto_login_consecutive_failures: 0,
         };
         
         let new_session = NamedSession {
@@ -1347,6 +1522,13 @@ mod tests {
             last_url: None,
             navigation_history: Vec::new(),
             auto_restore: false,
+            auto_login_op_item_id: None,
+            auto_login_last_at: None,
+            auto_login_last_result: None,
+            auto_login_last_username: None,
+            auto_login_last_error: None,
+            auto_login_attempt_count: 0,
+            auto_login_consecutive_failures: 0,
         });
         
         let json = serde_json::to_string_pretty(&file).unwrap();
@@ -1426,6 +1608,13 @@ mod tests {
             last_url: None,
             navigation_history: Vec::new(),
             auto_restore: false,
+            auto_login_op_item_id: None,
+            auto_login_last_at: None,
+            auto_login_last_result: None,
+            auto_login_last_username: None,
+            auto_login_last_error: None,
+            auto_login_attempt_count: 0,
+            auto_login_consecutive_failures: 0,
         };
         
         let json = serde_json::to_string(&meta).unwrap();

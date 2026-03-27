@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod login;
 pub mod click;
 pub mod cookies;
 pub mod execute;

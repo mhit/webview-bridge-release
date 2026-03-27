@@ -111,6 +111,10 @@ impl WbClient {
         self.request(self.agent.post(&self.url(path)), Some(body))
     }
 
+    pub fn put(&self, path: &str, body: &Value) -> Result<WbResponse, WbError> {
+        self.request(self.agent.put(&self.url(path)), Some(body))
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }

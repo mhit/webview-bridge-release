@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 pub mod api_v2;
+pub mod auto_login;
 pub mod core;
 pub mod mcp_v3;
 pub mod webview;

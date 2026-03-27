@@ -2151,15 +2151,24 @@ impl WebViewInstance {
         }
     }
 
-    /// Get element coordinates by selector (for CDP click)
+    /// Get element coordinates by selector (for CDP click).
+    /// Prefers the first VISIBLE element (non-zero rect) over the first DOM match.
     pub fn get_element_center(&self, selector: &str) -> Result<(f64, f64), String> {
         log_webview_start("WebViewInstance::get_element_center", selector);
-        
+
         let script = format!(r#"
             (function() {{
-                const el = document.querySelector("{}");
-                if (!el) return JSON.stringify({{ error: "Element not found" }});
+                const all = document.querySelectorAll("{}");
+                if (!all.length) return JSON.stringify({{ error: "Element not found" }});
+                // Prefer first visible element (non-zero bounding rect)
+                const el = [...all].find(e => {{
+                    const r = e.getBoundingClientRect();
+                    return e.offsetParent !== null && r.width > 0 && r.height > 0;
+                }}) || all[0];
                 const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) {{
+                    return JSON.stringify({{ error: "Element has zero size (may be hidden)" }});
+                }}
                 return JSON.stringify({{
                     x: rect.left + rect.width / 2,
                     y: rect.top + rect.height / 2

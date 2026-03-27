@@ -117,6 +117,12 @@ async fn route_tool_inner(
                 Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid media params: {}", e)),
             }
         }
+        "snapshot" => {
+            match serde_json::from_value::<SnapshotRequest>(params) {
+                Ok(req) => handle_snapshot(req, state).await,
+                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid snapshot params: {}", e)),
+            }
+        }
         "execute" => {
             match serde_json::from_value::<ExecuteRequest>(params) {
                 Ok(req) => handle_execute(req, state).await,
@@ -135,7 +141,7 @@ async fn route_tool_inner(
                 Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid network params: {}", e)),
             }
         }
-        _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: '{}'. Available tools: navigate, interact, capture, extract, session, media, execute, agent, network", tool)),
+        _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: '{}'. Available tools: navigate, interact, capture, snapshot, extract, session, media, execute, agent, network", tool)),
     }
 }
 
@@ -1718,6 +1724,24 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     }
                                 }
                                 
+                                // Build contextual hints for AI agents
+                                let session_name = &response.session;
+                                let auto_login_configured = crate::core::config::load_session_auto_login(session_name).is_some();
+                                let logged_in = response.auth_status.as_ref().map(|a| a.logged_in);
+                                let mut hints: Vec<&str> = Vec::new();
+                                if auto_login_configured && logged_in != Some(true) {
+                                    hints.push("Auto-login is configured. Use the session tool with {\"auto_login\": \"<session>\"} or call POST /session/auto-login to authenticate.");
+                                } else if !auto_login_configured {
+                                    hints.push("No auto-login configured. Use PUT /session/auto-login/config or 'wb login config-set' to configure credentials.");
+                                }
+                                if response.is_new {
+                                    hints.push("New session created. Sessions are persistent — cookies and login state survive server restarts.");
+                                    hints.push("Next step: use 'navigate' tool or POST /navigate to open a URL.");
+                                } else {
+                                    hints.push("Session resumed. Cookies and login state are intact from the previous run.");
+                                    hints.push("Use the 'snapshot' tool or POST /snapshot to see the current page without a screenshot.");
+                                }
+
                                 return McpToolResponse::success_json(serde_json::json!({
                                     "session": response.session,
                                     "is_new": response.is_new,
@@ -1725,7 +1749,9 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     "wait_ms": waited_ms,
                                     "status": "ready",
                                     "visible": !req.headless,
-                                    "device": device_info
+                                    "device": device_info,
+                                    "auth_status": response.auth_status,
+                                    "hints": hints
                                 }));
                             }
                             
@@ -2752,7 +2778,74 @@ fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_he
 }
 
 // ============================================================================
-// 7. Execute
+// 7. Snapshot (DOM element extraction)
+// ============================================================================
+
+async fn handle_snapshot(req: SnapshotRequest, state: &V2AppState) -> McpToolResponse {
+    let scope_selector_json = serde_json::to_string(
+        req.within.as_deref().unwrap_or("body")
+    ).unwrap_or_else(|_| "\"body\"".to_string());
+
+    let element_selectors = if req.all {
+        r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"]),h1,h2,h3,h4,h5,h6,p,li,img,table,th,td,label,span[class],div[class]'"#
+    } else {
+        r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"])'"#
+    };
+
+    let limit = req.limit;
+    let script = format!(
+        r#"(function(){{
+  document.querySelectorAll('[data-wb-ref]').forEach(el => el.removeAttribute('data-wb-ref'));
+  const scope = document.querySelector({scope_selector_json}) || document.body;
+  const sels = {element_selectors};
+  const els = [...scope.querySelectorAll(sels)].filter(el => {{
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  }}).slice(0, {limit});
+  let id = 1;
+  const results = els.map(el => {{
+    const ref = 'e' + id++;
+    el.setAttribute('data-wb-ref', ref);
+    return {{
+      ref, tag: el.tagName.toLowerCase(),
+      type: el.type || null,
+      role: el.getAttribute('role'),
+      text: (el.textContent||'').trim().slice(0,80),
+      name: el.getAttribute('name') || el.getAttribute('aria-label'),
+      href: el.href || null,
+      value: el.type === 'password' ? null : (el.value || null),
+      placeholder: el.placeholder || null,
+      checked: el.checked === true ? true : null,
+      disabled: el.disabled === true ? true : null
+    }};
+  }});
+  return JSON.stringify({{ title: document.title, url: location.href, elements: results }});
+}})()"#
+    );
+
+    match execute_script_in(&req.session, script, state, 15000, req.frame.as_deref()).await {
+        Ok(result) => {
+            let snap: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or(serde_json::Value::String(result));
+            let elem_count = snap.get("elements")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            McpToolResponse::success_json(serde_json::json!({
+                "session": req.session,
+                "snapshot": snap,
+                "element_count": elem_count,
+                "tip": "Use elements[].ref (e.g. 'e3') as the CSS selector in 'interact' actions",
+            }))
+        }
+        Err(e) => McpToolResponse::error("SNAPSHOT_FAILED", &e),
+    }
+}
+
+// ============================================================================
+// 8. Execute
 // ============================================================================
 
 async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolResponse {
@@ -2896,7 +2989,7 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "capture",
-            "description": "Read the current page state. Returns: URL, title, visible text, and a list of all interactive elements (buttons, links, inputs) with their CSS selectors — use these selectors with 'interact' or 'extract'. Also detects CAPTCHA/challenges and scores page interactivity (0-1). Use capture BEFORE extract to discover the correct CSS selectors for data extraction. Screenshots are saved and accessible via HTTP URL in the response.",
+            "description": "Read the current page state: URL, title, visible text, interactive elements, CAPTCHA/challenge detection, and interactivity score. Use BEFORE 'extract' to discover CSS selectors. NOTE: screenshots consume significant resources — prefer 'snapshot' when you only need element refs for clicking/typing. Use 'capture' with screenshot=true only when you need to visually inspect layout, images, or rendered output.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2983,8 +3076,22 @@ pub fn get_mcp_tools() -> serde_json::Value {
             }
         },
         {
+            "name": "snapshot",
+            "description": "⚡ FAST DOM element extraction — USE THIS BEFORE screenshot or capture when you need to identify interactive elements (buttons, inputs, links). Returns numbered refs (e1, e2, ...) that work directly as CSS selectors in 'interact'. Much faster and cheaper than screenshots. Workflow: snapshot → identify element ref → interact with ref. Use screenshot/capture only if you need to see visual layout or images.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "default": "default", "description": "Session name" },
+                    "all": { "type": "boolean", "default": false, "description": "Include non-interactive elements too (headings, paragraphs, images, tables). Default false = only interactive elements." },
+                    "within": { "type": "string", "description": "CSS selector to scope extraction to a subtree. Example: '#login-form', '.main-content'. Default: whole page." },
+                    "limit": { "type": "integer", "default": 200, "description": "Maximum number of elements to return" },
+                    "frame": { "type": "string", "description": "Target iframe (URL substring, frame name, or frame ID). Omit for main page." }
+                }
+            }
+        },
+        {
             "name": "execute",
-            "description": "Run JavaScript code in the browser page context. Use when other tools don't cover your needs — you have full DOM access. The result is returned as a typed JSON value (number, boolean, string, object, array, or null) with a 'result_type' field. Scripts with 'return' statements are auto-wrapped in a function. For complex extraction, prefer the 'extract' tool. For page inspection, prefer 'capture'.",
+            "description": "Run JavaScript code in the browser page context. Use when other tools don't cover your needs — you have full DOM access. The result is returned as a typed JSON value (number, boolean, string, object, array, or null) with a 'result_type' field. Scripts with 'return' statements are auto-wrapped in a function. For complex extraction, prefer the 'extract' tool. For page inspection, prefer 'snapshot' (faster, no image).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

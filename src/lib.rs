@@ -7,6 +7,8 @@
 #[cfg(feature = "server")]
 pub mod api_v2;
 #[cfg(feature = "server")]
+pub mod auto_login;
+#[cfg(feature = "server")]
 pub mod core;
 #[cfg(feature = "server")]
 pub mod mcp_v3;

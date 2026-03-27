@@ -11,10 +11,23 @@ mod updater;
 #[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation", after_help = "\
 QUICK START:
   wb auth save <TOKEN>       Save server token (shown at server startup)
-  wb session acquire mysite  Create/activate a browser session
+  wb session acquire mysite  Create/activate a browser session (sessions are PERSISTENT)
+  wb login run mysite        Auto-login via configured credentials (1Password or plaintext)
   wb open https://example.com -s mysite
   wb snapshot -s mysite      View interactive elements (e1, e2... refs)
   wb click e3 -s mysite      Click element #3 from snapshot
+
+SESSION PERSISTENCE (important for AI agents):
+  Sessions survive server restarts — cookies and login state are preserved.
+  Always run 'wb session acquire <name>' first; it tells you if the session is new or resumed.
+  If resumed and previously logged in, skip login — just navigate or snapshot directly.
+  Prefer long-lived named sessions over 'default' for multi-step automation.
+
+LOGIN WORKFLOW:
+  1. wb login config-set mysite config.json   Configure auto-login (1Password or plaintext)
+  2. wb session acquire mysite                Acquire session (check hints in output)
+  3. wb login status mysite                   Check login status
+  4. wb login run mysite                      Perform auto-login (idempotent — safe to re-run)
 
 EFFICIENT USAGE (for AI agents):
   wb snapshot -s S --all --within \".main\" --limit 30   Focused full-page capture
@@ -360,6 +373,51 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+
+    /// Auto-login a session using 1Password credentials
+    Login {
+        #[command(subcommand)]
+        action: LoginAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LoginAction {
+    /// Perform auto-login for a session (requires auto_login.toml or config.toml config)
+    Run {
+        /// Session name
+        #[arg(default_value = "default")]
+        name: String,
+        /// Force re-fetch credentials from 1Password, ignoring cache
+        #[arg(long)]
+        force: bool,
+        /// Override 1Password item name/ID for this request
+        #[arg(long)]
+        op_item: Option<String>,
+    },
+    /// Show auto-login status and history for a session
+    Status {
+        /// Session name
+        #[arg(default_value = "default")]
+        name: String,
+    },
+    /// List auto-login status for all sessions
+    List,
+    /// Get auto-login config for a session (as JSON)
+    ConfigGet {
+        /// Session name
+        #[arg(default_value = "default")]
+        name: String,
+    },
+    /// Set auto-login config for a session from a JSON file or stdin (-)
+    ConfigSet {
+        /// Session name
+        #[arg(default_value = "default")]
+        name: String,
+        /// JSON file path or - for stdin
+        #[arg(default_value = "-")]
+        file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -530,6 +588,23 @@ fn main() -> ExitCode {
             commands::inject_file::run(&client, &opts, &session, &file_url, &selector, frame.as_deref())
         }
         Command::Update { check } => commands::update::run(check),
+        Command::Login { action } => match action {
+            LoginAction::Run { name, force, op_item } => {
+                commands::login::run(&client, &opts, &name, force, op_item.as_deref())
+            }
+            LoginAction::Status { name } => {
+                commands::login::status(&client, &opts, &name)
+            }
+            LoginAction::List => {
+                commands::login::list(&client, &opts)
+            }
+            LoginAction::ConfigGet { name } => {
+                commands::login::config_get(&client, &opts, &name)
+            }
+            LoginAction::ConfigSet { name, file } => {
+                commands::login::config_set(&client, &opts, &name, &file)
+            }
+        },
     };
 
     // H7: Collect background update check (non-blocking, 1s timeout)

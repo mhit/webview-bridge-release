@@ -11,7 +11,34 @@ pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), W
     } else {
         let is_new = resp.body.get("is_new").and_then(|v| v.as_bool()).unwrap_or(false);
         let status = if is_new { "created" } else { "reused" };
-        output::print_result(opts, &format!("Session '{name}' ready ({status}) [{} ms]", resp.elapsed_ms));
+        let url = resp.body.get("current_url").and_then(|v| v.as_str());
+        let logged_in = resp.body
+            .get("auth_status").and_then(|a| a.get("logged_in")).and_then(|v| v.as_bool());
+
+        let login_note = match logged_in {
+            Some(true) => " [logged in]",
+            Some(false) => " [not logged in]",
+            None => "",
+        };
+        let url_note = url.map(|u| format!(" — {}", output::truncate_str(u, 60))).unwrap_or_default();
+
+        output::print_result(opts, &format!(
+            "Session '{name}' ready ({status}){login_note}{url_note} [{} ms]",
+            resp.elapsed_ms
+        ));
+
+        // Show contextual hints (skip in quiet mode)
+        if !opts.quiet {
+            if let Some(hints) = resp.body.get("hints").and_then(|v| v.as_array()) {
+                for h in hints {
+                    if let Some(s) = h.as_str() {
+                        // Replace placeholder with actual session name
+                        let msg = s.replace("<session>", name);
+                        eprintln!("  hint: {msg}");
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     middleware::Next,
     response::{Html, IntoResponse},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -225,8 +225,15 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/import/profiles", get(session_import_profiles))
         .route("/session/:name/cookies", get(session_get_cookies))
         .route("/session/:name/cookies", post(session_set_cookies))
+        .route("/session/auto-login", post(session_auto_login))
+        .route("/session/auto-login", get(session_auto_login_status))
+        .route("/session/auto-login/list", get(session_auto_login_list))
+        .route("/session/auto-login/config", get(session_auto_login_config_get))
+        .route("/session/auto-login/config", put(session_auto_login_config_set))
         // Navigation (synchronous, waits for load)
         .route("/navigate", post(navigate_v2))
+        // Snapshot — DOM element extraction (prefer over screenshot for AI navigation)
+        .route("/snapshot", post(snapshot_v2))
         .route("/click", post(click_v2))
         .route("/type", post(type_v2))
         .route("/execute", post(execute_v2))
@@ -682,6 +689,25 @@ async fn session_acquire(
             // last_url is kept in sync with every successful navigate call
             let current_url = manager.get_last_url(&session_name);
 
+            // Build contextual hints for AI agents
+            let auto_login_configured = crate::core::config::load_session_auto_login(&session_name).is_some();
+            let logged_in = response.auth_status.as_ref()
+                .map(|a| a.logged_in);
+            let mut hints: Vec<&str> = Vec::new();
+
+            if auto_login_configured && logged_in != Some(true) {
+                hints.push("Auto-login is configured. Run POST /session/auto-login {\"name\":\"<session>\"} to authenticate without manual steps.");
+            } else if !auto_login_configured {
+                hints.push("No auto-login configured. Set up PUT /session/auto-login/config to automate logins.");
+            }
+            if response.is_new {
+                hints.push("New session created. Sessions are persistent: cookies and login state survive server restarts.");
+                hints.push("Use POST /navigate to open a URL, or POST /session/auto-login if credentials are configured.");
+            } else {
+                hints.push("Session resumed. Cookies and login state are intact from the previous run.");
+                hints.push("Use POST /snapshot {\"session\":\"<session>\"} to see the current page without taking a screenshot.");
+            }
+
             (
                 StatusCode::OK,
                 Json(json!({
@@ -691,7 +717,8 @@ async fn session_acquire(
                     "profile": response.profile,
                     "auth_status": response.auth_status,
                     "restored_url": restored_url,
-                    "current_url": current_url
+                    "current_url": current_url,
+                    "hints": hints
                 })),
             )
         },
@@ -713,6 +740,976 @@ async fn session_acquire(
             })))
         }
     }
+}
+
+// ============================================================================
+// POST /session/auto-login  — 1Password auto-login
+// ============================================================================
+
+#[derive(serde::Deserialize)]
+struct AutoLoginRequest {
+    /// Session name
+    name: String,
+    /// If true, ignore the cached op_item_id and re-fetch from 1Password.
+    /// Use this when saved credentials are stale (e.g. password changed).
+    #[serde(default)]
+    force: bool,
+    /// Override the 1Password item name/ID for this request only.
+    /// Takes priority over both config and cache.
+    #[serde(default)]
+    op_item: Option<String>,
+    /// If true, take a screenshot after each key step and include URLs in the response.
+    /// Useful for debugging selector/timing issues without needing server logs.
+    #[serde(default)]
+    debug: bool,
+}
+
+/// Build JS to fill an input field — sets .value property AND fires input/change events.
+/// Works with React, Vue, Angular (which track state via events, not attribute mutations).
+/// Take a debug screenshot during auto-login and save it to the profile's screenshot dir.
+/// Returns the URL path like `/media/screenshots/{session}/autologin_{label}.png`.
+/// No-ops (returns None) when `enabled` is false.
+async fn auto_login_debug_screenshot(
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<AppCommand>,
+    session: &str,
+    label: &str,
+    enabled: bool,
+) -> Option<String> {
+    if !enabled { return None; }
+    let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(session);
+    let _ = std::fs::create_dir_all(&screenshot_dir);
+    let filename = format!("autologin_{}.png", label);
+    let save_path = screenshot_dir.join(&filename);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = cmd_tx.send(AppCommand::ScreenshotCdp {
+        id: session.to_string(),
+        full_page: false,
+        format: "png".to_string(),
+        quality: None,
+        frame: None,
+        resp_tx: tx,
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(Ok(bytes))) => {
+            if std::fs::write(&save_path, &bytes).is_ok() {
+                tracing::debug!("[AutoLogin/debug] screenshot saved: {}", save_path.display());
+                return Some(format!("/media/screenshots/{}/{}", session, filename));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn js_fill_input(selector: &str, value: &str) -> String {
+    let sel_json = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".to_string());
+    let val_json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
+    format!(r#"(function(){{
+        var sel={sel};var val={val};
+        var el=document.querySelector(sel);
+        if(!el)return JSON.stringify({{error:"Element not found: "+sel}});
+        try{{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set)d.set.call(el,val);else el.value=val;}}catch(e){{el.value=val;}}
+        el.dispatchEvent(new Event('input',{{bubbles:true}}));
+        el.dispatchEvent(new Event('change',{{bubbles:true}}));
+        return JSON.stringify({{ok:true}});
+    }})()"#, sel=sel_json, val=val_json)
+}
+
+
+/// POST /session/auto-login
+///
+/// Performs automatic login using credentials stored in 1Password.
+/// Requires `[session.auto_login.SESSION_NAME]` to be configured in config.toml.
+///
+/// Cache behaviour:
+/// - On success: the working 1Password item ID is saved to the session DB.
+/// - On failure: the cached item ID is cleared so the next attempt starts fresh.
+/// - `force: true`: skip the cache entirely and fetch fresh from 1Password.
+///
+/// Re-authentication: call with `force: true` when you suspect the cached
+/// session is stale (session expired, password changed, etc.).
+async fn session_auto_login(
+    State(state): State<V2AppState>,
+    Json(request): Json<AutoLoginRequest>,
+) -> impl IntoResponse {
+    use std::time::Duration;
+
+    let debug = request.debug;
+    let mut debug_screenshots: Vec<serde_json::Value> = Vec::new();
+
+    let manager = get_session_manager_v2();
+
+    // --- 1. Load auto-login config for this session ---
+    // Priority: profiles/{name}/auto_login.toml > config.toml [session.auto_login.{name}]
+    let app_cfg = crate::core::config::get_config();
+    let op_path_cfg = app_cfg.session.op_path.clone();
+    let auto_login_cfg = match crate::core::config::load_session_auto_login(&request.name) {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({
+            "success": false,
+            "error": {
+                "code": "AUTO_LOGIN_NOT_CONFIGURED",
+                "message": format!(
+                    "No auto_login config for session '{}'. \
+                     Create '%APPDATA%\\webview-bridge\\profiles\\{}\\auto_login.toml' \
+                     or add [session.auto_login.{}] to config.toml.",
+                    request.name, request.name, request.name
+                ),
+                "next_action": format!(
+                    "Create the file '%APPDATA%\\webview-bridge\\profiles\\{}\\auto_login.toml' \
+                     with fields: op_item, login_url, username_selector, password_selector, submit_selector",
+                    request.name
+                )
+            }
+        }))).into_response(),
+    };
+
+    // --- 2. Resolve credentials (1Password or plaintext fallback) ---
+    // Priority: 1Password (op_item in config/request) > plaintext username/password in config
+    let op_path_opt = crate::auto_login::find_op_binary(op_path_cfg.as_deref());
+    let has_op = op_path_opt.is_some();
+    let has_plaintext = auto_login_cfg.username.is_some() && auto_login_cfg.password.is_some();
+    let wants_op = request.op_item.is_some() || auto_login_cfg.op_item.is_some();
+
+    // Determine credential source
+    let creds = if has_op && (wants_op || !has_plaintext) {
+        // --- OP path ---
+        let op_path = op_path_opt.as_deref().unwrap().to_string();
+
+        // Determine which 1Password item to use
+        // Priority: request.op_item > config op_item > cached op_item_id > session name
+        let op_item = if let Some(ref item) = request.op_item {
+            item.clone()
+        } else if request.force {
+            match auto_login_cfg.op_item.clone() {
+                Some(i) => i,
+                None => return (StatusCode::BAD_REQUEST, Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "OP_ITEM_REQUIRED",
+                        "message": "force=true requires op_item in config or in the request body"
+                    }
+                }))).into_response(),
+            }
+        } else {
+            manager.get_auto_login_op_item_id(&request.name)
+                .or_else(|| auto_login_cfg.op_item.clone())
+                .unwrap_or_else(|| request.name.clone())
+        };
+
+        let op_path_clone = op_path.clone();
+        let op_item_clone = op_item.clone();
+        let op_vault_clone = auto_login_cfg.op_vault.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::auto_login::fetch_credentials(&op_path_clone, &op_item_clone, op_vault_clone.as_deref())
+        }).await {
+            Ok(Ok(c)) => c,
+            Ok(Err(e)) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": {
+                    "code": "CREDENTIALS_FETCH_FAILED",
+                    "message": format!("Failed to get credentials from 1Password: {}", e)
+                }
+            }))).into_response(),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": {
+                    "code": "TASK_PANIC",
+                    "message": format!("Credential fetch task panicked: {}", e)
+                }
+            }))).into_response(),
+        }
+    } else if has_plaintext {
+        // --- Plaintext fallback ---
+        tracing::warn!("[AutoLogin] Session '{}': using plaintext credentials (no 1Password). Consider using op_item for security.", request.name);
+        crate::auto_login::Credentials {
+            op_item_id: String::new(),
+            username: auto_login_cfg.username.clone().unwrap(),
+            password: auto_login_cfg.password.clone().unwrap(),
+        }
+    } else {
+        // --- Neither OP nor plaintext configured ---
+        let msg = if !has_op {
+            "1Password CLI (op) not found and no plaintext credentials configured. \
+             Install op via: winget install 1password-cli, \
+             or set username/password in auto_login.toml (insecure fallback)."
+        } else {
+            "No credentials configured. Set op_item (recommended) or username+password in auto_login.toml."
+        };
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "success": false,
+            "error": { "code": "NO_CREDENTIALS", "message": msg }
+        }))).into_response();
+    };
+
+    // Keep op_path for OTP use later (may be None if plaintext path was taken)
+    let op_path = crate::auto_login::find_op_binary(op_path_cfg.as_deref()).unwrap_or_default();
+
+    // --- 5. Get session handle ---
+    let handle = match manager.get_handle(&request.name) {
+        Some(h) => h,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({
+            "success": false,
+            "error": {
+                "code": "SESSION_NOT_ACTIVE",
+                "message": format!(
+                    "Session '{}' is not active. Call POST /session/acquire first.",
+                    request.name
+                )
+            }
+        }))).into_response(),
+    };
+
+    // --- 6. Check if already logged in (skip if logged_in_selector found) ---
+    if let Some(ref sel) = auto_login_cfg.logged_in_selector {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+            id: handle.id.clone(),
+            selector: sel.clone(),
+            timeout_ms: 2000,
+            frame: None,
+            resp_tx: tx,
+        });
+        if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(3), rx).await {
+            let _ = manager.record_auto_login_skipped(&request.name);
+            return (StatusCode::OK, Json(json!({
+                "success": true,
+                "logged_in": true,
+                "already_logged_in": true,
+                "username": creds.username,
+            }))).into_response();
+        }
+    }
+
+    // --- 7. Navigate to login URL if configured ---
+    if let Some(ref login_url) = auto_login_cfg.login_url {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::Navigate {
+            id: handle.id.clone(),
+            url: login_url.clone(),
+            resp_tx: tx,
+        });
+        let _ = tokio::time::timeout(Duration::from_secs(15), rx).await;
+    }
+
+    // --- 8. Wait for username field ---
+    {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+            id: handle.id.clone(),
+            selector: auto_login_cfg.username_selector.clone(),
+            timeout_ms: 10000,
+            frame: None,
+            resp_tx: tx,
+        });
+        if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
+            tokio::time::timeout(Duration::from_secs(12), rx).await
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({
+                "success": false,
+                "error": {
+                    "code": "LOGIN_FORM_NOT_FOUND",
+                    "message": format!(
+                        "Username field '{}' not found within 10s. Check login_url and username_selector in config.",
+                        auto_login_cfg.username_selector
+                    )
+                }
+            }))).into_response();
+        }
+    }
+
+    // --- 9. Fill username via JS (sets .value + fires input/change events, works with SPAs) ---
+    {
+        let (tx, rx) = oneshot::channel();
+        let script = js_fill_input(&auto_login_cfg.username_selector, &creds.username);
+        let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        });
+        if let Ok(Ok(Ok(result))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+            tracing::debug!("[AutoLogin] fill username result: {}", result);
+        }
+    }
+    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await {
+        debug_screenshots.push(json!({"step": "username_filled", "url": url}));
+    }
+
+    // --- 10. Fill password via CDP key events (TypeCdp fires keydown/char/keyup per char) ---
+    {
+        // Click field first to focus
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+            id: handle.id.clone(),
+            selector: auto_login_cfg.password_selector.clone(),
+            human_mode: false,
+            resp_tx: tx,
+        });
+        let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+    }
+    {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+            id: handle.id.clone(),
+            text: creds.password.clone(),
+            char_delay_ms: 30,
+            human_mode: false,
+            resp_tx: tx,
+        });
+        if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(15), rx).await {
+            tracing::debug!("[AutoLogin] fill password: {:?}", r);
+        }
+    }
+    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_password_filled", debug).await {
+        debug_screenshots.push(json!({"step": "password_filled", "url": url}));
+    }
+
+    // --- 11. Submit via CDP physical click (get_element_center prefers visible element) ---
+    {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+            id: handle.id.clone(),
+            selector: auto_login_cfg.submit_selector.clone(),
+            human_mode: false,
+            resp_tx: tx,
+        });
+        if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+            tracing::info!("[AutoLogin] submit click: {:?}", r);
+        }
+    }
+    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_after_submit", debug).await {
+        debug_screenshots.push(json!({"step": "after_submit", "url": url}));
+    }
+
+    // --- 12. Handle OTP/TOTP if configured ---
+    if auto_login_cfg.otp_selector.is_some() && auto_login_cfg.otp_op_ref.is_some() {
+        let otp_sel = auto_login_cfg.otp_selector.as_ref().unwrap().clone();
+        let otp_ref = auto_login_cfg.otp_op_ref.as_ref().unwrap().clone();
+
+        // Wait for OTP field to appear
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+            id: handle.id.clone(),
+            selector: otp_sel.clone(),
+            timeout_ms: 10000,
+            frame: None,
+            resp_tx: tx,
+        });
+        if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
+            // Fetch TOTP code from 1Password
+            let op_path_otp = op_path.clone();
+            let totp_code = tokio::task::spawn_blocking(move || {
+                crate::auto_login::read_secret(&op_path_otp, &otp_ref)
+            }).await;
+
+            if let Ok(Ok(code)) = totp_code {
+                // Click OTP field
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                    id: handle.id.clone(),
+                    selector: otp_sel.clone(),
+                    human_mode: false,
+                    resp_tx: tx,
+                });
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+
+                // Type OTP code
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+                    id: handle.id.clone(),
+                    text: code,
+                    char_delay_ms: 0,
+                    human_mode: false,
+                    resp_tx: tx,
+                });
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+
+                // Press Enter to submit OTP
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::PressKeyCdp {
+                    id: handle.id.clone(),
+                    key: "Return".to_string(),
+                    resp_tx: tx,
+                });
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+            }
+        }
+    }
+
+    // --- 13. Verify login success ---
+    let login_success = if let Some(ref sel) = auto_login_cfg.logged_in_selector {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+            id: handle.id.clone(),
+            selector: sel.clone(),
+            timeout_ms: 15000,
+            frame: None,
+            resp_tx: tx,
+        });
+        matches!(
+            tokio::time::timeout(Duration::from_secs(17), rx).await,
+            Ok(Ok(Ok(_)))
+        )
+    } else {
+        // No selector to verify — assume success after waiting briefly for navigation
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        true
+    };
+
+    if !login_success {
+        let err = "Login form submitted but logged_in_selector was not found within 15s.";
+        let _ = manager.record_auto_login_failure(&request.name, err);
+        tracing::warn!("[AutoLogin] Session '{}' login failed. Cache cleared.", request.name);
+        return (StatusCode::OK, Json(json!({
+            "success": false,
+            "logged_in": false,
+            "error": {
+                "code": "LOGIN_VERIFICATION_FAILED",
+                "message": err,
+                "next_action": "Retry with force=true to re-fetch credentials, or verify logged_in_selector and selectors in auto_login.toml."
+            }
+        }))).into_response();
+    }
+
+    // --- 14. Process extra_steps (multi-stage auth, e.g. RMS → Rakuten SSO) ---
+    let mut steps_completed: usize = 0;
+    for (step_idx, step) in auto_login_cfg.extra_steps.iter().enumerate() {
+        tracing::info!("[AutoLogin] Session '{}' — extra step {}", request.name, step_idx + 1);
+
+        // Wait for URL to contain the expected pattern
+        if let Some(ref url_fragment) = step.wait_url_contains {
+            let frag = url_fragment.clone();
+            let session_id = handle.id.clone();
+            // Poll current URL every 500ms for up to 15s
+            let mut found = false;
+            for _ in 0..30 {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                    id: session_id.clone(),
+                    script: "location.href".to_string(),
+                    resp_tx: tx,
+                });
+                if let Ok(Ok(Ok(url_str))) = tokio::time::timeout(Duration::from_secs(2), rx).await {
+                    let url_clean = url_str.trim_matches('"').to_string();
+                    if url_clean.contains(frag.as_str()) {
+                        found = true;
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            if !found {
+                tracing::warn!(
+                    "[AutoLogin] Step {}: URL pattern '{}' not reached within 15s. Skipping remaining steps.",
+                    step_idx + 1, url_fragment
+                );
+                break;
+            }
+            tracing::info!("[AutoLogin] Step {}: URL pattern '{}' matched.", step_idx + 1, url_fragment);
+        }
+
+        // Fetch credentials for this step
+        // Priority: step.op_item (OP) > step.username/password (plaintext) > reuse main creds
+        let step_creds = if let Some(ref item) = step.op_item {
+            let op_path_s = op_path.clone();
+            let item_s = item.clone();
+            let vault_s = step.op_vault.clone().or_else(|| auto_login_cfg.op_vault.clone());
+            match tokio::task::spawn_blocking(move || {
+                crate::auto_login::fetch_credentials(&op_path_s, &item_s, vault_s.as_deref())
+            }).await {
+                Ok(Ok(c)) => Some(c),
+                Ok(Err(e)) => {
+                    tracing::warn!("[AutoLogin] Step {}: Failed to fetch 1Password item '{}': {}", step_idx + 1, item, e);
+                    None
+                }
+                Err(_) => None,
+            }
+        } else if step.username.is_some() && step.password.is_some() {
+            // Plaintext fallback for this step
+            Some(crate::auto_login::Credentials {
+                op_item_id: String::new(),
+                username: step.username.clone().unwrap(),
+                password: step.password.clone().unwrap(),
+            })
+        } else {
+            // Reuse main credentials if no separate config
+            Some(crate::auto_login::Credentials {
+                op_item_id: creds.op_item_id.clone(),
+                username: creds.username.clone(),
+                password: creds.password.clone(),
+            })
+        };
+
+        // Fill username if selector provided
+        if let Some(ref sel) = step.username_selector {
+            // Wait for the username field
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: sel.clone(),
+                timeout_ms: 10000,
+                frame: None,
+                resp_tx: tx,
+            });
+            let _ = tokio::time::timeout(Duration::from_secs(12), rx).await;
+
+            // Fill username via JS
+            if let Some(ref sc) = step_creds {
+                let (tx, rx) = oneshot::channel();
+                let script = js_fill_input(sel, &sc.username);
+                let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                    id: handle.id.clone(),
+                    script,
+                    resp_tx: tx,
+                });
+                if let Ok(Ok(Ok(r))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+                    tracing::debug!("[AutoLogin] step {} fill username: {}", step_idx + 1, r);
+                }
+            }
+            if let Some(url) = auto_login_debug_screenshot(
+                &state.cmd_tx, &handle.id,
+                &format!("s{}_username_filled", step_idx + 1), debug).await {
+                debug_screenshots.push(json!({"step": format!("extra_{}_username_filled", step_idx+1), "url": url}));
+            }
+
+            // Click "Next" button — use CDP physical click (get_element_center picks visible element)
+            if let Some(ref next_sel) = step.next_selector {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                    id: handle.id.clone(),
+                    selector: next_sel.clone(),
+                    human_mode: false,
+                    resp_tx: tx,
+                });
+                if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+                    tracing::info!("[AutoLogin] step {} next click: {:?}", step_idx + 1, r);
+                }
+                if let Some(url) = auto_login_debug_screenshot(
+                    &state.cmd_tx, &handle.id,
+                    &format!("s{}_next_clicked", step_idx + 1), debug).await {
+                    debug_screenshots.push(json!({"step": format!("extra_{}_next_clicked", step_idx+1), "url": url}));
+                }
+
+                // Wait for the password field to appear
+                if let Some(ref wait_sel) = step.wait_password_selector {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                        id: handle.id.clone(),
+                        selector: wait_sel.clone(),
+                        timeout_ms: 10000,
+                        frame: None,
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(12), rx).await;
+                    // Extra wait for SPA transition animation to fully complete before interacting.
+                    // Without this, TypeCdp events land on the pre-animation DOM element which
+                    // React discards when it re-mounts the input after the transition.
+                    tokio::time::sleep(Duration::from_millis(800)).await;
+                }
+            }
+        }
+
+        // Fill password via CDP key events (TypeCdp) — SPAs may require keydown/keyup to enable submit
+        if let Some(ref sel) = step.password_selector {
+            if let Some(ref sc) = step_creds {
+                // Click to focus the field
+                {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                        id: handle.id.clone(),
+                        selector: sel.clone(),
+                        human_mode: false,
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                }
+                // Type password via CDP keyboard events (fires keydown/char/keyup per char)
+                {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+                        id: handle.id.clone(),
+                        text: sc.password.clone(),
+                        char_delay_ms: 30,
+                        human_mode: false,
+                        resp_tx: tx,
+                    });
+                    if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(15), rx).await {
+                        tracing::debug!("[AutoLogin] step {} type password: {:?}", step_idx + 1, r);
+                    }
+                }
+                // Wait for SPA to process key events and enable the submit button
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        if let Some(url) = auto_login_debug_screenshot(
+            &state.cmd_tx, &handle.id,
+            &format!("s{}_password_filled", step_idx + 1), debug).await {
+            debug_screenshots.push(json!({"step": format!("extra_{}_password_filled", step_idx+1), "url": url}));
+        }
+
+        // --- Pre-submit: wait for async bot-detection challenges (PoW etc.) ---
+        // 1. If challenge_done_js is set, poll until it returns truthy.
+        if let Some(ref challenge_js) = step.challenge_done_js {
+            let deadline = tokio::time::Instant::now()
+                + Duration::from_millis(step.challenge_timeout_ms);
+            let mut challenge_ready = false;
+            while tokio::time::Instant::now() < deadline {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                    id: handle.id.clone(),
+                    script: format!("(function(){{ try {{ return !!({js}); }} catch(e) {{ return false; }} }})()", js = challenge_js),
+                    resp_tx: tx,
+                });
+                if let Ok(Ok(Ok(result))) = tokio::time::timeout(Duration::from_secs(3), rx).await {
+                    let ready = result.trim() == "true";
+                    if ready {
+                        challenge_ready = true;
+                        tracing::info!("[AutoLogin] step {} challenge ready.", step_idx + 1);
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            if !challenge_ready {
+                tracing::warn!("[AutoLogin] step {} challenge_done_js timed out — submitting anyway.", step_idx + 1);
+            }
+        }
+        // 2. Fixed pre-submit wait (catches timing issues even without challenge_done_js).
+        if step.pre_submit_wait_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(step.pre_submit_wait_ms)).await;
+        }
+
+        // Click submit — use CDP physical click (get_element_center prefers visible elements)
+        if let Some(ref sel) = step.submit_selector {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                id: handle.id.clone(),
+                selector: sel.clone(),
+                human_mode: false,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+                tracing::info!("[AutoLogin] step {} submit: {:?}", step_idx + 1, r);
+            }
+            // Also try Enter key as fallback (some SPAs respond to keyboard submit)
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::PressKeyCdp {
+                    id: handle.id.clone(),
+                    key: "Return".to_string(),
+                    resp_tx: tx,
+                });
+                let _ = tokio::time::timeout(Duration::from_secs(3), rx).await;
+            }
+            // Small delay to let navigation start before snapping
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if let Some(url) = auto_login_debug_screenshot(
+                &state.cmd_tx, &handle.id,
+                &format!("s{}_after_submit", step_idx + 1), debug).await {
+                debug_screenshots.push(json!({"step": format!("extra_{}_after_submit", step_idx+1), "url": url}));
+            }
+        }
+
+        // Handle OTP for this step
+        if step.otp_selector.is_some() && step.otp_op_ref.is_some() {
+            let otp_sel = step.otp_selector.as_ref().unwrap().clone();
+            let otp_ref = step.otp_op_ref.as_ref().unwrap().clone();
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: otp_sel.clone(),
+                timeout_ms: 10000,
+                frame: None,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
+                let op_path_otp = op_path.clone();
+                if let Ok(Ok(code)) = tokio::task::spawn_blocking(move || {
+                    crate::auto_login::read_secret(&op_path_otp, &otp_ref)
+                }).await {
+                    let (tx, rx) = oneshot::channel();
+                    let script = js_fill_input(&otp_sel, &code);
+                    let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                        id: handle.id.clone(),
+                        script,
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::PressKeyCdp {
+                        id: handle.id.clone(),
+                        key: "Return".to_string(),
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                }
+            }
+        }
+
+        // Verify step completion
+        if let Some(ref done_sel) = step.done_selector {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: done_sel.clone(),
+                timeout_ms: 15000,
+                frame: None,
+                resp_tx: tx,
+            });
+            let step_ok = matches!(
+                tokio::time::timeout(Duration::from_secs(17), rx).await,
+                Ok(Ok(Ok(_)))
+            );
+            if step_ok {
+                tracing::info!("[AutoLogin] Step {} completed (done_selector found).", step_idx + 1);
+            } else {
+                tracing::warn!("[AutoLogin] Step {}: done_selector '{}' not found after submit.", step_idx + 1, done_sel);
+            }
+        } else {
+            // No done_selector — wait briefly for navigation
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            tracing::info!("[AutoLogin] Step {} done (no done_selector, waited 2s).", step_idx + 1);
+        }
+        steps_completed += 1;
+    }
+
+    // --- 15. All steps completed — record success and return ---
+    let _ = manager.record_auto_login_success(&request.name, &creds.op_item_id, &creds.username);
+    tracing::info!(
+        "[AutoLogin] Session '{}' logged in (item_id='{}', user='{}'), {} extra steps",
+        request.name, creds.op_item_id, creds.username, steps_completed
+    );
+    let mut resp = json!({
+        "success": true,
+        "logged_in": true,
+        "username": creds.username,
+        "op_item_id": creds.op_item_id,
+        "extra_steps_completed": steps_completed,
+    });
+    if debug && !debug_screenshots.is_empty() {
+        resp["debug_screenshots"] = json!(debug_screenshots);
+    }
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+// ============================================================================
+// GET /session/auto-login — Auth status for a single session
+// GET /session/auto-login/list — Auth status for all sessions
+// ============================================================================
+
+/// Query params for GET /session/auto-login
+#[derive(serde::Deserialize)]
+struct AutoLoginStatusQuery {
+    name: String,
+}
+
+/// GET /session/auto-login?name=<session>
+///
+/// Returns the auto-login configuration status and login history for a session.
+/// Use this to determine whether to call POST /session/auto-login.
+///
+/// AI usage: call this before attempting any action that requires authentication.
+async fn session_auto_login_status(
+    axum::extract::Query(query): axum::extract::Query<AutoLoginStatusQuery>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let name = &query.name;
+
+    // Check if session exists
+    let session_exists = manager.get_handle(name).is_some() || {
+        manager.list().ok()
+            .map(|r| r.sessions.into_iter().any(|s| s.name == *name))
+            .unwrap_or(false)
+    };
+
+    // Check if auto-login is configured
+    let configured = crate::core::config::load_session_auto_login(name).is_some();
+    let config_path = crate::core::config::AppConfig::session_auto_login_path(name);
+    let has_session_file = config_path.exists();
+
+    // Get login history
+    let state = manager.get_auto_login_state(name);
+
+    let next_action = build_next_action(name, configured, &state);
+
+    (StatusCode::OK, Json(json!({
+        "session": name,
+        "session_exists": session_exists,
+        "configured": configured,
+        "config_source": if has_session_file { "session_file" } else if configured { "config_toml" } else { "none" },
+        "config_file_path": config_path.to_string_lossy(),
+        "last_result": state.as_ref().and_then(|s| s.last_result.as_deref()),
+        "last_at": state.as_ref().and_then(|s| s.last_at.as_deref()),
+        "last_username": state.as_ref().and_then(|s| s.last_username.as_deref()),
+        "last_error": state.as_ref().and_then(|s| s.last_error.as_deref()),
+        "attempt_count": state.as_ref().map(|s| s.attempt_count).unwrap_or(0),
+        "consecutive_failures": state.as_ref().map(|s| s.consecutive_failures).unwrap_or(0),
+        "cached_op_item_id": state.as_ref().and_then(|s| s.op_item_id.as_deref()),
+        "next_action": next_action,
+    }))).into_response()
+}
+
+/// GET /session/auto-login/list
+///
+/// Returns auto-login status for ALL sessions that have been configured or attempted.
+/// Use this to audit which sessions need re-authentication.
+async fn session_auto_login_list() -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let all_sessions = manager.list().map(|r| r.sessions).unwrap_or_default();
+
+    let mut items = Vec::new();
+    for session_info in &all_sessions {
+        let name = &session_info.name;
+        let configured = crate::core::config::load_session_auto_login(name).is_some();
+        let state = manager.get_auto_login_state(name);
+        let next_action = build_next_action(name, configured, &state);
+        let config_path = crate::core::config::AppConfig::session_auto_login_path(name);
+
+        items.push(json!({
+            "session": name,
+            "active": session_info.active,
+            "configured": configured,
+            "config_source": if config_path.exists() { "session_file" } else if configured { "config_toml" } else { "none" },
+            "last_result": state.as_ref().and_then(|s| s.last_result.as_deref()),
+            "last_at": state.as_ref().and_then(|s| s.last_at.as_deref()),
+            "last_username": state.as_ref().and_then(|s| s.last_username.as_deref()),
+            "consecutive_failures": state.as_ref().map(|s| s.consecutive_failures).unwrap_or(0),
+            "next_action": next_action,
+        }));
+    }
+
+    (StatusCode::OK, Json(json!({
+        "success": true,
+        "count": items.len(),
+        "sessions": items,
+    }))).into_response()
+}
+
+/// Build a human+AI readable `next_action` hint based on current state
+fn build_next_action(
+    name: &str,
+    configured: bool,
+    state: &Option<crate::core::session_v2::AutoLoginState>,
+) -> String {
+    if !configured {
+        return format!(
+            "Create '%APPDATA%\\webview-bridge\\profiles\\{}\\auto_login.toml' with login selectors and op_item",
+            name
+        );
+    }
+    match state.as_ref().and_then(|s| s.last_result.as_deref()) {
+        None => format!("No login attempt yet. Call POST /session/auto-login {{\"name\": \"{}\"}}", name),
+        Some("success") | Some("already_logged_in") => format!(
+            "Last login succeeded. If session expired, call POST /session/auto-login {{\"name\": \"{}\", \"force\": true}}",
+            name
+        ),
+        Some("failed") => {
+            let failures = state.as_ref().map(|s| s.consecutive_failures).unwrap_or(0);
+            if failures >= 3 {
+                format!(
+                    "Login failed {} times. Check 1Password credentials and selectors in auto_login.toml, then retry with force=true",
+                    failures
+                )
+            } else {
+                format!(
+                    "Last login failed. Retry: POST /session/auto-login {{\"name\": \"{}\", \"force\": true}}",
+                    name
+                )
+            }
+        }
+        _ => format!("Call POST /session/auto-login {{\"name\": \"{}\"}}", name),
+    }
+}
+
+// ============================================================================
+// GET /session/auto-login/config  — read config
+// PUT /session/auto-login/config  — write config
+// ============================================================================
+
+/// Query params for GET /session/auto-login/config
+#[derive(serde::Deserialize)]
+struct AutoLoginConfigQuery {
+    name: String,
+}
+
+/// GET /session/auto-login/config?name=<session>
+///
+/// Returns the auto-login configuration for a session as JSON.
+/// Returns 404 if not configured.
+async fn session_auto_login_config_get(
+    Query(q): Query<AutoLoginConfigQuery>,
+) -> impl IntoResponse {
+    let path = crate::core::config::AppConfig::session_auto_login_path(&q.name);
+    match crate::core::config::load_session_auto_login(&q.name) {
+        Some(cfg) => Json(json!({
+            "success": true,
+            "session": q.name,
+            "config": cfg,
+            "path": path.to_string_lossy(),
+        })).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(json!({
+            "success": false,
+            "error": {
+                "code": "AUTO_LOGIN_NOT_CONFIGURED",
+                "message": format!("No auto_login config for session '{}'.", q.name),
+                "path": path.to_string_lossy(),
+            }
+        }))).into_response(),
+    }
+}
+
+/// Request body for PUT /session/auto-login/config
+#[derive(serde::Deserialize)]
+struct AutoLoginConfigSetRequest {
+    /// Session name
+    name: String,
+    /// Config fields (merged into existing or created fresh)
+    #[serde(flatten)]
+    config: crate::core::config::AutoLoginConfig,
+}
+
+/// PUT /session/auto-login/config
+///
+/// Saves auto-login configuration for a session.
+/// Creates or overwrites `profiles/{name}/auto_login.toml`.
+async fn session_auto_login_config_set(
+    Json(request): Json<AutoLoginConfigSetRequest>,
+) -> impl IntoResponse {
+    let path = crate::core::config::AppConfig::session_auto_login_path(&request.name);
+
+    // Ensure profile directory exists
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": { "code": "DIR_CREATE_FAILED", "message": format!("{}", e) }
+            }))).into_response();
+        }
+    }
+
+    // Serialize config to TOML
+    let toml_str = match toml::to_string_pretty(&request.config) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "success": false,
+            "error": { "code": "SERIALIZE_FAILED", "message": format!("{}", e) }
+        }))).into_response(),
+    };
+
+    if let Err(e) = std::fs::write(&path, &toml_str) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "success": false,
+            "error": { "code": "WRITE_FAILED", "message": format!("{}", e) }
+        }))).into_response();
+    }
+
+    Json(json!({
+        "success": true,
+        "session": request.name,
+        "path": path.to_string_lossy(),
+        "config": request.config,
+    })).into_response()
 }
 
 /// Request body for release
@@ -1884,6 +2881,140 @@ async fn execute_v2(
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms."),
+    }
+}
+
+// ============================================================================
+// POST /snapshot — DOM element extraction (use instead of screenshots for AI)
+// ============================================================================
+
+/// Request body for POST /snapshot
+#[derive(serde::Deserialize)]
+struct SnapshotRequest {
+    /// Session name
+    session: String,
+    /// If true, include non-interactive elements (headings, paragraphs, images, tables)
+    #[serde(default)]
+    all: bool,
+    /// CSS selector to scope extraction to a subtree (default: body)
+    #[serde(default)]
+    within: Option<String>,
+    /// Maximum number of elements to return (default: 200)
+    #[serde(default = "default_snapshot_limit")]
+    limit: usize,
+    /// Optional frame specifier (URL substring, frame name, or frame ID)
+    #[serde(default)]
+    frame: Option<String>,
+}
+
+fn default_snapshot_limit() -> usize { 200 }
+
+/// POST /snapshot
+///
+/// Extracts all interactive elements from the page DOM and returns them as
+/// numbered references (e1, e2, ...) that can be used with /click, /type, etc.
+///
+/// **Prefer this over /screenshot** for AI navigation — it's faster, uses less
+/// bandwidth, and gives structured data (selector refs, text, type, href, value).
+///
+/// The returned `elements[].ref` values (e.g. "e3") can be passed as `selector`
+/// to /click and /type without needing to identify CSS selectors manually.
+async fn snapshot_v2(
+    State(state): State<V2AppState>,
+    Json(request): Json<SnapshotRequest>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let manager = get_session_manager_v2();
+
+    let handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+    };
+
+    // Build the same snapshot JS used by the wb CLI
+    let scope_selector_json = serde_json::to_string(
+        request.within.as_deref().unwrap_or("body")
+    ).unwrap_or_else(|_| "\"body\"".to_string());
+
+    let element_selectors = if request.all {
+        r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"]),h1,h2,h3,h4,h5,h6,p,li,img,table,th,td,label,span[class],div[class]'"#
+    } else {
+        r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"])'"#
+    };
+
+    let limit = request.limit;
+    let script = format!(
+        r#"(function(){{
+  document.querySelectorAll('[data-wb-ref]').forEach(el => el.removeAttribute('data-wb-ref'));
+  const scope = document.querySelector({scope_selector_json}) || document.body;
+  const sels = {element_selectors};
+  const els = [...scope.querySelectorAll(sels)].filter(el => {{
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  }}).slice(0, {limit});
+  let id = 1;
+  const results = els.map(el => {{
+    const ref = 'e' + id++;
+    el.setAttribute('data-wb-ref', ref);
+    return {{
+      ref, tag: el.tagName.toLowerCase(),
+      type: el.type || null,
+      role: el.getAttribute('role'),
+      text: (el.textContent||'').trim().slice(0,80),
+      name: el.getAttribute('name') || el.getAttribute('aria-label'),
+      href: el.href || null,
+      value: el.type === 'password' ? null : (el.value || null),
+      placeholder: el.placeholder || null,
+      checked: el.checked === true ? true : null,
+      disabled: el.disabled === true ? true : null
+    }};
+  }});
+  return JSON.stringify({{ title: document.title, url: location.href, elements: results }});
+}})()"#
+    );
+
+    let (tx, rx) = oneshot::channel();
+    let cmd = if let Some(ref frame) = request.frame {
+        AppCommand::ExecuteInFrame {
+            id: handle.id.clone(),
+            script,
+            frame: frame.clone(),
+            resp_tx: tx,
+        }
+    } else {
+        AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script,
+            resp_tx: tx,
+        }
+    };
+
+    if state.cmd_tx.send(cmd).is_err() {
+        return error_response(Wbp2Error::InternalError, "Failed to send command");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(15), rx).await {
+        Ok(Ok(Ok(result))) => {
+            // Result is a JSON string from JS — parse it
+            let snap: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or(serde_json::Value::String(result));
+            let elem_count = snap.get("elements")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            (StatusCode::OK, Json(json!({
+                "success": true,
+                "session": request.session,
+                "snapshot": snap,
+                "element_count": elem_count,
+                "elapsed_ms": start.elapsed().as_millis() as u64
+            }))).into_response()
+        }
+        Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost."),
+        Err(_) => error_response(Wbp2Error::InternalError, "Snapshot timed out."),
     }
 }
 

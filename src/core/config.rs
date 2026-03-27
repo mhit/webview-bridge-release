@@ -3,6 +3,7 @@
 //! Persistent configuration for WebView Bridge
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Application-wide configuration
@@ -122,28 +123,163 @@ impl Default for AiSettings {
     }
 }
 
+/// Auto-login configuration for a named session using 1Password CLI
+///
+/// Example config.toml:
+/// ```toml
+/// [session.auto_login.rms]
+/// op_item = "grp02.id.rakuten.co.jp"
+/// username_selector = "#loginInner_u"
+/// password_selector = "#loginInner_p"
+/// submit_selector = "#loginInner_submit"
+/// logged_in_selector = ".navi-logout"
+/// login_url = "https://grp02.id.rakuten.co.jp/rms/nid/vc"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoLoginConfig {
+    /// 1Password item name or ID (e.g. "grp02.id.rakuten.co.jp")
+    /// If not set, WB will look up the cached item from the session DB
+    #[serde(default)]
+    pub op_item: Option<String>,
+    /// 1Password vault name (required when using a service account token).
+    /// e.g. "Personal", "Private", "Employee"
+    #[serde(default)]
+    pub op_vault: Option<String>,
+    /// Plaintext username (OP-free fallback). Use only when 1Password is not available.
+    /// If set together with op_item, op_item takes precedence.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// Plaintext password (OP-free fallback). Use only when 1Password is not available.
+    /// WARNING: storing passwords in config files is insecure. Use op_item instead.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// CSS selector for the username/email input field
+    pub username_selector: String,
+    /// CSS selector for the password input field
+    pub password_selector: String,
+    /// CSS selector for the login submit button
+    pub submit_selector: String,
+    /// CSS selector to check if already logged in (skip login if found)
+    #[serde(default)]
+    pub logged_in_selector: Option<String>,
+    /// URL to navigate to before filling the login form
+    #[serde(default)]
+    pub login_url: Option<String>,
+    /// Wait for OTP/2FA input after form submit (selector for OTP field)
+    #[serde(default)]
+    pub otp_selector: Option<String>,
+    /// 1Password TOTP field reference (e.g. "op://Personal/item/one-time password")
+    #[serde(default)]
+    pub otp_op_ref: Option<String>,
+    /// Additional login steps for multi-step auth flows (e.g. RMS → Rakuten SSO).
+    /// Each step is triggered when the URL contains `wait_url_contains`.
+    #[serde(default)]
+    pub extra_steps: Vec<AutoLoginStep>,
+}
+
+/// A single step in a multi-step login flow.
+///
+/// Used in `AutoLoginConfig.extra_steps` to handle sites that require
+/// multiple authentication stages (e.g. service login → SSO → OTP).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoLoginStep {
+    /// Wait until the page URL contains this substring before executing this step.
+    /// If not set, executes immediately after the previous step.
+    #[serde(default)]
+    pub wait_url_contains: Option<String>,
+    /// 1Password item for this step (overrides the parent AutoLoginConfig op_item).
+    #[serde(default)]
+    pub op_item: Option<String>,
+    /// 1Password vault for this step (overrides the parent AutoLoginConfig op_vault).
+    #[serde(default)]
+    pub op_vault: Option<String>,
+    /// Plaintext username for this step (OP-free fallback).
+    #[serde(default)]
+    pub username: Option<String>,
+    /// Plaintext password for this step (OP-free fallback).
+    #[serde(default)]
+    pub password: Option<String>,
+    /// CSS selector for the username/email input (optional — skip if None).
+    #[serde(default)]
+    pub username_selector: Option<String>,
+    /// CSS selector for an intermediate "Next" button (e.g. username-only first screen).
+    /// If set: click this button after filling username, then wait for password field.
+    #[serde(default)]
+    pub next_selector: Option<String>,
+    /// CSS selector to wait for before filling password (used after clicking next_selector).
+    #[serde(default)]
+    pub wait_password_selector: Option<String>,
+    /// CSS selector for the password input (optional — skip if None).
+    #[serde(default)]
+    pub password_selector: Option<String>,
+    /// CSS selector for the submit button.
+    #[serde(default)]
+    pub submit_selector: Option<String>,
+    /// CSS selector indicating this step completed successfully (waits up to 15s).
+    #[serde(default)]
+    pub done_selector: Option<String>,
+    /// Wait for OTP/2FA input after submit (selector for OTP field).
+    #[serde(default)]
+    pub otp_selector: Option<String>,
+    /// 1Password TOTP reference for this step (e.g. "op://Vault/Item/one-time password").
+    #[serde(default)]
+    pub otp_op_ref: Option<String>,
+    /// Extra wait (ms) before clicking submit — allows async bot-detection challenges (e.g.
+    /// Proof-of-Work like r10-challenger) to complete before the form is submitted.
+    /// Default: 1000ms.  Set higher (e.g. 3000) for slow PoW or laggy pages.
+    #[serde(default = "default_pre_submit_wait_ms")]
+    pub pre_submit_wait_ms: u64,
+    /// JavaScript snippet evaluated before submit.  The automation waits until the expression
+    /// returns a truthy value (up to `challenge_timeout_ms`).
+    /// Example: `"typeof window.r10ChallengeReady !== 'undefined' && window.r10ChallengeReady"`
+    /// Leave unset to skip this check (the `pre_submit_wait_ms` delay still applies).
+    #[serde(default)]
+    pub challenge_done_js: Option<String>,
+    /// Timeout (ms) for `challenge_done_js` polling.  Default: 15000.
+    #[serde(default = "default_challenge_timeout_ms")]
+    pub challenge_timeout_ms: u64,
+}
+
+fn default_pre_submit_wait_ms() -> u64 { 1000 }
+fn default_challenge_timeout_ms() -> u64 { 15000 }
+
 /// Session defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSettings {
     /// Default headless mode
     #[serde(default)]
     pub default_headless: bool,
-    
+
     /// Default window width
     #[serde(default = "default_width")]
     pub default_width: u32,
-    
+
     /// Default window height
     #[serde(default = "default_height")]
     pub default_height: u32,
-    
+
     /// Session timeout in seconds (0 = no timeout)
     #[serde(default = "default_session_timeout")]
     pub timeout_seconds: u64,
-    
+
     /// Persist session profiles
     #[serde(default = "default_true")]
     pub persist_profiles: bool,
+
+    /// Per-session auto-login config (session_name -> AutoLoginConfig)
+    #[serde(default)]
+    pub auto_login: HashMap<String, AutoLoginConfig>,
+
+    /// Path to 1Password CLI binary (default: auto-detect op in PATH or winget location)
+    #[serde(default)]
+    pub op_path: Option<String>,
+
+    /// 1Password service account token (ops_...).
+    /// When set, all `op` CLI calls use this token instead of interactive auth.
+    /// Create at: 1password.com → Settings → Developer → Service Accounts
+    /// Eliminates all password prompts for background/server use.
+    #[serde(default)]
+    pub op_service_account_token: Option<String>,
 }
 
 fn default_width() -> u32 { 1280 }
@@ -158,6 +294,9 @@ impl Default for SessionSettings {
             default_height: default_height(),
             timeout_seconds: default_session_timeout(),
             persist_profiles: true,
+            auto_login: HashMap::new(),
+            op_path: None,
+            op_service_account_token: None,
         }
     }
 }
@@ -347,6 +486,40 @@ impl AppConfig {
     pub fn session_uploads_dir(session: &str) -> PathBuf {
         Self::uploads_dir().join(session)
     }
+
+    /// Per-session auto_login.toml path: {data_dir}/profiles/{name}/auto_login.toml
+    pub fn session_auto_login_path(session_name: &str) -> PathBuf {
+        Self::profile_dir(session_name).join("auto_login.toml")
+    }
+}
+
+/// Load auto-login config for a session.
+///
+/// Priority:
+/// 1. `{data_dir}/profiles/{name}/auto_login.toml` (per-session file)
+/// 2. `config.toml` `[session.auto_login.{name}]` (global fallback)
+///
+/// Returns `None` if neither is configured.
+pub fn load_session_auto_login(session_name: &str) -> Option<AutoLoginConfig> {
+    // 1. Per-session file
+    let path = AppConfig::session_auto_login_path(session_name);
+    if path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            match toml::from_str::<AutoLoginConfig>(&contents) {
+                Ok(cfg) => return Some(cfg),
+                Err(e) => {
+                    tracing::warn!(
+                        "[AutoLogin] Failed to parse {:?}: {} — falling back to config.toml",
+                        path, e
+                    );
+                }
+            }
+        }
+    }
+
+    // 2. config.toml fallback
+    let app_cfg = get_config();
+    app_cfg.session.auto_login.get(session_name).cloned()
 }
 
 // ============================================================================

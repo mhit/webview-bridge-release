@@ -418,6 +418,28 @@ pub struct ExecuteRequest {
 }
 
 // ============================================================================
+// Snapshot (DOM element extraction)
+// ============================================================================
+
+fn default_snapshot_limit() -> usize { 200 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapshotRequest {
+    #[serde(default = "default_session")]
+    pub session: String,
+    /// Include non-interactive elements (headings, paragraphs, etc.)
+    #[serde(default)]
+    pub all: bool,
+    /// Scope extraction to this CSS selector subtree
+    #[serde(default)]
+    pub within: Option<String>,
+    #[serde(default = "default_snapshot_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub frame: Option<String>,
+}
+
+// ============================================================================
 // 8. Agent (Agentic Mode - Future)
 // ============================================================================
 
