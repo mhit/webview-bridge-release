@@ -134,8 +134,20 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
         }
     }
     
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    // Initialize logging — write to file since windows_subsystem="windows" has no console
+    let log_dir = crate::core::config::AppConfig::data_dir();
+    let file_appender = tracing_appender::rolling::never(&log_dir, "server.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // _guard must stay alive for the duration of the program
+    let _log_guard = _guard;
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
     tracing::info!("WebView Bridge Server v2 starting...");
 
     // Create SessionManager

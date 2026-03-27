@@ -1,6 +1,6 @@
 [package]
 name = "webview-bridge-rust"
-version = "3.10.1"
+version = "3.10.2"
 edition = "2024"
 
 [features]
@@ -16,6 +16,7 @@ server = [
     "dep:uuid",
     "dep:tracing",
     "dep:tracing-subscriber",
+    "dep:tracing-appender",
     "dep:tempfile",
     "dep:regex",
     "dep:rusqlite",
@@ -77,6 +78,7 @@ webview2-com = { version = "0.19.1", optional = true }
 uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-appender = { version = "0.2", optional = true }
 tempfile = { version = "3.8", optional = true }
 regex = { version = "1.10", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }

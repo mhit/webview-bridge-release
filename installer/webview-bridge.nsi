@@ -192,6 +192,9 @@ Section "Install" SecInstall
   ; --- CLI executable ---
   File /oname=wb.exe "..\target\release\wb.exe"
 
+  ; --- Log launcher ---
+  File /oname=start-with-log.bat "..\installer\start-with-log.bat"
+
   ; --- Icon ---
   SetOutPath "$INSTDIR"
   File /oname=icon.ico "..\docs\img\icon.ico"
@@ -340,6 +343,7 @@ Section "Uninstall"
   ; --- Remove files ---
   Delete "$INSTDIR\${PRODUCT_EXE}"
   Delete "$INSTDIR\wb.exe"
+  Delete "$INSTDIR\start-with-log.bat"
   Delete "$INSTDIR\icon.ico"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\docs"

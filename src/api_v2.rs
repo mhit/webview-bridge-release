@@ -651,27 +651,37 @@ async fn session_acquire(
 
     match manager.acquire(request, create_fn).await {
         Ok(mut response) => {
+            // Get the session handle to read current_url and send navigate
+            let handle = manager.get_handle(&session_name);
+
             // Auto-restore: navigate to last URL if requested and available
             let mut restored_url = None;
             if should_restore && !response.is_new {
                 if let Some(url) = manager.get_last_url(&session_name) {
-                    // Perform navigation to restore last page
-                    let nav_result = state.cmd_tx.send(AppCommand::Navigate {
-                        id: session_name.clone(),
-                        url: url.clone(),
-                        resp_tx: {
-                            let (tx, _rx) = oneshot::channel();
-                            tx
-                        },
-                    });
-                    
-                    if nav_result.is_ok() {
-                        restored_url = Some(url);
+                    if let Some(ref h) = handle {
+                        let (tx, rx) = oneshot::channel();
+                        let nav_result = state.cmd_tx.send(AppCommand::Navigate {
+                            id: h.id.clone(),
+                            url: url.clone(),
+                            resp_tx: tx,
+                        });
+                        if nav_result.is_ok() {
+                            // Wait up to 15s for restore navigation
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(15),
+                                rx
+                            ).await;
+                            restored_url = Some(url);
+                        }
                     }
                 }
             }
             response.restored_url = restored_url.clone();
-            
+
+            // Include current URL so AI knows which page is open
+            // last_url is kept in sync with every successful navigate call
+            let current_url = manager.get_last_url(&session_name);
+
             (
                 StatusCode::OK,
                 Json(json!({
@@ -680,7 +690,8 @@ async fn session_acquire(
                     "is_new": response.is_new,
                     "profile": response.profile,
                     "auth_status": response.auth_status,
-                    "restored_url": restored_url
+                    "restored_url": restored_url,
+                    "current_url": current_url
                 })),
             )
         },
@@ -1613,15 +1624,19 @@ async fn navigate_v2(
         std::time::Duration::from_millis(request.timeout_ms),
         rx
     ).await {
-        Ok(Ok(Ok(()))) => (
-            StatusCode::OK,
-            Json(json!({
-                "success": true,
-                "session": request.session,
-                "url": request.url,
-                "load_time_ms": start.elapsed().as_millis() as u64
-            })),
-        ).into_response(),
+        Ok(Ok(Ok(()))) => {
+            // Auto-save last URL for restore-on-acquire
+            let _ = manager.update_last_url(&request.session, &request.url);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "session": request.session,
+                    "url": request.url,
+                    "load_time_ms": start.elapsed().as_millis() as u64
+                })),
+            ).into_response()
+        },
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
         Err(_) => error_response(Wbp2Error::InternalError, "Navigation timed out. The page may be slow or unresponsive. Try: increase timeout_ms or check the URL."),

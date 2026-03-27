@@ -554,6 +554,13 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
                 &mut Default::default(),
             );
 
+            let _ = webview.add_ProcessFailed(
+                &ICoreWebView2ProcessFailedEventHandler::from(ProcessFailedHandler {
+                    hwnd: self.hwnd,
+                }),
+                &mut Default::default(),
+            );
+
             log_webview_debug("ControllerHandler", "Events registered successfully");
         }
 
@@ -673,6 +680,84 @@ impl ICoreWebView2ExecuteScriptCompletedHandler_Impl for ExecuteScriptHandler {
         });
 
         // Notify main thread
+        unsafe {
+            PostMessageW(self.hwnd, WM_SCRIPT_RESULT, WPARAM(0), LPARAM(0));
+        }
+
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------
+// ProcessFailed Handler — clears all pending ops on renderer crash
+// ----------------------------------------------------------------
+#[windows::core::implement(ICoreWebView2ProcessFailedEventHandler)]
+struct ProcessFailedHandler {
+    hwnd: HWND,
+}
+
+impl ICoreWebView2ProcessFailedEventHandler_Impl for ProcessFailedHandler {
+    fn Invoke(
+        &self,
+        _webview: &Option<ICoreWebView2>,
+        args: &Option<ICoreWebView2ProcessFailedEventArgs>,
+    ) -> WinResult<()> {
+        let kind_str = if let Some(args) = args {
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            let _ = unsafe { args.ProcessFailedKind(&mut kind) };
+            match kind {
+                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED  => "browser_process_exited",
+                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED   => "render_process_exited",
+                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => "render_process_unresponsive",
+                _ => "unknown_process_failure",
+            }
+        } else {
+            "unknown"
+        };
+
+        tracing::error!("[ProcessFailed] WebView2 process failed: {}", kind_str);
+
+        let err = format!("WebView2 process failed ({})", kind_str);
+
+        // Unblock all pending script executions
+        PENDING_SCRIPT_RESULTS.with(|map| {
+            let keys: Vec<String> = map.borrow().keys().cloned().collect();
+            let mut m = map.borrow_mut();
+            for key in keys {
+                m.insert(key, Err(err.clone()));
+            }
+        });
+
+        // Unblock all pending CDP operations
+        PENDING_CDP_RESULTS.with(|map| {
+            let keys: Vec<String> = map.borrow().keys().cloned().collect();
+            let mut m = map.borrow_mut();
+            for key in keys {
+                m.insert(key, Err(err.clone()));
+            }
+        });
+        PENDING_CDP_SCREENSHOTS.with(|map| {
+            let keys: Vec<String> = map.borrow().keys().cloned().collect();
+            let mut m = map.borrow_mut();
+            for key in keys {
+                m.insert(key, Err(err.clone()));
+            }
+        });
+        PENDING_CDP_COOKIES.with(|map| {
+            let keys: Vec<String> = map.borrow().keys().cloned().collect();
+            let mut m = map.borrow_mut();
+            for key in keys {
+                m.insert(key, Err(err.clone()));
+            }
+        });
+
+        // Unblock navigation wait
+        let hwnd_val = self.hwnd.0 as usize;
+        NAVIGATION_COMPLETION.with(|map| {
+            map.borrow_mut().insert(hwnd_val, false);
+        });
+
+        // Wake up the message loop so waiting threads notice immediately
         unsafe {
             PostMessageW(self.hwnd, WM_SCRIPT_RESULT, WPARAM(0), LPARAM(0));
         }
