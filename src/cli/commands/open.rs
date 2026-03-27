@@ -1,11 +1,14 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
 
-pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str) -> Result<(), WbError> {
-    let body = serde_json::json!({
+pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str, post_load_wait_ms: u64) -> Result<(), WbError> {
+    let mut body = serde_json::json!({
         "session": session,
         "url": url,
     });
+    if post_load_wait_ms > 0 {
+        body["post_load_wait_ms"] = serde_json::Value::Number(post_load_wait_ms.into());
+    }
     let resp = client.post("/navigate", &body)?;
     resp.check_success("Navigation failed")?;
 

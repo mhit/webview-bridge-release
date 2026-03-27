@@ -312,11 +312,17 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
     };
     
     match wait_result {
-        Ok(_) => McpToolResponse::success_json(serde_json::json!({
-            "url": req.url,
-            "wait_for": format!("{:?}", req.wait_for),
-            "status": "navigated"
-        })),
+        Ok(_) => {
+            // Optional post-load idle wait for JS-heavy pages (charts, realtime dashboards)
+            if req.post_load_wait_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(req.post_load_wait_ms)).await;
+            }
+            McpToolResponse::success_json(serde_json::json!({
+                "url": req.url,
+                "wait_for": format!("{:?}", req.wait_for),
+                "status": "navigated"
+            }))
+        },
         Err(e) => McpToolResponse::error("WAIT_FAILED", &e),
     }
 }
@@ -2940,7 +2946,8 @@ pub fn get_mcp_tools() -> serde_json::Value {
                     "url": { "type": "string", "description": "Full URL to navigate to (e.g. 'https://example.com')" },
                     "wait_for": { "type": "string", "enum": ["load", "stable", "networkidle", "selector"], "default": "stable", "description": "When to consider page ready. 'stable' (default) waits for DOM to stop changing — best for SPAs and dynamic pages. 'selector' waits for a specific CSS element. 'networkidle' waits for no network activity. 'load' waits for basic page load only." },
                     "wait_selector": { "type": "string", "description": "CSS selector to wait for. Required when wait_for='selector'. Example: '#main-content'" },
-                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Navigation timeout in milliseconds" }
+                    "timeout_ms": { "type": "integer", "default": 30000, "description": "Navigation timeout in milliseconds" },
+                    "post_load_wait_ms": { "type": "integer", "default": 0, "description": "Extra wait after page load (ms). Use for JS-heavy pages that render charts or graphs after the load event (e.g. realtime dashboards). Recommended: 3000-10000 for heavy pages." }
                 },
                 "required": ["url"]
             }

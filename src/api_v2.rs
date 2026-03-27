@@ -2583,6 +2583,10 @@ struct NavigateRequest {
     wait_until: String,  // "load" | "domready" | "none"
     #[serde(default = "default_nav_timeout")]
     timeout_ms: u64,
+    /// Extra wait after page load completes (ms). Useful for JS-heavy pages that render
+    /// charts/graphs after the load event. Defaults to 0.
+    #[serde(default)]
+    post_load_wait_ms: u64,
 }
 
 fn default_wait_until() -> String { "load".to_string() }
@@ -2624,6 +2628,10 @@ async fn navigate_v2(
         Ok(Ok(Ok(()))) => {
             // Auto-save last URL for restore-on-acquire
             let _ = manager.update_last_url(&request.session, &request.url);
+            // Optional post-load idle wait for JS-heavy pages (charts, realtime dashboards)
+            if request.post_load_wait_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(request.post_load_wait_ms)).await;
+            }
             (
                 StatusCode::OK,
                 Json(json!({

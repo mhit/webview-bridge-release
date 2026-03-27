@@ -103,6 +103,10 @@ enum Command {
         /// Session name
         #[arg(short, long, default_value = "default")]
         session: String,
+
+        /// Extra wait after page load (ms). Use for JS-heavy pages like charts/dashboards [default: 0]
+        #[arg(long, default_value_t = 0)]
+        wait: u64,
     },
 
     /// Capture interactive elements snapshot (token-efficient page view)
@@ -535,8 +539,8 @@ fn main() -> ExitCode {
             }
             SessionAction::List => commands::session::list(&client, &opts),
         },
-        Command::Open { url, session } => {
-            commands::open::run(&client, &opts, &session, &url)
+        Command::Open { url, session, wait } => {
+            commands::open::run(&client, &opts, &session, &url, wait)
         }
         Command::Snapshot { session, all, within, limit, output, frame } => {
             commands::snapshot::run(&client, &opts, &session, all, within.as_deref(), limit, output.as_deref(), frame.as_deref())

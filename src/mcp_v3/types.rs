@@ -59,6 +59,9 @@ pub struct NavigateRequest {
     pub wait_selector: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    /// Extra wait after page load (ms). Use for JS-heavy pages (charts, realtime dashboards).
+    #[serde(default)]
+    pub post_load_wait_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
