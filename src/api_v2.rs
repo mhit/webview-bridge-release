@@ -2597,6 +2597,52 @@ fn default_wait_until() -> String { "load".to_string() }
 fn default_nav_timeout() -> u64 { 30000 }
 fn default_snapshot_after_nav() -> bool { true }
 
+/// Build contextual hints for navigate response.
+/// Detects login-page redirects and surfaces auto-login availability.
+pub fn build_navigate_hints(session: &str, requested_url: &str, final_url: &str) -> Vec<String> {
+    let mut hints = Vec::new();
+
+    // Check if we were redirected away from the requested URL
+    let was_redirected = !final_url.is_empty()
+        && requested_url != final_url
+        && !requested_url.starts_with(final_url)
+        && !final_url.starts_with(requested_url);
+
+    // Detect login page by URL keywords
+    let login_keywords = ["login", "signin", "sign-in", "auth", "sso", "glogin", "r-login"];
+    let final_lower = final_url.to_lowercase();
+    let looks_like_login = login_keywords.iter().any(|kw| final_lower.contains(kw));
+
+    if was_redirected && looks_like_login {
+        // Check if auto-login is configured for this session
+        if let Some(cfg) = crate::core::config::load_session_auto_login(session) {
+            let login_url = cfg.login_url.as_deref().unwrap_or(final_url);
+            hints.push(format!(
+                "Redirected to login page ({final_url}). \
+                Auto-login is configured — call POST /session/auto-login {{\"name\":\"{session}\"}} \
+                to authenticate automatically instead of filling the form manually."
+            ));
+            let _ = login_url; // suppress unused warning
+        } else {
+            hints.push(format!(
+                "Redirected to login page ({final_url}). \
+                Configure auto-login with PUT /session/auto-login/config to automate future logins."
+            ));
+        }
+    } else if looks_like_login {
+        // Navigated directly to a login page
+        if crate::core::config::load_session_auto_login(session).is_some() {
+            hints.push(format!(
+                "This looks like a login page. \
+                Auto-login is configured — call POST /session/auto-login {{\"name\":\"{session}\"}} \
+                to authenticate automatically."
+            ));
+        }
+    }
+
+    hints
+}
+
 /// Execute the standard interactive-element snapshot JS and return the parsed result.
 /// Used by navigate_v2 to bundle snapshot into navigation response.
 pub async fn run_snapshot_for_session(
@@ -2699,12 +2745,22 @@ async fn navigate_v2(
                 .and_then(|s| s.get("elements"))
                 .and_then(|e| e.as_array())
                 .map(|a| a.len());
+            // Detect login-page redirect and surface auto-login hint
+            let final_url = snapshot.as_ref()
+                .and_then(|s| s.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&request.url);
+            let hints = build_navigate_hints(&request.session, &request.url, final_url);
             let mut resp = json!({
                 "success": true,
                 "session": request.session,
                 "url": request.url,
+                "final_url": final_url,
                 "load_time_ms": start.elapsed().as_millis() as u64
             });
+            if !hints.is_empty() {
+                resp["hints"] = json!(hints);
+            }
             if let Some(snap) = snapshot {
                 resp["snapshot"] = snap;
                 if let Some(n) = elem_count {

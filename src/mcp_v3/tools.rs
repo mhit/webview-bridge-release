@@ -4,7 +4,7 @@
 
 use super::types::*;
 use super::robustness::*;
-use crate::api_v2::{get_session_manager_v2, run_snapshot_for_session, V2AppState};
+use crate::api_v2::{build_navigate_hints, get_session_manager_v2, run_snapshot_for_session, V2AppState};
 use crate::core::AppCommand;
 use tokio::sync::oneshot;
 use std::time::Duration;
@@ -323,11 +323,21 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
                 .and_then(|s| s.get("elements"))
                 .and_then(|e| e.as_array())
                 .map(|a| a.len());
+            let final_url = snapshot.as_ref()
+                .and_then(|s| s.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&req.url);
+            // Detect login redirects and surface auto-login hint
+            let hints = build_navigate_hints(&req.session, &req.url, final_url);
             let mut result = serde_json::json!({
                 "url": req.url,
+                "final_url": final_url,
                 "wait_for": format!("{:?}", req.wait_for),
                 "status": "navigated"
             });
+            if !hints.is_empty() {
+                result["hints"] = serde_json::json!(hints);
+            }
             if let Some(snap) = snapshot {
                 result["snapshot"] = snap;
                 if let Some(n) = elem_count {
