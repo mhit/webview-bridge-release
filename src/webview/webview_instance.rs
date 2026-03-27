@@ -1027,8 +1027,11 @@ impl WebViewInstance {
                     "WebViewInstance::execute_script",
                     "Calling webview.ExecuteScript()",
                 );
-                // Increment IN_WEBVIEW_CALL so the vectored exception handler can identify
-                // that STATUS_BREAKPOINT originated from within a WebView2 COM call.
+                // Guard: keep IN_WEBVIEW_CALL elevated for the full duration —
+                // both the ExecuteScript dispatch AND the wait loop.
+                // The vectored handler (webview_seh_guard in main.rs) uses this counter.
+                // If the render process crashes during wait (e.g. btn.click() triggers
+                // Chart.js re-render → crash), IN_WEBVIEW_CALL must still be > 0.
                 IN_WEBVIEW_CALL.with(|c| *c.borrow_mut() += 1);
                 let exec_result = webview.ExecuteScript(
                     &HSTRING::from(script),
@@ -1037,11 +1040,15 @@ impl WebViewInstance {
                         hwnd: self.get_hwnd(),
                     }),
                 );
-                IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
-                exec_result?;
+                if exec_result.is_err() {
+                    IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
+                    exec_result?;
+                }
 
-                // Wait for result while pumping messages
-                match self.wait_for_script_result(&request_id) {
+                // Wait for result while pumping messages (IN_WEBVIEW_CALL still elevated)
+                let wait_result = self.wait_for_script_result(&request_id);
+                IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
+                match wait_result {
                     Ok(res) => {
                         log_webview_success("WebViewInstance::execute_script", None);
                         Ok(res)
