@@ -63,6 +63,124 @@ thread_local! {
     pub static IN_WEBVIEW_CALL: RefCell<u32> = RefCell::new(0);
 }
 
+/// Cached load address ranges of EmbeddedBrowserWebView.dll instances.
+/// Multiple versions of the DLL may be loaded simultaneously when WebView2 auto-updates
+/// between sessions (e.g. v.72 and v.84 both present).  We track up to two ranges so
+/// the VEH crash guard can intercept STATUS_BREAKPOINT from any loaded instance.
+///
+/// Populated by `cache_embedded_browser_dll_range()` from `claim_controller()`.
+/// Read by `webview_seh_guard` in `main.rs`.
+pub static EMBEDDED_BROWSER_BASE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+pub static EMBEDDED_BROWSER_END: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+/// Second DLL instance slot (for the case where WebView2 auto-updated mid-run).
+pub static EMBEDDED_BROWSER_BASE2: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+pub static EMBEDDED_BROWSER_END2: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Set to the exception address (non-zero) by the VEH crash guard when it intercepts a
+/// STATUS_BREAKPOINT from EmbeddedBrowserWebView.dll outside of an active `IN_WEBVIEW_CALL`.
+/// Cannot log from within the VEH handler (heap/lock risk), so we write the address here and
+/// emit a tracing::error! at the next safe call site.  Reset to 0 after logging.
+pub static VEH_CRASH_ADDR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Cache the load address range of the EmbeddedBrowserWebView.dll instance that owns
+/// `vtable_addr` (a pointer into the DLL, e.g. the COM vtable of the newly created
+/// `ICoreWebView2Controller`).
+///
+/// Uses `GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, vtable_addr)` so we
+/// always get the exact DLL instance for *this* session — not the first instance that
+/// happened to be loaded by `GetModuleHandleW(name)`.  This is critical when WebView2
+/// auto-updates between sessions: the new version loads at a different base address that
+/// the name-based lookup would miss.
+///
+/// Up to two distinct ranges are stored in (BASE/END, BASE2/END2).  Safe to call on every
+/// `claim_controller()` — duplicate ranges are silently ignored.
+pub fn cache_embedded_browser_dll_range(vtable_addr: usize) {
+    use std::sync::atomic::Ordering;
+    unsafe {
+        use windows::Win32::System::LibraryLoader::{
+            GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        };
+        use windows::Win32::System::ProcessStatus::{K32GetModuleInformation, MODULEINFO};
+        use windows::Win32::System::Threading::GetCurrentProcess;
+
+        let mut hmod = windows::Win32::Foundation::HINSTANCE::default();
+        let ok = GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            windows::core::PCWSTR(vtable_addr as *const u16),
+            &mut hmod,
+        );
+        if !ok.as_bool() {
+            return;
+        }
+
+        let mut info = MODULEINFO::default();
+        if !K32GetModuleInformation(
+            GetCurrentProcess(),
+            hmod,
+            &mut info,
+            std::mem::size_of::<MODULEINFO>() as u32,
+        )
+        .as_bool()
+        {
+            return;
+        }
+
+        let base = info.lpBaseOfDll as usize;
+        let end = base + info.SizeOfImage as usize;
+
+        // Slot 1: first distinct instance
+        let existing_base = EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed);
+        if existing_base == 0 {
+            EMBEDDED_BROWSER_BASE.store(base, Ordering::Relaxed);
+            EMBEDDED_BROWSER_END.store(end, Ordering::Relaxed);
+            tracing::debug!("SEH guard: cached DLL slot 1 [{:#x}, {:#x})", base, end);
+            return;
+        }
+        if existing_base == base {
+            return; // same instance already cached
+        }
+
+        // Slot 2: second distinct instance (different version loaded after auto-update)
+        let existing_base2 = EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed);
+        if existing_base2 == 0 {
+            EMBEDDED_BROWSER_BASE2.store(base, Ordering::Relaxed);
+            EMBEDDED_BROWSER_END2.store(end, Ordering::Relaxed);
+            tracing::debug!("SEH guard: cached DLL slot 2 [{:#x}, {:#x})", base, end);
+        }
+        // (silently drop if we already have two distinct instances)
+    }
+}
+
+/// Emit a deferred crash log if the VEH handler stored an exception address.
+/// Call this at the start of any WebView2 operation so crashes are recorded
+/// even though tracing cannot be called safely from within the VEH handler itself.
+fn flush_veh_crash_log() {
+    use std::sync::atomic::Ordering;
+    let addr = VEH_CRASH_ADDR.swap(0, Ordering::Relaxed);
+    if addr != 0 {
+        // Check both cached DLL ranges to compute a human-readable offset.
+        let ranges = [
+            (EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed), EMBEDDED_BROWSER_END.load(Ordering::Relaxed)),
+            (EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed), EMBEDDED_BROWSER_END2.load(Ordering::Relaxed)),
+        ];
+        let offset = ranges.iter()
+            .filter(|&&(b, e)| b != 0 && addr >= b && addr < e)
+            .map(|&(b, _)| format!("+{:#x}", addr - b))
+            .next()
+            .unwrap_or_else(|| format!("{:#x}", addr));
+        tracing::error!(
+            "[SEH] STATUS_BREAKPOINT intercepted from EmbeddedBrowserWebView.dll{} \
+             — render process crashed. Session marked as dead (WEBVIEW_PROCESS_FAILED).",
+            offset
+        );
+    }
+}
+
 /// Anti-bot detection script that runs on every page load
 /// Masks WebView2/automation fingerprints to appear as a normal browser
 const ANTI_BOT_SCRIPT: &str = r#"
@@ -903,10 +1021,12 @@ impl WebViewInstance {
             // These args stabilize headless rendering of JS-heavy pages (Chart.js, D3, etc.):
             //   --disable-gpu               — no GPU hardware acceleration (stable in headless)
             //   --disable-software-rasterizer — skip SW fallback rasterizer (reduces memory)
-            //   --disable-extensions         — no extension overhead
             //   --no-sandbox                 — required in some headless server environments
+            // NOTE: --disable-extensions is intentionally omitted so that browser extensions
+            // (e.g. 1Password, Bitwarden) can be loaded into the WebView2 user-data profile
+            // to handle passkey/credential auto-fill during authenticated sessions.
             let env_options = webview2_com::CoreWebView2EnvironmentOptions::default();
-            let browser_args = "--disable-gpu --disable-software-rasterizer --disable-extensions --no-sandbox";
+            let browser_args = "--disable-gpu --disable-software-rasterizer --no-sandbox";
             log_webview_debug(
                 "WebViewInstance::initialize",
                 &format!("Setting browser args: {}", browser_args),
@@ -958,7 +1078,17 @@ impl WebViewInstance {
                 }
             }
             
+            // Extract the COM vtable address BEFORE moving `c` into self.
+            // The vtable is inside EmbeddedBrowserWebView.dll; we use it to find the
+            // exact DLL instance (version) for this session via GetModuleHandleExW.
+            let vtable_addr = unsafe {
+                // COM interface: first field is *const vtable.  Read without moving.
+                *(c.as_raw() as *const usize)
+            };
             self.controller = Some(c);
+            // Cache the DLL range for this specific version so the VEH crash guard can
+            // intercept navigation crashes even when IN_WEBVIEW_CALL = 0.
+            cache_embedded_browser_dll_range(vtable_addr);
         } else {
             log_webview_error(
                 "WebViewInstance::claim_controller",
@@ -968,6 +1098,7 @@ impl WebViewInstance {
     }
 
     pub fn navigate(&self, url: &str) -> WinResult<()> {
+        flush_veh_crash_log(); // emit deferred SEH crash log if VEH fired since last call
         log_webview_start("WebViewInstance::navigate", &format!("url={}", url));
 
         // Refuse COM calls after browser process crash — prevents access violations
@@ -1001,6 +1132,7 @@ impl WebViewInstance {
     }
 
     pub fn execute_script(&self, script: &str, request_id: String) -> Result<String, Error> {
+        flush_veh_crash_log(); // emit deferred SEH crash log if VEH fired since last call
         // Refuse COM calls after browser process crash — prevents access violations
         if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
             return Err(Error::new(

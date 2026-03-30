@@ -746,12 +746,11 @@ impl SessionManagerV2 {
         
         session.meta.last_url = Some(url.to_string());
         session.meta.last_accessed = chrono_now_iso8601();
-        
+
         drop(sessions);
-        
-        // Don't persist on every URL change (too expensive)
-        // Only persist when session is released
-        Ok(())
+
+        // Persist immediately so last_url survives a crash (no graceful shutdown).
+        self.save_sessions()
     }
     
     /// Get the last URL for a session (for restore)

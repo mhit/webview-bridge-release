@@ -2960,15 +2960,30 @@ async fn execute_v2(
         None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
     };
     
-    // Auto-wrap in IIFE if script uses top-level `return` but isn't already wrapped
+    // Auto-wrap in IIFE when the script uses top-level `return` or `await`.
+    //
+    // Rules:
+    //  • Contains `await ` → async IIFE: `(async function(){ ... })()`
+    //    WebView2 awaits the returned Promise, so `return await fetch(...)` works correctly.
+    //  • Contains `return ` but no `await` → sync IIFE: `(function(){ ... })()`
+    //  • Already wrapped (starts with `(function`, `(async`, `((`) → leave as-is
+    //
+    // This covers the common AI-generated patterns:
+    //   "return await fetch(url).then(r => r.json())"
+    //   "return await new Promise(resolve => setTimeout(resolve, 500))"
     let script = {
         let trimmed = request.script.trim();
-        let needs_wrap = trimmed.contains("return ")
-            && !trimmed.starts_with("(function")
-            && !trimmed.starts_with("(async")
-            && !trimmed.starts_with("((");
-        if needs_wrap {
-            format!("(function(){{{}}})();", request.script)
+        let already_wrapped = trimmed.starts_with("(function")
+            || trimmed.starts_with("(async")
+            || trimmed.starts_with("((");
+        let uses_await = trimmed.contains("await ");
+        let uses_return = trimmed.contains("return ");
+        if !already_wrapped && (uses_return || uses_await) {
+            if uses_await {
+                format!("(async function(){{{}}})();", request.script)
+            } else {
+                format!("(function(){{{}}})();", request.script)
+            }
         } else {
             request.script.clone()
         }

@@ -1,8 +1,9 @@
 //! WebView Bridge Library
 //!
 //! This library provides the core functionality for the WebView Bridge server.
-//! 
+//!
 //! Protocol: WBP2 (WebView Bridge Protocol v2)
+
 
 #[cfg(feature = "server")]
 pub mod api_v2;
