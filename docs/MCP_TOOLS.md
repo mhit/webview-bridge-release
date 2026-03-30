@@ -124,7 +124,7 @@ WebView Bridge は9つのMCPツールを提供する。全て `POST /mcp` エン
 
 ## 2. navigate — ページ遷移
 
-URLへ遷移し、ページ安定を待機。
+URLへ遷移し、ページ安定を待機。レスポンスにインタラクティブ要素スナップショットを同梱（`snapshot: false` で無効化可）。
 
 ```json
 {
@@ -132,7 +132,9 @@ URLへ遷移し、ページ安定を待機。
   "session": "my-session",
   "url": "https://example.com",
   "wait_for": "stable",
-  "timeout_ms": 30000
+  "timeout_ms": 30000,
+  "post_load_wait_ms": 1000,
+  "snapshot": true
 }
 ```
 
@@ -143,6 +145,8 @@ URLへ遷移し、ページ安定を待機。
 | `wait_for` | enum | `"stable"` | 待機条件 |
 | `wait_selector` | string? | - | `selector`指定時の待機要素 |
 | `timeout_ms` | u64 | `30000` | タイムアウト(ms) |
+| `post_load_wait_ms` | u64 | `0` | ページロード後の追加待機(ms)。Chart.js・D3など遅延レンダリングするページに有効 |
+| `snapshot` | bool | `true` | インタラクティブ要素スナップショットをレスポンスに含めるか |
 
 **wait_for 値:**
 
@@ -152,6 +156,37 @@ URLへ遷移し、ページ安定を待機。
 | `stable` | DOM安定 + ネットワークアイドル |
 | `network_idle` | ネットワーク通信完了 |
 | `selector` | 指定要素の出現 |
+
+**レスポンス例:**
+
+```json
+{
+  "success": true,
+  "session": "my-session",
+  "url": "https://example.com/dashboard",
+  "final_url": "https://example.com/login",
+  "load_time_ms": 1234,
+  "hints": [
+    "Redirected to login page (https://example.com/login). Auto-login is configured — call POST /session/auto-login {\"name\":\"my-session\"} to authenticate automatically."
+  ],
+  "snapshot": {
+    "url": "https://example.com/login",
+    "elements": [
+      {"ref": "e1", "tag": "input", "type": "text", "name": "email", "placeholder": "Email"},
+      {"ref": "e2", "tag": "input", "type": "password", "name": "password"},
+      {"ref": "e3", "tag": "button", "text": "ログイン"}
+    ]
+  },
+  "element_count": 3
+}
+```
+
+| フィールド | 説明 |
+|-----------|------|
+| `final_url` | リダイレクト後の実際のURL（要求URLと異なる場合に有用） |
+| `hints` | ログインページ検出・auto-login 案内などのコンテキストヒント（存在する場合のみ） |
+| `snapshot` | インタラクティブ要素一覧（`snapshot: true` 時）。別途 `POST /snapshot` 不要 |
+| `element_count` | snapshot 内の要素数 |
 
 ---
 
@@ -309,6 +344,19 @@ CSSセレクタでデータを構造的に抽出。スマート待機対応。
 | `session` | string | `"default"` | セッション名 |
 | `script` | string | **必須** | 実行するJavaScript |
 | `timeout_ms` | u64 | `30000` | タイムアウト(ms) |
+
+**スクリプトの自動ラップ:**
+
+`return` または `await` を含むスクリプトは自動的に IIFE にラップされる。AIが生成するコードをそのまま渡せる。
+
+| スクリプトの内容 | 変換 |
+|----------------|------|
+| `return document.title` | `(function(){ return document.title })()` |
+| `return await fetch(url).then(r=>r.json())` | `(async function(){ return await fetch(url).then(r=>r.json()) })()` |
+| `await new Promise(r => setTimeout(r, 500))` | `(async function(){ await new Promise(r => setTimeout(r, 500)) })()` |
+| `(function(){...})()` | そのまま（既にラップ済み） |
+
+WebView2 は返却された Promise を自動的に `await` するため、`async function` の戻り値も正しく解決される。
 
 ---
 

@@ -13,13 +13,13 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-3.6.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-3.11.3-blue">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Rust" src="https://img.shields.io/badge/rust-edition%202024-orange">
 </p>
 
-> **v3.6 — OpenClaw (CDP Native)**: Chrome DevTools Protocol直接制御により、ネットワーク監視・フルページキャプチャ・要素取得の精度が劇的に向上。Cookie インポート機能実装、LAN接続対応。
+> **v3.11 — Crash Resilience & Auto-Login**: WebView2 レンダラークラッシュからサーバーが自動回復。navigate レスポンスにインタラクティブ要素スナップショットを同梱、ログインページ検出 & auto-login ヒント。`execute` で `await` を含むスクリプトを自動ラップ。
 
 ## 🎯 なぜWebView Bridge?
 
