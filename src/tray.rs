@@ -5,11 +5,11 @@
 
 use std::sync::mpsc::Sender;
 use windows::{
-    core::{w, PCWSTR},
     Win32::Foundation::*,
     Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::Shell::*,
     Win32::UI::WindowsAndMessaging::*,
+    core::{PCWSTR, w},
 };
 
 const WM_TRAYICON: u32 = WM_USER + 1;
@@ -100,7 +100,12 @@ struct TrayData {
     shutdown_tx: Option<Sender<()>>,
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
         match msg {
             WM_TRAYICON => {
@@ -158,23 +163,38 @@ unsafe fn show_context_menu(hwnd: HWND) {
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-        let exit_label: Vec<u16> = "終了"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+        let exit_label: Vec<u16> = "終了".encode_utf16().chain(std::iter::once(0)).collect();
 
-        AppendMenuW(menu, MF_STRING, IDM_DASHBOARD as usize, PCWSTR(dashboard_label.as_ptr()))
-            .expect("AppendMenuW dashboard");
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_DASHBOARD as usize,
+            PCWSTR(dashboard_label.as_ptr()),
+        )
+        .expect("AppendMenuW dashboard");
         AppendMenuW(menu, MF_SEPARATOR, 0, None).expect("AppendMenuW separator");
-        AppendMenuW(menu, MF_STRING, IDM_EXIT as usize, PCWSTR(exit_label.as_ptr()))
-            .expect("AppendMenuW exit");
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_EXIT as usize,
+            PCWSTR(exit_label.as_ptr()),
+        )
+        .expect("AppendMenuW exit");
 
         // Required: bring the window to foreground so the menu dismisses properly.
         let _ = SetForegroundWindow(hwnd);
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
-        TrackPopupMenu(menu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, std::ptr::null());
+        TrackPopupMenu(
+            menu,
+            TPM_BOTTOMALIGN | TPM_LEFTALIGN,
+            pt.x,
+            pt.y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        );
 
         let _ = DestroyMenu(menu);
     }

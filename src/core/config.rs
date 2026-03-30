@@ -12,15 +12,15 @@ pub struct AppConfig {
     /// Server configuration
     #[serde(default)]
     pub server: ServerConfig,
-    
+
     /// AI/Gemini configuration
     #[serde(default)]
     pub ai: AiSettings,
-    
+
     /// Session defaults
     #[serde(default)]
     pub session: SessionSettings,
-    
+
     /// Media/Download settings
     #[serde(default)]
     pub media: MediaSettings,
@@ -57,9 +57,15 @@ pub struct ServerConfig {
     pub no_auth: bool,
 }
 
-fn default_bind() -> String { "127.0.0.1".to_string() }
-fn default_port() -> u16 { 9400 }
-fn default_max_sessions() -> usize { 10 }
+fn default_bind() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_port() -> u16 {
+    9400
+}
+fn default_max_sessions() -> usize {
+    10
+}
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -104,10 +110,18 @@ pub struct AiSettings {
     pub daily_budget_usd: Option<f32>,
 }
 
-fn default_provider() -> String { "gemini".to_string() }
-fn default_model() -> String { "gemini-1.5-flash".to_string() }
-fn default_true() -> bool { true }
-fn default_ai_timeout() -> u64 { 30000 }
+fn default_provider() -> String {
+    "gemini".to_string()
+}
+fn default_model() -> String {
+    "gemini-1.5-flash".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_ai_timeout() -> u64 {
+    30000
+}
 
 impl Default for AiSettings {
     fn default() -> Self {
@@ -240,8 +254,12 @@ pub struct AutoLoginStep {
     pub challenge_timeout_ms: u64,
 }
 
-fn default_pre_submit_wait_ms() -> u64 { 1000 }
-fn default_challenge_timeout_ms() -> u64 { 15000 }
+fn default_pre_submit_wait_ms() -> u64 {
+    1000
+}
+fn default_challenge_timeout_ms() -> u64 {
+    15000
+}
 
 /// Session defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,9 +300,15 @@ pub struct SessionSettings {
     pub op_service_account_token: Option<String>,
 }
 
-fn default_width() -> u32 { 1280 }
-fn default_height() -> u32 { 720 }
-fn default_session_timeout() -> u64 { 0 }
+fn default_width() -> u32 {
+    1280
+}
+fn default_height() -> u32 {
+    720
+}
+fn default_session_timeout() -> u64 {
+    0
+}
 
 impl Default for SessionSettings {
     fn default() -> Self {
@@ -307,21 +331,23 @@ pub struct MediaSettings {
     /// Default download directory
     #[serde(default)]
     pub download_dir: Option<String>,
-    
+
     /// Screenshots directory
     #[serde(default)]
     pub screenshots_dir: Option<String>,
-    
+
     /// Maximum download size in bytes (0 = unlimited)
     #[serde(default)]
     pub max_download_size: u64,
-    
+
     /// Preferred video quality (best, hd, sd, low)
     #[serde(default = "default_video_quality")]
     pub default_video_quality: String,
 }
 
-fn default_video_quality() -> String { "hd".to_string() }
+fn default_video_quality() -> String {
+    "hd".to_string()
+}
 
 impl Default for MediaSettings {
     fn default() -> Self {
@@ -367,13 +393,20 @@ impl AppConfig {
                 if !new_path.exists() {
                     if let Some(legacy) = dirs::home_dir().map(|h| h.join(".webview-bridge")) {
                         if legacy.exists() {
-                            eprintln!("[config] Migrating data: {} -> {}", legacy.display(), new_path.display());
+                            eprintln!(
+                                "[config] Migrating data: {} -> {}",
+                                legacy.display(),
+                                new_path.display()
+                            );
                             if let Some(parent) = new_path.parent() {
                                 let _ = std::fs::create_dir_all(parent);
                             }
                             match std::fs::rename(&legacy, &new_path) {
                                 Ok(_) => eprintln!("[config] Migration successful"),
-                                Err(e) => eprintln!("[config] Migration failed (will use new path): {}", e),
+                                Err(e) => eprintln!(
+                                    "[config] Migration failed (will use new path): {}",
+                                    e
+                                ),
                             }
                         }
                     }
@@ -382,86 +415,85 @@ impl AppConfig {
                 new_path
             })
     }
-    
+
     /// Get the config file path (%APPDATA%/webview-bridge/config.toml)
     pub fn config_path() -> PathBuf {
         Self::data_dir().join("config.toml")
     }
-    
+
     /// Load config from file, or create default if not exists
     pub fn load() -> Self {
         let path = Self::config_path();
-        
+
         if path.exists() {
             match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    match toml::from_str(&content) {
-                        Ok(config) => {
-                            eprintln!("Loaded config from: {}", path.display());
-                            return config;
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: Failed to parse config: {}. Using defaults.", e);
-                        }
+                Ok(content) => match toml::from_str(&content) {
+                    Ok(config) => {
+                        eprintln!("Loaded config from: {}", path.display());
+                        return config;
                     }
-                }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse config: {}. Using defaults.", e);
+                    }
+                },
                 Err(e) => {
                     eprintln!("Warning: Failed to read config: {}. Using defaults.", e);
                 }
             }
         }
-        
+
         // Create default config and save it
         let config = Self::default();
         let _ = config.save(); // Ignore save errors on first run
         config
     }
-    
+
     /// Save config to file
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path();
-        
+
         // Create parent directories
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {}", e))?;
         }
-        
+
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        
-        std::fs::write(&path, content)
-            .map_err(|e| format!("Failed to write config: {}", e))?;
-        
+
+        std::fs::write(&path, content).map_err(|e| format!("Failed to write config: {}", e))?;
+
         eprintln!("Config saved to: {}", path.display());
         Ok(())
     }
-    
+
     /// Get effective API key (config or environment variable)
     pub fn get_api_key(&self) -> Option<String> {
-        self.ai.api_key.clone()
+        self.ai
+            .api_key
+            .clone()
             .or_else(|| std::env::var("WEBVIEW_BRIDGE_AI_API_KEY").ok())
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
     }
-    
+
     /// Get effective download directory
     pub fn get_download_dir(&self) -> PathBuf {
-        self.media.download_dir.as_ref()
+        self.media
+            .download_dir
+            .as_ref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                Self::data_dir().join("downloads")
-            })
+            .unwrap_or_else(|| Self::data_dir().join("downloads"))
     }
-    
+
     /// Get effective screenshots directory
     pub fn get_screenshots_dir(&self) -> PathBuf {
-        self.media.screenshots_dir.as_ref()
+        self.media
+            .screenshots_dir
+            .as_ref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                Self::data_dir().join("screenshots")
-            })
+            .unwrap_or_else(|| Self::data_dir().join("screenshots"))
     }
-    
+
     /// Base directory for all profiles: {data_dir}/profiles/
     pub fn profiles_dir() -> PathBuf {
         Self::data_dir().join("profiles")
@@ -510,7 +542,8 @@ pub fn load_session_auto_login(session_name: &str) -> Option<AutoLoginConfig> {
                 Err(e) => {
                     tracing::warn!(
                         "[AutoLogin] Failed to parse {:?}: {} — falling back to config.toml",
-                        path, e
+                        path,
+                        e
                     );
                 }
             }
@@ -532,9 +565,7 @@ static GLOBAL_CONFIG: OnceLock<std::sync::RwLock<AppConfig>> = OnceLock::new();
 
 /// Initialize the global config
 pub fn init_config() -> &'static std::sync::RwLock<AppConfig> {
-    GLOBAL_CONFIG.get_or_init(|| {
-        std::sync::RwLock::new(AppConfig::load())
-    })
+    GLOBAL_CONFIG.get_or_init(|| std::sync::RwLock::new(AppConfig::load()))
 }
 
 /// Get the global config (read-only)

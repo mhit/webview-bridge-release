@@ -115,9 +115,15 @@ pub struct InteractOptions {
     pub human_mode: bool,
 }
 
-fn default_wait_timeout() -> u64 { 10000 }
-fn default_retry_count() -> u32 { 3 }
-fn default_retry_delay() -> u64 { 500 }
+fn default_wait_timeout() -> u64 {
+    10000
+}
+fn default_retry_count() -> u32 {
+    3
+}
+fn default_retry_delay() -> u64 {
+    500
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -172,7 +178,9 @@ pub enum ScrollDirection {
     Right,
 }
 
-fn default_scroll_amount() -> i32 { 500 }
+fn default_scroll_amount() -> i32 {
+    500
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -222,7 +230,6 @@ pub struct CaptureRequest {
     pub frame: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureInclude {
@@ -232,8 +239,12 @@ pub enum CaptureInclude {
     Images,
 }
 
-fn default_true() -> bool { true }
-fn default_ttl_hours_session() -> u64 { 168 } // 1 week default
+fn default_true() -> bool {
+    true
+}
+fn default_ttl_hours_session() -> u64 {
+    168
+} // 1 week default
 
 // ============================================================================
 // 4. Extract
@@ -269,9 +280,15 @@ pub struct ExtractRequest {
     pub frame: Option<String>,
 }
 
-fn default_scroll_max() -> usize { 5 }
-fn default_scroll_delay() -> u64 { 500 }
-fn default_scroll_amount_extract() -> u32 { 800 }
+fn default_scroll_max() -> usize {
+    5
+}
+fn default_scroll_delay() -> u64 {
+    500
+}
+fn default_scroll_amount_extract() -> u32 {
+    800
+}
 
 // ============================================================================
 // 5. Session
@@ -280,7 +297,7 @@ fn default_scroll_amount_extract() -> u32 { 800 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionRequest {
     #[serde(default)]
-    pub session: Option<String>,  // Target session name for device switch etc.
+    pub session: Option<String>, // Target session name for device switch etc.
     #[serde(default)]
     pub acquire: Option<String>,
     #[serde(default)]
@@ -290,14 +307,14 @@ pub struct SessionRequest {
     #[serde(default)]
     pub import: Option<String>,
     #[serde(default)]
-    pub clone_to: Option<String>,  // Clone session cookies/profile to a new session name
+    pub clone_to: Option<String>, // Clone session cookies/profile to a new session name
     // acquire options
     #[serde(default)]
     pub headless: bool,
     #[serde(default = "default_true")]
     pub restore: bool,
     #[serde(default = "default_ttl_hours_session")]
-    pub ttl_hours: u64,  // 168 = 1 week (default), 0 = no expiration (infinite/persistent)
+    pub ttl_hours: u64, // 168 = 1 week (default), 0 = no expiration (infinite/persistent)
     // import options
     #[serde(default)]
     pub browser: Option<String>,
@@ -312,7 +329,7 @@ pub struct SessionRequest {
     pub ai_config: Option<AiConfigUpdate>,
     // Device simulation / Viewport
     #[serde(default)]
-    pub device: Option<String>,  // Device preset name (e.g., "iPhone 14", "Pixel 7")
+    pub device: Option<String>, // Device preset name (e.g., "iPhone 14", "Pixel 7")
     #[serde(default)]
     pub viewport_width: Option<u32>,
     #[serde(default)]
@@ -424,7 +441,9 @@ pub struct ExecuteRequest {
 // Snapshot (DOM element extraction)
 // ============================================================================
 
-fn default_snapshot_limit() -> usize { 200 }
+fn default_snapshot_limit() -> usize {
+    200
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SnapshotRequest {
@@ -490,14 +509,14 @@ pub struct NetworkRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NetworkRequestAction {
-    Enable { 
+    Enable {
         #[serde(default)]
-        max_logs: Option<usize> 
+        max_logs: Option<usize>,
     },
     Disable,
-    GetLogs { 
+    GetLogs {
         #[serde(default)]
-        filter: Option<String> 
+        filter: Option<String>,
     },
     ClearLogs,
 }
@@ -524,7 +543,10 @@ impl McpToolResponse {
             success: true,
             content: Some(vec![
                 McpContent::Text { text },
-                McpContent::Image { data: image_data, mime_type },
+                McpContent::Image {
+                    data: image_data,
+                    mime_type,
+                },
             ]),
             error: None,
         }
@@ -553,7 +575,7 @@ impl McpToolResponse {
             }),
         }
     }
-    
+
     /// Success response with JSON data (serialized as text for AI parsing)
     pub fn success_json(data: serde_json::Value) -> Self {
         let text = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());

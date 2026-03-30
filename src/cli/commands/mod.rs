@@ -1,10 +1,11 @@
 pub mod auth;
-pub mod login;
 pub mod click;
 pub mod cookies;
 pub mod execute;
 pub mod extract;
 pub mod frames;
+pub mod inject_file;
+pub mod login;
 pub mod open;
 pub mod screenshot;
 pub mod scroll;
@@ -15,5 +16,4 @@ pub mod status;
 pub mod type_cmd;
 pub mod update;
 pub mod upload;
-pub mod inject_file;
 pub mod wait;

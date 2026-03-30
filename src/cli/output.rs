@@ -10,13 +10,15 @@ pub struct OutputOpts {
 /// Sanitize a session name for use in filenames.
 /// Replaces any non-alphanumeric characters (except - and _) with underscores.
 fn sanitize_filename_part(s: &str) -> String {
-    s.chars().map(|c| {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-            c
-        } else {
-            '_'
-        }
-    }).collect()
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Get the wb output directory ($TMPDIR/wb/ or %TEMP%\wb\)
@@ -27,7 +29,12 @@ pub fn output_dir() -> PathBuf {
 }
 
 /// Save text content to a file and return the path
-pub fn save_text(subdir: &str, prefix: &str, session: &str, content: &str) -> std::io::Result<PathBuf> {
+pub fn save_text(
+    subdir: &str,
+    prefix: &str,
+    session: &str,
+    content: &str,
+) -> std::io::Result<PathBuf> {
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
@@ -39,7 +46,13 @@ pub fn save_text(subdir: &str, prefix: &str, session: &str, content: &str) -> st
 }
 
 /// Save binary content to a file and return the path
-pub fn save_binary(subdir: &str, prefix: &str, session: &str, ext: &str, data: &[u8]) -> std::io::Result<PathBuf> {
+pub fn save_binary(
+    subdir: &str,
+    prefix: &str,
+    session: &str,
+    ext: &str,
+    data: &[u8],
+) -> std::io::Result<PathBuf> {
     let dir = output_dir().join(subdir);
     fs::create_dir_all(&dir)?;
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
@@ -91,7 +104,11 @@ pub fn truncate_str(s: &str, max_chars: usize) -> &str {
     if s.chars().count() <= max_chars {
         s
     } else {
-        let end = s.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(s.len());
+        let end = s
+            .char_indices()
+            .nth(max_chars)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         &s[..end]
     }
 }

@@ -1,7 +1,13 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
 
-pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str, post_load_wait_ms: u64) -> Result<(), WbError> {
+pub fn run(
+    client: &WbClient,
+    opts: &OutputOpts,
+    session: &str,
+    url: &str,
+    post_load_wait_ms: u64,
+) -> Result<(), WbError> {
     let mut body = serde_json::json!({
         "session": session,
         "url": url,
@@ -19,8 +25,13 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str, post_
         let display_ms = load_ms.unwrap_or(resp.elapsed_ms);
         let url_short = output::truncate_str(url, 60);
         let elem_count = resp.body.get("element_count").and_then(|v| v.as_u64());
-        let count_str = elem_count.map(|n| format!(", {n} elements")).unwrap_or_default();
-        output::print_result(opts, &format!("Navigated: {url_short} [{display_ms} ms{count_str}]"));
+        let count_str = elem_count
+            .map(|n| format!(", {n} elements"))
+            .unwrap_or_default();
+        output::print_result(
+            opts,
+            &format!("Navigated: {url_short} [{display_ms} ms{count_str}]"),
+        );
         // Print snapshot elements if present (skipped in quiet mode)
         if !opts.quiet {
             if let Some(snap) = resp.body.get("snapshot") {
@@ -34,21 +45,39 @@ pub fn run(client: &WbClient, opts: &OutputOpts, session: &str, url: &str, post_
                         let val = el.get("value").and_then(|v| v.as_str());
                         let name_attr = el.get("name").and_then(|v| v.as_str());
                         let detail = match (tag, t, href) {
-                            ("a", _, Some(h)) if !text.is_empty() => format!("[{r}] a \"{}\" href={}", output::truncate_str(text, 50), output::truncate_str(h, 60)),
-                            ("a", _, Some(h)) => format!("[{r}] a href={}", output::truncate_str(h, 60)),
+                            ("a", _, Some(h)) if !text.is_empty() => format!(
+                                "[{r}] a \"{}\" href={}",
+                                output::truncate_str(text, 50),
+                                output::truncate_str(h, 60)
+                            ),
+                            ("a", _, Some(h)) => {
+                                format!("[{r}] a href={}", output::truncate_str(h, 60))
+                            }
                             ("input", Some(t), _) => {
                                 let n = name_attr.unwrap_or("");
                                 let v = val.unwrap_or("");
-                                if v.is_empty() { format!("[{r}] input[{t}] \"{n}\"") }
-                                else { format!("[{r}] input[{t}] \"{n}\" val=\"{}\"", output::truncate_str(v, 30)) }
+                                if v.is_empty() {
+                                    format!("[{r}] input[{t}] \"{n}\"")
+                                } else {
+                                    format!(
+                                        "[{r}] input[{t}] \"{n}\" val=\"{}\"",
+                                        output::truncate_str(v, 30)
+                                    )
+                                }
                             }
                             ("button", _, _) | ("select", _, _) | ("textarea", _, _) => {
-                                if text.is_empty() { format!("[{r}] {tag}") }
-                                else { format!("[{r}] {tag} \"{}\"", output::truncate_str(text, 50)) }
+                                if text.is_empty() {
+                                    format!("[{r}] {tag}")
+                                } else {
+                                    format!("[{r}] {tag} \"{}\"", output::truncate_str(text, 50))
+                                }
                             }
                             _ => {
-                                if text.is_empty() { format!("[{r}] {tag}") }
-                                else { format!("[{r}] {tag} \"{}\"", output::truncate_str(text, 50)) }
+                                if text.is_empty() {
+                                    format!("[{r}] {tag}")
+                                } else {
+                                    format!("[{r}] {tag} \"{}\"", output::truncate_str(text, 50))
+                                }
                             }
                         };
                         println!("{detail}");

@@ -16,31 +16,31 @@ use std::path::PathBuf;
 pub struct ImageCollectRequest {
     /// Session name
     pub session: String,
-    
+
     /// CSS selector for image container (optional)
     #[serde(default)]
     pub container_selector: Option<String>,
-    
+
     /// Minimum width filter
     #[serde(default)]
     pub min_width: Option<u32>,
-    
+
     /// Minimum height filter
     #[serde(default)]
     pub min_height: Option<u32>,
-    
+
     /// URL pattern filter (regex)
     #[serde(default)]
     pub url_pattern: Option<String>,
-    
+
     /// Output format
     #[serde(default)]
     pub output: ImageOutputFormat,
-    
+
     /// Maximum images to collect
     #[serde(default = "default_max_images")]
     pub max_images: u32,
-    
+
     /// Download concurrency
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
@@ -105,8 +105,9 @@ pub fn generate_image_extract_script(request: &ImageCollectRequest) -> String {
     let min_height = request.min_height.unwrap_or(0);
     let pattern = request.url_pattern.as_deref().unwrap_or(".*");
     let max_images = request.max_images;
-    
-    format!(r#"
+
+    format!(
+        r#"
 (function() {{
     const container = document.querySelector("{}");
     if (!container) return JSON.stringify({{ error: "Container not found" }});
@@ -130,10 +131,13 @@ pub fn generate_image_extract_script(request: &ImageCollectRequest) -> String {
     
     return JSON.stringify({{ images: results, count: results.length }});
 }})();
-"#, 
+"#,
         container.replace('"', "\\\""),
         pattern.replace('"', "\\\""),
-        min_width, min_height, max_images)
+        min_width,
+        min_height,
+        max_images
+    )
 }
 
 // ============================================================================
@@ -145,15 +149,15 @@ pub fn generate_image_extract_script(request: &ImageCollectRequest) -> String {
 pub struct SubtitleRequest {
     /// YouTube URL or video ID
     pub url: String,
-    
+
     /// Preferred language(s)
     #[serde(default)]
     pub languages: Vec<String>,
-    
+
     /// Include auto-generated subtitles
     #[serde(default = "default_true")]
     pub auto_generated: bool,
-    
+
     /// Output format
     #[serde(default)]
     pub format: SubtitleFormat,
@@ -198,19 +202,19 @@ pub struct SubtitleResponse {
 pub struct VideoDownloadRequest {
     /// YouTube URL or video ID
     pub url: String,
-    
+
     /// Quality preference
     #[serde(default)]
     pub quality: VideoQuality,
-    
+
     /// Audio only
     #[serde(default)]
     pub audio_only: bool,
-    
+
     /// Format preference
     #[serde(default)]
     pub format: Option<String>,
-    
+
     /// Embed metadata
     #[serde(default = "default_true")]
     pub embed_metadata: bool,
@@ -240,7 +244,9 @@ impl VideoQuality {
             VideoQuality::Hd => "bestvideo[height<=1080]+bestaudio/best[height<=1080]".to_string(),
             VideoQuality::Sd => "bestvideo[height<=720]+bestaudio/best[height<=720]".to_string(),
             VideoQuality::Low => "worstvideo+worstaudio/worst".to_string(),
-            VideoQuality::Specific(h) => format!("bestvideo[height<={}]+bestaudio/best[height<={}]", h, h),
+            VideoQuality::Specific(h) => {
+                format!("bestvideo[height<={}]+bestaudio/best[height<={}]", h, h)
+            }
         }
     }
 }
@@ -278,10 +284,10 @@ pub enum DownloadStatus {
 pub struct VideoAnalyzeRequest {
     /// Video URL or file reference
     pub source: String,
-    
+
     /// Analysis to perform
     pub analysis: Vec<AnalysisType>,
-    
+
     /// Output options
     #[serde(default)]
     pub output: AnalysisOutput,
@@ -410,38 +416,41 @@ impl MediaCache {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Create a new reference
     pub fn create_reference(&mut self) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono_now_iso8601();
-        
-        self.references.insert(id.clone(), MediaReference {
-            id: id.clone(),
-            created_at: now.clone(),
-            expires_at: now, // TODO: Add proper expiration
-            files: Vec::new(),
-            total_size: 0,
-        });
-        
+
+        self.references.insert(
+            id.clone(),
+            MediaReference {
+                id: id.clone(),
+                created_at: now.clone(),
+                expires_at: now, // TODO: Add proper expiration
+                files: Vec::new(),
+                total_size: 0,
+            },
+        );
+
         id
     }
-    
+
     /// Get reference by ID
     pub fn get_reference(&self, id: &str) -> Option<&MediaReference> {
         self.references.get(id)
     }
-    
+
     /// Check if URL is cached
     pub fn get_cached(&self, url: &str) -> Option<&str> {
         self.url_map.get(url).map(|s| s.as_str())
     }
-    
+
     /// Add URL to cache
     pub fn cache_url(&mut self, url: &str, reference: &str) {
         self.url_map.insert(url.to_string(), reference.to_string());
     }
-    
+
     /// Cleanup expired references
     pub fn cleanup_expired(&mut self) -> Vec<String> {
         // TODO: Implement expiration check
@@ -464,10 +473,14 @@ fn chrono_now_iso8601() -> String {
 /// Generate FFmpeg command for scene detection
 pub fn generate_scene_detect_cmd(input: &str, threshold: f32) -> Vec<String> {
     vec![
-        "-i".to_string(), input.to_string(),
-        "-vf".to_string(), format!("select='gt(scene,{})',showinfo", threshold),
-        "-vsync".to_string(), "vfr".to_string(),
-        "-f".to_string(), "null".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        "-vf".to_string(),
+        format!("select='gt(scene,{})',showinfo", threshold),
+        "-vsync".to_string(),
+        "vfr".to_string(),
+        "-f".to_string(),
+        "null".to_string(),
         "-".to_string(),
     ]
 }
@@ -475,20 +488,31 @@ pub fn generate_scene_detect_cmd(input: &str, threshold: f32) -> Vec<String> {
 /// Generate FFmpeg command for keyframe extraction
 pub fn generate_keyframe_extract_cmd(input: &str, output_pattern: &str) -> Vec<String> {
     vec![
-        "-i".to_string(), input.to_string(),
-        "-vf".to_string(), "select='eq(pict_type,I)'".to_string(),
-        "-vsync".to_string(), "vfr".to_string(),
-        "-q:v".to_string(), "2".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        "-vf".to_string(),
+        "select='eq(pict_type,I)'".to_string(),
+        "-vsync".to_string(),
+        "vfr".to_string(),
+        "-q:v".to_string(),
+        "2".to_string(),
         output_pattern.to_string(),
     ]
 }
 
 /// Generate FFmpeg command for interval frame extraction
-pub fn generate_interval_extract_cmd(input: &str, interval: f32, output_pattern: &str) -> Vec<String> {
+pub fn generate_interval_extract_cmd(
+    input: &str,
+    interval: f32,
+    output_pattern: &str,
+) -> Vec<String> {
     vec![
-        "-i".to_string(), input.to_string(),
-        "-vf".to_string(), format!("fps=1/{}", interval),
-        "-q:v".to_string(), "2".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        "-vf".to_string(),
+        format!("fps=1/{}", interval),
+        "-q:v".to_string(),
+        "2".to_string(),
         output_pattern.to_string(),
     ]
 }
@@ -497,22 +521,29 @@ pub fn generate_interval_extract_cmd(input: &str, interval: f32, output_pattern:
 pub fn generate_audio_extract_cmd(input: &str, output: &str, format: &str) -> Vec<String> {
     match format {
         "mp3" => vec![
-            "-i".to_string(), input.to_string(),
+            "-i".to_string(),
+            input.to_string(),
             "-vn".to_string(),
-            "-acodec".to_string(), "libmp3lame".to_string(),
-            "-ab".to_string(), "192k".to_string(),
+            "-acodec".to_string(),
+            "libmp3lame".to_string(),
+            "-ab".to_string(),
+            "192k".to_string(),
             output.to_string(),
         ],
         "wav" => vec![
-            "-i".to_string(), input.to_string(),
+            "-i".to_string(),
+            input.to_string(),
             "-vn".to_string(),
-            "-acodec".to_string(), "pcm_s16le".to_string(),
+            "-acodec".to_string(),
+            "pcm_s16le".to_string(),
             output.to_string(),
         ],
         _ => vec![
-            "-i".to_string(), input.to_string(),
+            "-i".to_string(),
+            input.to_string(),
             "-vn".to_string(),
-            "-c:a".to_string(), "copy".to_string(),
+            "-c:a".to_string(),
+            "copy".to_string(),
             output.to_string(),
         ],
     }
@@ -523,14 +554,15 @@ pub fn generate_ytdlp_subtitle_cmd(url: &str, lang: &str, auto: bool) -> Vec<Str
     let mut cmd = vec![
         url.to_string(),
         "--write-sub".to_string(),
-        "--sub-lang".to_string(), lang.to_string(),
+        "--sub-lang".to_string(),
+        lang.to_string(),
         "--skip-download".to_string(),
     ];
-    
+
     if auto {
         cmd.push("--write-auto-sub".to_string());
     }
-    
+
     cmd
 }
 
@@ -538,8 +570,10 @@ pub fn generate_ytdlp_subtitle_cmd(url: &str, lang: &str, auto: bool) -> Vec<Str
 pub fn generate_ytdlp_download_cmd(url: &str, quality: &VideoQuality, output: &str) -> Vec<String> {
     vec![
         url.to_string(),
-        "-f".to_string(), quality.to_ytdlp_format(),
-        "-o".to_string(), output.to_string(),
+        "-f".to_string(),
+        quality.to_ytdlp_format(),
+        "-o".to_string(),
+        output.to_string(),
         "--embed-metadata".to_string(),
         "--progress".to_string(),
     ]
@@ -548,13 +582,13 @@ pub fn generate_ytdlp_download_cmd(url: &str, quality: &VideoQuality, output: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_image_output_format() {
         assert_eq!(ImageOutputFormat::default(), ImageOutputFormat::Urls);
         assert_ne!(ImageOutputFormat::Urls, ImageOutputFormat::Base64);
     }
-    
+
     #[test]
     fn test_video_quality_format() {
         assert_eq!(
@@ -564,9 +598,13 @@ mod tests {
         assert!(VideoQuality::Hd.to_ytdlp_format().contains("1080"));
         assert!(VideoQuality::Sd.to_ytdlp_format().contains("720"));
         assert!(VideoQuality::Low.to_ytdlp_format().contains("worst"));
-        assert!(VideoQuality::Specific(480).to_ytdlp_format().contains("480"));
+        assert!(
+            VideoQuality::Specific(480)
+                .to_ytdlp_format()
+                .contains("480")
+        );
     }
-    
+
     #[test]
     fn test_generate_scene_detect_cmd() {
         let cmd = generate_scene_detect_cmd("input.mp4", 0.3);
@@ -574,7 +612,7 @@ mod tests {
         assert!(cmd.iter().any(|s| s.contains("scene")));
         assert!(cmd.iter().any(|s| s.contains("0.3")));
     }
-    
+
     #[test]
     fn test_generate_keyframe_extract_cmd() {
         let cmd = generate_keyframe_extract_cmd("input.mp4", "frame_%04d.jpg");
@@ -582,14 +620,14 @@ mod tests {
         assert!(cmd.iter().any(|s| s.contains("pict_type")));
         assert!(cmd.contains(&"frame_%04d.jpg".to_string()));
     }
-    
+
     #[test]
     fn test_generate_interval_extract_cmd() {
         let cmd = generate_interval_extract_cmd("input.mp4", 5.0, "frame_%04d.jpg");
         assert!(cmd.contains(&"-i".to_string()));
         assert!(cmd.iter().any(|s| s.contains("fps=1/5")));
     }
-    
+
     #[test]
     fn test_generate_audio_extract_cmd_mp3() {
         let cmd = generate_audio_extract_cmd("input.mp4", "output.mp3", "mp3");
@@ -598,19 +636,19 @@ mod tests {
         assert!(cmd.contains(&"libmp3lame".to_string()));
         assert!(cmd.contains(&"192k".to_string()));
     }
-    
+
     #[test]
     fn test_generate_audio_extract_cmd_wav() {
         let cmd = generate_audio_extract_cmd("input.mp4", "output.wav", "wav");
         assert!(cmd.contains(&"pcm_s16le".to_string()));
     }
-    
+
     #[test]
     fn test_generate_audio_extract_cmd_other() {
         let cmd = generate_audio_extract_cmd("input.mp4", "output.aac", "aac");
         assert!(cmd.contains(&"copy".to_string()));
     }
-    
+
     #[test]
     fn test_generate_ytdlp_subtitle_cmd() {
         let cmd = generate_ytdlp_subtitle_cmd("https://youtube.com/watch?v=abc", "en", true);
@@ -618,49 +656,52 @@ mod tests {
         assert!(cmd.contains(&"--write-auto-sub".to_string()));
         assert!(cmd.contains(&"--sub-lang".to_string()));
     }
-    
+
     #[test]
     fn test_generate_ytdlp_subtitle_cmd_no_auto() {
         let cmd = generate_ytdlp_subtitle_cmd("https://youtube.com/watch?v=abc", "ja", false);
         assert!(!cmd.contains(&"--write-auto-sub".to_string()));
     }
-    
+
     #[test]
     fn test_generate_ytdlp_download_cmd() {
         let cmd = generate_ytdlp_download_cmd(
             "https://youtube.com/watch?v=abc",
             &VideoQuality::Hd,
-            "output.mp4"
+            "output.mp4",
         );
         assert!(cmd.iter().any(|s| s.contains("1080")));
         assert!(cmd.contains(&"--embed-metadata".to_string()));
     }
-    
+
     #[test]
     fn test_media_cache() {
         let mut cache = MediaCache::new();
         let ref_id = cache.create_reference();
-        
+
         assert!(cache.get_reference(&ref_id).is_some());
-        
+
         cache.cache_url("https://example.com/img.jpg", &ref_id);
-        assert_eq!(cache.get_cached("https://example.com/img.jpg"), Some(ref_id.as_str()));
+        assert_eq!(
+            cache.get_cached("https://example.com/img.jpg"),
+            Some(ref_id.as_str())
+        );
     }
-    
+
     #[test]
     fn test_media_cache_not_found() {
         let cache = MediaCache::new();
         assert!(cache.get_reference("nonexistent").is_none());
         assert!(cache.get_cached("https://not-cached.com/img.jpg").is_none());
     }
-    
+
     #[test]
     fn test_media_cache_cleanup() {
         let mut cache = MediaCache::new();
         let expired = cache.cleanup_expired();
         assert!(expired.is_empty()); // Currently not implemented
     }
-    
+
     #[test]
     fn test_generate_image_extract_script() {
         let request = ImageCollectRequest {
@@ -673,13 +714,13 @@ mod tests {
             max_images: 50,
             concurrency: 5,
         };
-        
+
         let script = generate_image_extract_script(&request);
         assert!(script.contains("#gallery"));
         assert!(script.contains("querySelectorAll"));
         assert!(script.contains("100")); // min dimensions
     }
-    
+
     #[test]
     fn test_generate_image_extract_script_defaults() {
         let request = ImageCollectRequest {
@@ -692,28 +733,28 @@ mod tests {
             max_images: 100,
             concurrency: 5,
         };
-        
+
         let script = generate_image_extract_script(&request);
         assert!(script.contains("body")); // default container
     }
-    
+
     #[test]
     fn test_subtitle_format_default() {
         assert_eq!(SubtitleFormat::default(), SubtitleFormat::Text);
     }
-    
+
     #[test]
     fn test_download_status_equality() {
         assert_eq!(DownloadStatus::Queued, DownloadStatus::Queued);
         assert_ne!(DownloadStatus::Queued, DownloadStatus::Completed);
     }
-    
+
     #[test]
     fn test_analysis_type_equality() {
         assert_eq!(AnalysisType::SceneChange, AnalysisType::SceneChange);
         assert_eq!(AnalysisType::Keyframes, AnalysisType::Keyframes);
     }
-    
+
     #[test]
     fn test_default_functions() {
         assert_eq!(default_max_images(), 100);
@@ -722,7 +763,7 @@ mod tests {
         assert_eq!(default_frame_format(), "jpg");
         assert_eq!(default_audio_format(), "mp3");
     }
-    
+
     #[test]
     fn test_image_collect_request_deserialize() {
         let json = r##"{"session": "main"}"##;
@@ -731,7 +772,7 @@ mod tests {
         assert_eq!(req.max_images, 100); // default
         assert_eq!(req.concurrency, 5); // default
     }
-    
+
     #[test]
     fn test_subtitle_request_deserialize() {
         let json = r##"{"url": "https://youtube.com/watch?v=abc"}"##;
@@ -739,7 +780,7 @@ mod tests {
         assert!(req.auto_generated); // default true
         assert_eq!(req.format, SubtitleFormat::Text);
     }
-    
+
     #[test]
     fn test_video_download_request_deserialize() {
         let json = r##"{"url": "https://youtube.com/watch?v=abc"}"##;
@@ -748,7 +789,7 @@ mod tests {
         assert!(!req.audio_only);
         assert!(req.embed_metadata); // default true
     }
-    
+
     #[test]
     fn test_analysis_output_default() {
         let output = AnalysisOutput::default();
@@ -758,7 +799,7 @@ mod tests {
         assert_eq!(output.frame_format, "");
         assert_eq!(output.audio_format, "");
     }
-    
+
     #[test]
     fn test_video_quality_equality() {
         assert_eq!(VideoQuality::Best, VideoQuality::Best);
@@ -766,4 +807,3 @@ mod tests {
         assert_eq!(VideoQuality::Specific(720), VideoQuality::Specific(720));
     }
 }
-

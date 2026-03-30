@@ -1,13 +1,13 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
 use windows::{
-    core::{w, Error, Result, HSTRING, PCWSTR},
     Win32::Foundation::*,
     Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::WindowsAndMessaging::*,
+    core::{Error, HSTRING, PCWSTR, Result, w},
 };
-use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
-use std::cell::RefCell;
-use std::collections::HashMap;
 
 // ============================================================================
 // Thread-Local WebView Controller Registry
@@ -145,7 +145,7 @@ impl WebViewWindow {
             tracing::debug!("Window shown: {:?}", self.hwnd);
         }
     }
-    
+
     /// Hide the window (pseudo-headless)
     pub fn hide(&self) {
         unsafe {
@@ -153,7 +153,7 @@ impl WebViewWindow {
             tracing::debug!("Window hidden: {:?}", self.hwnd);
         }
     }
-    
+
     /// Set window visibility
     pub fn set_visible(&self, visible: bool) {
         if visible {
@@ -162,14 +162,12 @@ impl WebViewWindow {
             self.hide();
         }
     }
-    
+
     /// Check if window is visible
     pub fn is_visible(&self) -> bool {
-        unsafe {
-            IsWindowVisible(self.hwnd).as_bool()
-        }
+        unsafe { IsWindowVisible(self.hwnd).as_bool() }
     }
-    
+
     /// Bring window to front and focus
     pub fn bring_to_front(&self) {
         unsafe {
@@ -189,9 +187,7 @@ impl WebViewWindow {
 
     /// Check if the window handle is still valid (not destroyed)
     pub fn is_valid(&self) -> bool {
-        unsafe {
-            IsWindow(self.hwnd).as_bool()
-        }
+        unsafe { IsWindow(self.hwnd).as_bool() }
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -222,4 +218,3 @@ impl WebViewWindow {
         }
     }
 }
-

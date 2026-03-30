@@ -24,9 +24,9 @@ pub fn run(
         return Ok(());
     }
 
-    output::print_result(opts, &format!(
-        "File injected into '{}' [{} ms]",
-        selector, resp.elapsed_ms
-    ));
+    output::print_result(
+        opts,
+        &format!("File injected into '{}' [{} ms]", selector, resp.elapsed_ms),
+    );
     Ok(())
 }

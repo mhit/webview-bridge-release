@@ -1,6 +1,6 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 pub fn run(
     client: &WbClient,
@@ -21,16 +21,20 @@ pub fn run(
     resp.check_success("Screenshot failed")?;
 
     // Server returns base64 image data in "image" or "data" field
-    let b64 = resp.body.get("image")
+    let b64 = resp
+        .body
+        .get("image")
         .or_else(|| resp.body.get("data"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| WbError::general(
-            "No image data in response. The page may not have loaded yet.\n\
-             Try: 1) wb open <url> first  2) wb wait \"body\" to ensure page is ready  3) Retry"
-        ))?;
+        .ok_or_else(|| {
+            WbError::general(
+                "No image data in response. The page may not have loaded yet.\n\
+             Try: 1) wb open <url> first  2) wb wait \"body\" to ensure page is ready  3) Retry",
+            )
+        })?;
 
-    let image_data = base64_decode(b64)
-        .map_err(|e| WbError::general(format!("Base64 decode error: {e}")))?;
+    let image_data =
+        base64_decode(b64).map_err(|e| WbError::general(format!("Base64 decode error: {e}")))?;
 
     if opts.json {
         output::print_json(&serde_json::json!({
@@ -44,17 +48,17 @@ pub fn run(
         use std::io::{IsTerminal, Write};
         if std::io::stdout().is_terminal() {
             return Err(WbError::general(
-                "Refusing to write binary PNG to terminal. Pipe to a file: wb screenshot --no-file > out.png"
+                "Refusing to write binary PNG to terminal. Pipe to a file: wb screenshot --no-file > out.png",
             ));
         }
-        std::io::stdout().write_all(&image_data)
+        std::io::stdout()
+            .write_all(&image_data)
             .map_err(|e| WbError::general(format!("stdout write error: {e}")))?;
         return Ok(());
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &image_data)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
@@ -64,7 +68,10 @@ pub fn run(
     };
 
     let kb = image_data.len() / 1024;
-    output::print_result(opts, &format!("Screenshot ({kb} KB) [{} ms]", resp.elapsed_ms));
+    output::print_result(
+        opts,
+        &format!("Screenshot ({kb} KB) [{} ms]", resp.elapsed_ms),
+    );
     output::print_saved(opts, &path);
 
     Ok(())
@@ -77,5 +84,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     } else {
         input
     };
-    STANDARD.decode(data.trim()).map_err(|e| format!("Base64 decode error: {e}"))
+    STANDARD
+        .decode(data.trim())
+        .map_err(|e| format!("Base64 decode error: {e}"))
 }

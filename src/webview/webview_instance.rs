@@ -3,10 +3,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use uuid::Uuid;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::{Error, Interface, Result as WinResult, HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_USER};
-
+use windows::core::{Error, HRESULT, HSTRING, Interface, Result as WinResult};
 
 // Custom Messages
 pub const WM_WEBVIEW_CREATED: u32 = WM_USER + 100;
@@ -84,8 +83,7 @@ pub static EMBEDDED_BROWSER_END2: std::sync::atomic::AtomicUsize =
 /// STATUS_BREAKPOINT from EmbeddedBrowserWebView.dll outside of an active `IN_WEBVIEW_CALL`.
 /// Cannot log from within the VEH handler (heap/lock risk), so we write the address here and
 /// emit a tracing::error! at the next safe call site.  Reset to 0 after logging.
-pub static VEH_CRASH_ADDR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static VEH_CRASH_ADDR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Cache the load address range of the EmbeddedBrowserWebView.dll instance that owns
 /// `vtable_addr` (a pointer into the DLL, e.g. the COM vtable of the newly created
@@ -103,7 +101,7 @@ pub fn cache_embedded_browser_dll_range(vtable_addr: usize) {
     use std::sync::atomic::Ordering;
     unsafe {
         use windows::Win32::System::LibraryLoader::{
-            GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GetModuleHandleExW,
         };
         use windows::Win32::System::ProcessStatus::{K32GetModuleInformation, MODULEINFO};
         use windows::Win32::System::Threading::GetCurrentProcess;
@@ -165,10 +163,17 @@ fn flush_veh_crash_log() {
     if addr != 0 {
         // Check both cached DLL ranges to compute a human-readable offset.
         let ranges = [
-            (EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed), EMBEDDED_BROWSER_END.load(Ordering::Relaxed)),
-            (EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed), EMBEDDED_BROWSER_END2.load(Ordering::Relaxed)),
+            (
+                EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed),
+                EMBEDDED_BROWSER_END.load(Ordering::Relaxed),
+            ),
+            (
+                EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed),
+                EMBEDDED_BROWSER_END2.load(Ordering::Relaxed),
+            ),
         ];
-        let offset = ranges.iter()
+        let offset = ranges
+            .iter()
             .filter(|&&(b, e)| b != 0 && addr >= b && addr < e)
             .map(|&(b, _)| format!("+{:#x}", addr - b))
             .next()
@@ -256,7 +261,11 @@ pub struct WebViewInstance {
 struct CdpCompletedHandler;
 
 impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpCompletedHandler {
-    fn Invoke(&self, error_code: HRESULT, return_object_as_json: &windows::core::PCWSTR) -> WinResult<()> {
+    fn Invoke(
+        &self,
+        error_code: HRESULT,
+        return_object_as_json: &windows::core::PCWSTR,
+    ) -> WinResult<()> {
         if error_code.is_ok() {
             let result = unsafe { return_object_as_json.to_string().unwrap_or_default() };
             tracing::debug!("[CDP] Method completed successfully: {}", result);
@@ -276,32 +285,46 @@ struct CdpScreenshotHandler {
 }
 
 impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpScreenshotHandler {
-    fn Invoke(&self, error_code: HRESULT, return_object_as_json: &windows::core::PCWSTR) -> WinResult<()> {
+    fn Invoke(
+        &self,
+        error_code: HRESULT,
+        return_object_as_json: &windows::core::PCWSTR,
+    ) -> WinResult<()> {
         if error_code.is_ok() {
             let result = unsafe { return_object_as_json.to_string().unwrap_or_default() };
             tracing::debug!("[CDP Screenshot] Completed, request_id={}", self.request_id);
-            
+
             // Parse the JSON to extract base64 data
             // CDP returns: {"data": "base64_encoded_image_data"}
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(data) = json.get("data").and_then(|v| v.as_str()) {
                     PENDING_CDP_SCREENSHOTS.with(|map| {
-                        map.borrow_mut().insert(self.request_id.clone(), Ok(data.to_string()));
+                        map.borrow_mut()
+                            .insert(self.request_id.clone(), Ok(data.to_string()));
                     });
                 } else {
                     PENDING_CDP_SCREENSHOTS.with(|map| {
-                        map.borrow_mut().insert(self.request_id.clone(), Err("No data in CDP response".to_string()));
+                        map.borrow_mut().insert(
+                            self.request_id.clone(),
+                            Err("No data in CDP response".to_string()),
+                        );
                     });
                 }
             } else {
                 PENDING_CDP_SCREENSHOTS.with(|map| {
-                    map.borrow_mut().insert(self.request_id.clone(), Err(format!("Failed to parse CDP response: {}", result)));
+                    map.borrow_mut().insert(
+                        self.request_id.clone(),
+                        Err(format!("Failed to parse CDP response: {}", result)),
+                    );
                 });
             }
         } else {
             tracing::warn!("[CDP Screenshot] Failed: {:?}", error_code);
             PENDING_CDP_SCREENSHOTS.with(|map| {
-                map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
+                map.borrow_mut().insert(
+                    self.request_id.clone(),
+                    Err(format!("CDP error: {:?}", error_code)),
+                );
             });
         }
         Ok(())
@@ -317,18 +340,25 @@ struct CdpCookieHandler {
 }
 
 impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpCookieHandler {
-    fn Invoke(&self, error_code: HRESULT, return_object_as_json: &windows::core::PCWSTR) -> WinResult<()> {
+    fn Invoke(
+        &self,
+        error_code: HRESULT,
+        return_object_as_json: &windows::core::PCWSTR,
+    ) -> WinResult<()> {
         if error_code.is_ok() {
             let result = unsafe { return_object_as_json.to_string().unwrap_or_default() };
             tracing::debug!("[CDP Cookie] Completed, request_id={}", self.request_id);
-            
+
             PENDING_CDP_COOKIES.with(|map| {
                 map.borrow_mut().insert(self.request_id.clone(), Ok(result));
             });
         } else {
             tracing::warn!("[CDP Cookie] Failed: {:?}", error_code);
             PENDING_CDP_COOKIES.with(|map| {
-                map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
+                map.borrow_mut().insert(
+                    self.request_id.clone(),
+                    Err(format!("CDP error: {:?}", error_code)),
+                );
             });
         }
         Ok(())
@@ -344,7 +374,11 @@ struct CdpResultHandler {
 }
 
 impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpResultHandler {
-    fn Invoke(&self, error_code: HRESULT, return_object_as_json: &windows::core::PCWSTR) -> WinResult<()> {
+    fn Invoke(
+        &self,
+        error_code: HRESULT,
+        return_object_as_json: &windows::core::PCWSTR,
+    ) -> WinResult<()> {
         if error_code.is_ok() {
             let result = unsafe { return_object_as_json.to_string().unwrap_or_default() };
             tracing::debug!("[CDP Result] Completed, request_id={}", self.request_id);
@@ -352,9 +386,16 @@ impl ICoreWebView2CallDevToolsProtocolMethodCompletedHandler_Impl for CdpResultH
                 map.borrow_mut().insert(self.request_id.clone(), Ok(result));
             });
         } else {
-            tracing::warn!("[CDP Result] Failed: {:?}, request_id={}", error_code, self.request_id);
+            tracing::warn!(
+                "[CDP Result] Failed: {:?}, request_id={}",
+                error_code,
+                self.request_id
+            );
             PENDING_CDP_RESULTS.with(|map| {
-                map.borrow_mut().insert(self.request_id.clone(), Err(format!("CDP error: {:?}", error_code)));
+                map.borrow_mut().insert(
+                    self.request_id.clone(),
+                    Err(format!("CDP error: {:?}", error_code)),
+                );
             });
         }
         Ok(())
@@ -383,25 +424,33 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkRequ
                 }
                 s
             };
-            
+
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 let enabled = NETWORK_MONITORING_ENABLED.with(|e| *e.borrow());
-                if !enabled { return Ok(()); }
+                if !enabled {
+                    return Ok(());
+                }
 
                 let request_id = json["requestId"].as_str().unwrap_or_default().to_string();
-                let url = json["request"]["url"].as_str().unwrap_or_default().to_string();
-                let method = json["request"]["method"].as_str().unwrap_or_default().to_string();
+                let url = json["request"]["url"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let method = json["request"]["method"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let timestamp = json["wallTime"].as_f64().unwrap_or(0.0);
-                
+
                 let mut headers = HashMap::new();
                 if let Some(h) = json["request"]["headers"].as_object() {
                     for (k, v) in h {
                         headers.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
                     }
                 }
-                
+
                 let post_data = json["request"]["postData"].as_str().map(|s| s.to_string());
-                
+
                 let entry = crate::core::NetworkLogEntry {
                     request_id: request_id.clone(),
                     request: crate::core::NetworkRequest {
@@ -413,13 +462,15 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkRequ
                     },
                     response: None,
                 };
-                
+
                 NETWORK_LOGS_MAP.with(|map| {
                     let mut m = map.borrow_mut();
                     let max = MAX_NETWORK_LOGS.with(|m| *m.borrow());
                     if m.len() >= max {
                         let key = m.keys().next().cloned();
-                        if let Some(k) = key { m.remove(&k); }
+                        if let Some(k) = key {
+                            m.remove(&k);
+                        }
                     }
                     m.insert(request_id, entry);
                 });
@@ -432,7 +483,9 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkRequ
 #[windows::core::implement(ICoreWebView2DevToolsProtocolEventReceivedEventHandler)]
 struct NetworkResponseReceivedHandler;
 
-impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkResponseReceivedHandler {
+impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl
+    for NetworkResponseReceivedHandler
+{
     fn Invoke(
         &self,
         _sender: &Option<ICoreWebView2>,
@@ -448,21 +501,28 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for NetworkResp
                 }
                 s
             };
-             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 let request_id = json["requestId"].as_str().unwrap_or_default();
-                
-                 NETWORK_LOGS_MAP.with(|map| {
+
+                NETWORK_LOGS_MAP.with(|map| {
                     let mut m = map.borrow_mut();
                     if let Some(entry) = m.get_mut(request_id) {
-                        let url = json["response"]["url"].as_str().unwrap_or_default().to_string();
+                        let url = json["response"]["url"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string();
                         let status = json["response"]["status"].as_i64().unwrap_or(0) as i32;
-                        let mime_type = json["response"]["mimeType"].as_str().unwrap_or_default().to_string();
+                        let mime_type = json["response"]["mimeType"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string();
                         let timestamp = json["timestamp"].as_f64().unwrap_or(0.0);
-                        
+
                         let mut headers = HashMap::new();
                         if let Some(h) = json["response"]["headers"].as_object() {
                             for (k, v) in h {
-                                headers.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                                headers
+                                    .insert(k.clone(), v.as_str().unwrap_or_default().to_string());
                             }
                         }
 
@@ -511,7 +571,9 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for TargetAttac
 
                 tracing::info!(
                     "[network] Target attached: type={}, url={}, sessionId={}",
-                    target_type, target_url, session_id
+                    target_type,
+                    target_url,
+                    session_id
                 );
 
                 // Enable Network domain in the child session (iframe/worker)
@@ -525,10 +587,15 @@ impl ICoreWebView2DevToolsProtocolEventReceivedEventHandler_Impl for TargetAttac
                                     &HSTRING::from(session_id),
                                     &HSTRING::from("Network.enable"),
                                     &HSTRING::from("{}"),
-                                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                        CdpCompletedHandler,
+                                    ),
                                 );
                             }
-                            tracing::info!("[network] Enabled Network.enable for session {}", session_id);
+                            tracing::info!(
+                                "[network] Enabled Network.enable for session {}",
+                                session_id
+                            );
                         }
                         Err(e) => {
                             tracing::warn!("[network] Failed to cast to ICoreWebView2_11: {:?}", e);
@@ -663,7 +730,9 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
                 "Registering NavigationStarting event...",
             );
             let _ = webview.add_NavigationStarting(
-                &ICoreWebView2NavigationStartingEventHandler::from(NavigationStartingHandler { hwnd: self.hwnd }),
+                &ICoreWebView2NavigationStartingEventHandler::from(NavigationStartingHandler {
+                    hwnd: self.hwnd,
+                }),
                 &mut Default::default(),
             );
 
@@ -697,7 +766,7 @@ impl ICoreWebView2CreateCoreWebView2ControllerCompletedHandler_Impl for Controll
         PENDING_CONTROLLERS.with(|map| {
             map.borrow_mut().insert(hwnd_val, controller.clone());
         });
-        
+
         // Register controller in global registry for WM_SIZE handling
         crate::webview::window::register_controller(self.hwnd, controller.clone());
 
@@ -738,8 +807,10 @@ impl ICoreWebView2NavigationStartingEventHandler_Impl for NavigationStartingHand
         let err = "Script interrupted: page navigation started. Wait for navigation to complete before executing scripts.".to_string();
         let has_pending = PENDING_SCRIPT_RESULTS.with(|map| !map.borrow().is_empty());
         if has_pending {
-            tracing::warn!("NavigationStarting: cancelling {} pending script(s)",
-                PENDING_SCRIPT_RESULTS.with(|map| map.borrow().len()));
+            tracing::warn!(
+                "NavigationStarting: cancelling {} pending script(s)",
+                PENDING_SCRIPT_RESULTS.with(|map| map.borrow().len())
+            );
             PENDING_SCRIPT_RESULTS.with(|map| {
                 let keys: Vec<String> = map.borrow().keys().cloned().collect();
                 let mut m = map.borrow_mut();
@@ -813,8 +884,15 @@ impl ICoreWebView2ExecuteScriptCompletedHandler_Impl for ExecuteScriptHandler {
         let result_str = unsafe { result_as_json.to_string().unwrap_or_default() };
 
         // Debug log the raw result
-        tracing::debug!("ExecuteScriptHandler: raw result_str (len={}): {}", result_str.len(), 
-            if result_str.len() > 200 { &result_str[..200] } else { &result_str });
+        tracing::debug!(
+            "ExecuteScriptHandler: raw result_str (len={}): {}",
+            result_str.len(),
+            if result_str.len() > 200 {
+                &result_str[..200]
+            } else {
+                &result_str
+            }
+        );
 
         // Parse JSON result (WebView2 returns JSON string for any result)
         let result = match serde_json::from_str::<serde_json::Value>(&result_str) {
@@ -861,9 +939,11 @@ impl ICoreWebView2ProcessFailedEventHandler_Impl for ProcessFailedHandler {
             let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
             let _ = unsafe { args.ProcessFailedKind(&mut kind) };
             match kind {
-                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED  => "browser_process_exited",
-                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED   => "render_process_exited",
-                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => "render_process_unresponsive",
+                COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => "browser_process_exited",
+                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => "render_process_exited",
+                COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => {
+                    "render_process_unresponsive"
+                }
                 _ => "unknown_process_failure",
             }
         } else {
@@ -875,7 +955,10 @@ impl ICoreWebView2ProcessFailedEventHandler_Impl for ProcessFailedHandler {
         // Mark this WebView as dead — prevents further COM calls that would cause access violations
         WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow_mut() = true);
 
-        let err = format!("WebView2 process failed ({}). Session must be re-acquired.", kind_str);
+        let err = format!(
+            "WebView2 process failed ({}). Session must be re-acquired.",
+            kind_str
+        );
 
         // Unblock all pending script executions
         PENDING_SCRIPT_RESULTS.with(|map| {
@@ -939,8 +1022,6 @@ impl ICoreWebView2ExecuteScriptCompletedHandler_Impl for FireAndForgetHandler {
     }
 }
 
-
-
 // ----------------------------------------------------------------
 // Instance Implementation
 // ----------------------------------------------------------------
@@ -986,22 +1067,22 @@ impl WebViewInstance {
     pub fn show(&self) {
         self.window.show();
     }
-    
+
     /// Hide the window (pseudo-headless)
     pub fn hide(&self) {
         self.window.hide();
     }
-    
+
     /// Set window visibility
     pub fn set_visible(&self, visible: bool) {
         self.window.set_visible(visible);
     }
-    
+
     /// Check if window is visible
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
     }
-    
+
     /// Bring window to front and focus
     pub fn bring_to_front(&self) {
         self.window.bring_to_front();
@@ -1032,9 +1113,8 @@ impl WebViewInstance {
                 &format!("Setting browser args: {}", browser_args),
             );
             let args_h = HSTRING::from(browser_args);
-            let _ = env_options.SetAdditionalBrowserArguments(
-                &windows::core::PCWSTR(args_h.as_ptr())
-            );
+            let _ =
+                env_options.SetAdditionalBrowserArguments(&windows::core::PCWSTR(args_h.as_ptr()));
             let env_options_iface = webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2EnvironmentOptions::from(env_options);
 
             log_webview_debug(
@@ -1065,19 +1145,19 @@ impl WebViewInstance {
 
         if let Some(c) = controller {
             log_webview_success("WebViewInstance::claim_controller", None);
-            
+
             // Inject anti-bot script on document creation
             unsafe {
                 if let Ok(webview) = c.CoreWebView2() {
                     let anti_bot_script = HSTRING::from(ANTI_BOT_SCRIPT);
-                    let _ = webview.AddScriptToExecuteOnDocumentCreated(
-                        &anti_bot_script,
-                        None,
+                    let _ = webview.AddScriptToExecuteOnDocumentCreated(&anti_bot_script, None);
+                    log_webview_debug(
+                        "WebViewInstance::claim_controller",
+                        "Anti-bot script injected",
                     );
-                    log_webview_debug("WebViewInstance::claim_controller", "Anti-bot script injected");
                 }
             }
-            
+
             // Extract the COM vtable address BEFORE moving `c` into self.
             // The vtable is inside EmbeddedBrowserWebView.dll; we use it to find the
             // exact DLL instance (version) for this session via GetModuleHandleExW.
@@ -1112,14 +1192,11 @@ impl WebViewInstance {
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
-                
+
                 // Ensure anti-bot script is registered (for restored sessions)
                 let anti_bot_script = HSTRING::from(ANTI_BOT_SCRIPT);
-                let _ = webview.AddScriptToExecuteOnDocumentCreated(
-                    &anti_bot_script,
-                    None,
-                );
-                
+                let _ = webview.AddScriptToExecuteOnDocumentCreated(&anti_bot_script, None);
+
                 log_webview_debug("WebViewInstance::navigate", "Calling webview.Navigate()");
                 webview.Navigate(&HSTRING::from(url))?;
             }
@@ -1173,13 +1250,23 @@ impl WebViewInstance {
                     }),
                 );
                 if exec_result.is_err() {
-                    IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
+                    IN_WEBVIEW_CALL.with(|c| {
+                        let mut v = c.borrow_mut();
+                        if *v > 0 {
+                            *v -= 1;
+                        }
+                    });
                     exec_result?;
                 }
 
                 // Wait for result while pumping messages (IN_WEBVIEW_CALL still elevated)
                 let wait_result = self.wait_for_script_result(&request_id);
-                IN_WEBVIEW_CALL.with(|c| { let mut v = c.borrow_mut(); if *v > 0 { *v -= 1; } });
+                IN_WEBVIEW_CALL.with(|c| {
+                    let mut v = c.borrow_mut();
+                    if *v > 0 {
+                        *v -= 1;
+                    }
+                });
                 match wait_result {
                     Ok(res) => {
                         log_webview_success("WebViewInstance::execute_script", None);
@@ -1223,7 +1310,9 @@ impl WebViewInstance {
             // Exit early if process failed (set by ProcessFailed event or exception handler)
             if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
                 // Remove the pending entry to avoid stale results
-                PENDING_SCRIPT_RESULTS.with(|map| { map.borrow_mut().remove(request_id); });
+                PENDING_SCRIPT_RESULTS.with(|map| {
+                    map.borrow_mut().remove(request_id);
+                });
                 return Err("WebView2 process failed during script execution".to_string());
             }
 
@@ -1261,12 +1350,15 @@ impl WebViewInstance {
             }
         }
     }
-    
+
     /// Set the WebView viewport to specific dimensions (for device simulation)
     /// This resizes both the window and the WebView content area
     pub fn set_viewport(&self, width: u32, height: u32) -> WinResult<()> {
-        log_webview_start("WebViewInstance::set_viewport", &format!("{}x{}", width, height));
-        
+        log_webview_start(
+            "WebViewInstance::set_viewport",
+            &format!("{}x{}", width, height),
+        );
+
         if let Some(controller) = &self.controller {
             unsafe {
                 // Calculate window size including non-client area (borders, title bar)
@@ -1278,34 +1370,36 @@ impl WebViewInstance {
                     self.get_hwnd(),
                     windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
                 ) as u32;
-                
+
                 let mut rect = windows::Win32::Foundation::RECT {
                     left: 0,
                     top: 0,
                     right: width as i32,
                     bottom: height as i32,
                 };
-                
+
                 let _ = windows::Win32::UI::WindowsAndMessaging::AdjustWindowRectEx(
                     &mut rect,
                     windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE(style),
                     false,
                     windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(ex_style),
                 );
-                
+
                 let window_width = rect.right - rect.left;
                 let window_height = rect.bottom - rect.top;
-                
+
                 // Resize window
                 let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
                     self.get_hwnd(),
                     windows::Win32::UI::WindowsAndMessaging::HWND_TOP,
-                    0, 0,
-                    window_width, window_height,
-                    windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE | 
-                    windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER,
+                    0,
+                    0,
+                    window_width,
+                    window_height,
+                    windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER,
                 );
-                
+
                 // Set WebView bounds to exact viewport size
                 let client_rect = windows::Win32::Foundation::RECT {
                     left: 0,
@@ -1314,38 +1408,38 @@ impl WebViewInstance {
                     bottom: height as i32,
                 };
                 controller.SetBounds(client_rect)?;
-                
+
                 log_webview_success("WebViewInstance::set_viewport", None);
             }
         } else {
             log_webview_error("WebViewInstance::set_viewport", "Controller not ready");
             return Err(Error::from_win32());
         }
-        
+
         Ok(())
     }
-    
+
     /// Set the User-Agent string via CDP (Emulation.setUserAgentOverride)
     /// This sets UA at the network level, not just JavaScript - important for bot detection evasion
     pub fn set_user_agent(&self, user_agent: &str) -> WinResult<()> {
         log_webview_start("WebViewInstance::set_user_agent", user_agent);
-        
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
-                
+
                 // Use CDP Emulation.setUserAgentOverride for network-level UA spoofing
-                let ua_params = format!(
-                    r#"{{"userAgent": "{}"}}"#,
-                    user_agent.replace('"', "\\\"")
-                );
-                
+                let ua_params =
+                    format!(r#"{{"userAgent": "{}"}}"#, user_agent.replace('"', "\\\""));
+
                 webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Emulation.setUserAgentOverride"),
                     &HSTRING::from(&ua_params),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpCompletedHandler,
+                    ),
                 )?;
-                
+
                 log_webview_success("WebViewInstance::set_user_agent", None);
                 tracing::info!("[set_user_agent] CDP UA set: {}", user_agent);
             }
@@ -1353,31 +1447,40 @@ impl WebViewInstance {
             log_webview_error("WebViewInstance::set_user_agent", "Controller not ready");
             return Err(Error::from_win32());
         }
-        
+
         Ok(())
     }
-    
+
     /// Apply device simulation (viewport + user agent + touch events)
     pub fn simulate_device(&self, device_name: &str) -> WinResult<String> {
         log_webview_start("WebViewInstance::simulate_device", device_name);
-        
+
         // Get device preset with flexible name matching
         let presets = crate::core::screenshot_v2::get_device_presets();
-        
+
         // Normalize the input name: lowercase, replace spaces with underscores
         let normalized = device_name.to_lowercase().replace(' ', "_");
-        
+
         // Try exact match first, then partial match
-        let device = presets.iter()
+        let device = presets
+            .iter()
             .find(|p| p.name.to_lowercase() == normalized)
-            .or_else(|| presets.iter().find(|p| p.name.to_lowercase().contains(&normalized)))
-            .or_else(|| presets.iter().find(|p| normalized.contains(&p.name.to_lowercase())));
-        
+            .or_else(|| {
+                presets
+                    .iter()
+                    .find(|p| p.name.to_lowercase().contains(&normalized))
+            })
+            .or_else(|| {
+                presets
+                    .iter()
+                    .find(|p| normalized.contains(&p.name.to_lowercase()))
+            });
+
         if let Some(preset) = device {
             if let Some(controller) = &self.controller {
                 unsafe {
                     let webview = controller.CoreWebView2()?;
-                    
+
                     // 1. Set device metrics via CDP: Emulation.setDeviceMetricsOverride
                     let device_metrics = format!(
                         r#"{{
@@ -1392,30 +1495,36 @@ impl WebViewInstance {
                         preset.viewport.device_scale_factor,
                         preset.viewport.is_mobile
                     );
-                    
+
                     let _ = webview.CallDevToolsProtocolMethod(
                         &HSTRING::from("Emulation.setDeviceMetricsOverride"),
                         &HSTRING::from(&device_metrics),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
                     );
-                    
+
                     // 2. Enable touch emulation if device has touch
                     if preset.viewport.has_touch {
                         let touch_params = r#"{"enabled": true, "maxTouchPoints": 5}"#;
                         let _ = webview.CallDevToolsProtocolMethod(
                             &HSTRING::from("Emulation.setTouchEmulationEnabled"),
                             &HSTRING::from(touch_params),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
                         );
                     } else {
                         let touch_params = r#"{"enabled": false}"#;
                         let _ = webview.CallDevToolsProtocolMethod(
                             &HSTRING::from("Emulation.setTouchEmulationEnabled"),
                             &HSTRING::from(touch_params),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
                         );
                     }
-                    
+
                     // 3. Set user agent via CDP: Emulation.setUserAgentOverride
                     let ua_params = format!(
                         r#"{{"userAgent": "{}"}}"#,
@@ -1424,21 +1533,25 @@ impl WebViewInstance {
                     let _ = webview.CallDevToolsProtocolMethod(
                         &HSTRING::from("Emulation.setUserAgentOverride"),
                         &HSTRING::from(&ua_params),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
                     );
-                    
+
                     // Also resize the window to match
                     self.set_viewport(preset.viewport.width, preset.viewport.height)?;
                 }
-                
+
                 log_webview_success("WebViewInstance::simulate_device", None);
-                Ok(format!("Device simulation applied via CDP: {} ({}x{}, scale={}, mobile={}, touch={})", 
-                    preset.name, 
-                    preset.viewport.width, 
+                Ok(format!(
+                    "Device simulation applied via CDP: {} ({}x{}, scale={}, mobile={}, touch={})",
+                    preset.name,
+                    preset.viewport.width,
                     preset.viewport.height,
                     preset.viewport.device_scale_factor,
                     preset.viewport.is_mobile,
-                    preset.viewport.has_touch))
+                    preset.viewport.has_touch
+                ))
             } else {
                 log_webview_error("WebViewInstance::simulate_device", "Controller not ready");
                 Err(Error::from_win32())
@@ -1452,49 +1565,70 @@ impl WebViewInstance {
     /// Reset device emulation to default (clear all overrides)
     pub fn reset_device_emulation(&self) -> WinResult<String> {
         log_webview_start("WebViewInstance::reset_device_emulation", "");
-        
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
-                
+
                 // 1. Clear device metrics override
                 let _ = webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Emulation.clearDeviceMetricsOverride"),
                     &HSTRING::from("{}"),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpCompletedHandler,
+                    ),
                 );
-                
+
                 // 2. Disable touch emulation
                 let _ = webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Emulation.setTouchEmulationEnabled"),
                     &HSTRING::from(r#"{"enabled": false}"#),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpCompletedHandler,
+                    ),
                 );
-                
+
                 // 3. Clear user agent override
                 let _ = webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Emulation.setUserAgentOverride"),
                     &HSTRING::from(r#"{"userAgent": ""}"#),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpCompletedHandler,
+                    ),
                 );
             }
-            
+
             log_webview_success("WebViewInstance::reset_device_emulation", None);
             Ok("Device emulation reset to defaults".to_string())
         } else {
-            log_webview_error("WebViewInstance::reset_device_emulation", "Controller not ready");
+            log_webview_error(
+                "WebViewInstance::reset_device_emulation",
+                "Controller not ready",
+            );
             Err(Error::from_win32())
         }
     }
 
     /// Set viewport dimensions via CDP (with device metrics override)
-    pub fn set_viewport_cdp(&self, width: u32, height: u32, device_scale_factor: f64, is_mobile: bool) -> WinResult<String> {
-        log_webview_start("WebViewInstance::set_viewport_cdp", &format!("{}x{}, scale={}, mobile={}", width, height, device_scale_factor, is_mobile));
-        
+    pub fn set_viewport_cdp(
+        &self,
+        width: u32,
+        height: u32,
+        device_scale_factor: f64,
+        is_mobile: bool,
+    ) -> WinResult<String> {
+        log_webview_start(
+            "WebViewInstance::set_viewport_cdp",
+            &format!(
+                "{}x{}, scale={}, mobile={}",
+                width, height, device_scale_factor, is_mobile
+            ),
+        );
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
-                
+
                 let device_metrics = format!(
                     r#"{{
                         "width": {},
@@ -1504,17 +1638,19 @@ impl WebViewInstance {
                     }}"#,
                     width, height, device_scale_factor, is_mobile
                 );
-                
+
                 let _ = webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Emulation.setDeviceMetricsOverride"),
                     &HSTRING::from(&device_metrics),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                        CdpCompletedHandler,
+                    ),
                 );
-                
+
                 // Also resize the window
                 self.set_viewport(width, height)?;
             }
-            
+
             log_webview_success("WebViewInstance::set_viewport_cdp", None);
             Ok(format!("Viewport set via CDP: {}x{}", width, height))
         } else {
@@ -1525,14 +1661,23 @@ impl WebViewInstance {
 
     /// Capture screenshot via CDP (Page.captureScreenshot)
     /// Supports full page capture and custom format/quality
-    pub fn capture_screenshot_cdp(&self, full_page: bool, format: &str, quality: Option<u32>) -> Result<Vec<u8>, String> {
-        log_webview_start("WebViewInstance::capture_screenshot_cdp", &format!("full_page={}, format={}", full_page, format));
-        
+    pub fn capture_screenshot_cdp(
+        &self,
+        full_page: bool,
+        format: &str,
+        quality: Option<u32>,
+    ) -> Result<Vec<u8>, String> {
+        log_webview_start(
+            "WebViewInstance::capture_screenshot_cdp",
+            &format!("full_page={}, format={}", full_page, format),
+        );
+
         if let Some(controller) = &self.controller {
             unsafe {
-                let webview = controller.CoreWebView2()
+                let webview = controller
+                    .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
+
                 // For full page, first get page dimensions and hide fixed elements
                 if full_page {
                     // 1. Get page dimensions
@@ -1544,19 +1689,22 @@ impl WebViewInstance {
                             viewportHeight: window.innerHeight
                         });
                     "#;
-                    
+
                     // Execute synchronously to get dimensions
                     let dim_result = self.execute_script_sync(dim_script)?;
                     let dims: serde_json::Value = serde_json::from_str(&dim_result)
                         .map_err(|e| format!("Failed to parse dimensions: {}", e))?;
-                    
+
                     let page_width = dims["width"].as_u64().unwrap_or(1280) as u32;
                     let page_height = dims["height"].as_u64().unwrap_or(800) as u32;
                     let original_width = dims["viewportWidth"].as_u64().unwrap_or(1280) as u32;
                     let original_height = dims["viewportHeight"].as_u64().unwrap_or(800) as u32;
-                    
-                    log_webview_debug("capture_screenshot_cdp", &format!("Page dimensions: {}x{}", page_width, page_height));
-                    
+
+                    log_webview_debug(
+                        "capture_screenshot_cdp",
+                        &format!("Page dimensions: {}x{}", page_width, page_height),
+                    );
+
                     // 2. Hide fixed/sticky elements
                     let hide_fixed_script = r#"
                         (function() {
@@ -1574,10 +1722,10 @@ impl WebViewInstance {
                         })();
                     "#;
                     let _ = self.execute_script_sync(hide_fixed_script);
-                    
+
                     // 3. Scroll to top
                     let _ = self.execute_script_sync("window.scrollTo(0, 0);");
-                    
+
                     // 4. Expand viewport via CDP
                     let device_metrics = format!(
                         r#"{{
@@ -1588,16 +1736,18 @@ impl WebViewInstance {
                         }}"#,
                         page_width, page_height
                     );
-                    
+
                     let _ = webview.CallDevToolsProtocolMethod(
                         &HSTRING::from("Emulation.setDeviceMetricsOverride"),
                         &HSTRING::from(&device_metrics),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
                     );
-                    
+
                     // Wait for viewport to apply
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    
+
                     // 5. Capture screenshot
                     let request_id = Uuid::new_v4().to_string();
                     let params = format!(
@@ -1608,17 +1758,25 @@ impl WebViewInstance {
                             "fromSurface": true
                         }}"#,
                         format,
-                        if let Some(q) = quality { format!(r#""quality": {},"#, q) } else { String::new() }
+                        if let Some(q) = quality {
+                            format!(r#""quality": {},"#, q)
+                        } else {
+                            String::new()
+                        }
                     );
-                    
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Page.captureScreenshot"),
-                        &HSTRING::from(&params),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpScreenshotHandler {
-                            request_id: request_id.clone(),
-                        }),
-                    ).map_err(|e| format!("CDP call failed: {:?}", e))?;
-                    
+
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Page.captureScreenshot"),
+                            &HSTRING::from(&params),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpScreenshotHandler {
+                                    request_id: request_id.clone(),
+                                },
+                            ),
+                        )
+                        .map_err(|e| format!("CDP call failed: {:?}", e))?;
+
                     // Wait for screenshot result
                     let start = std::time::Instant::now();
                     let screenshot_result = loop {
@@ -1630,22 +1788,26 @@ impl WebViewInstance {
                             0,
                             0,
                             windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
-                        ).as_bool() {
+                        )
+                        .as_bool()
+                        {
                             windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
                             windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
                         }
-                        
-                        if let Some(result) = PENDING_CDP_SCREENSHOTS.with(|map| map.borrow_mut().remove(&request_id)) {
+
+                        if let Some(result) =
+                            PENDING_CDP_SCREENSHOTS.with(|map| map.borrow_mut().remove(&request_id))
+                        {
                             break result;
                         }
-                        
+
                         if start.elapsed() > std::time::Duration::from_secs(60) {
                             break Err("CDP screenshot timeout".to_string());
                         }
-                        
+
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     };
-                    
+
                     // 6. Restore fixed elements
                     let restore_script = r#"
                         (function() {
@@ -1658,7 +1820,7 @@ impl WebViewInstance {
                         })();
                     "#;
                     let _ = self.execute_script_sync(restore_script);
-                    
+
                     // 7. Restore viewport
                     let restore_metrics = format!(
                         r#"{{
@@ -1672,16 +1834,21 @@ impl WebViewInstance {
                     let _ = webview.CallDevToolsProtocolMethod(
                         &HSTRING::from("Emulation.setDeviceMetricsOverride"),
                         &HSTRING::from(&restore_metrics),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
                     );
-                    
+
                     // Process screenshot result
                     match screenshot_result {
                         Ok(base64_data) => {
                             use base64::Engine;
                             match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
                                 Ok(bytes) => {
-                                    log_webview_success("WebViewInstance::capture_screenshot_cdp", Some(start.elapsed().as_millis()));
+                                    log_webview_success(
+                                        "WebViewInstance::capture_screenshot_cdp",
+                                        Some(start.elapsed().as_millis()),
+                                    );
                                     return Ok(bytes);
                                 }
                                 Err(e) => {
@@ -1694,7 +1861,7 @@ impl WebViewInstance {
                         }
                     }
                 }
-                
+
                 // Non-full-page: simple viewport capture
                 let request_id = Uuid::new_v4().to_string();
                 let params = format!(
@@ -1703,19 +1870,30 @@ impl WebViewInstance {
                         {}
                     }}"#,
                     format,
-                    if let Some(q) = quality { format!(r#", "quality": {}"#, q) } else { String::new() }
+                    if let Some(q) = quality {
+                        format!(r#", "quality": {}"#, q)
+                    } else {
+                        String::new()
+                    }
                 );
-                
-                log_webview_debug("capture_screenshot_cdp", &format!("Calling Page.captureScreenshot, request_id={}", request_id));
-                
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Page.captureScreenshot"),
-                    &HSTRING::from(&params),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpScreenshotHandler {
-                        request_id: request_id.clone(),
-                    }),
-                ).map_err(|e| format!("CDP call failed: {:?}", e))?;
-                
+
+                log_webview_debug(
+                    "capture_screenshot_cdp",
+                    &format!("Calling Page.captureScreenshot, request_id={}", request_id),
+                );
+
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Page.captureScreenshot"),
+                        &HSTRING::from(&params),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpScreenshotHandler {
+                                request_id: request_id.clone(),
+                            },
+                        ),
+                    )
+                    .map_err(|e| format!("CDP call failed: {:?}", e))?;
+
                 // Wait for result while pumping messages
                 let start = std::time::Instant::now();
                 loop {
@@ -1727,24 +1905,35 @@ impl WebViewInstance {
                         0,
                         0,
                         windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
-                    ).as_bool() {
+                    )
+                    .as_bool()
+                    {
                         windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
                         windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
                     }
-                    
+
                     // Check for result
-                    if let Some(result) = PENDING_CDP_SCREENSHOTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                    if let Some(result) =
+                        PENDING_CDP_SCREENSHOTS.with(|map| map.borrow_mut().remove(&request_id))
+                    {
                         match result {
                             Ok(base64_data) => {
                                 // Decode base64 to bytes
                                 use base64::Engine;
-                                match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
+                                match base64::engine::general_purpose::STANDARD.decode(&base64_data)
+                                {
                                     Ok(bytes) => {
-                                        log_webview_success("WebViewInstance::capture_screenshot_cdp", Some(start.elapsed().as_millis()));
+                                        log_webview_success(
+                                            "WebViewInstance::capture_screenshot_cdp",
+                                            Some(start.elapsed().as_millis()),
+                                        );
                                         return Ok(bytes);
                                     }
                                     Err(e) => {
-                                        log_webview_error("capture_screenshot_cdp", &format!("Base64 decode error: {}", e));
+                                        log_webview_error(
+                                            "capture_screenshot_cdp",
+                                            &format!("Base64 decode error: {}", e),
+                                        );
                                         return Err(format!("Base64 decode error: {}", e));
                                     }
                                 }
@@ -1755,32 +1944,48 @@ impl WebViewInstance {
                             }
                         }
                     }
-                    
+
                     if start.elapsed() > std::time::Duration::from_secs(60) {
                         log_webview_error("capture_screenshot_cdp", "Timeout");
                         return Err("CDP screenshot timeout".to_string());
                     }
-                    
+
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
         } else {
-            log_webview_error("WebViewInstance::capture_screenshot_cdp", "WebView not ready");
+            log_webview_error(
+                "WebViewInstance::capture_screenshot_cdp",
+                "WebView not ready",
+            );
             Err("WebView not ready".to_string())
         }
     }
 
     /// Capture screenshot of an iframe by getting its bounding rect and using CDP clip
-    pub fn capture_screenshot_frame(&self, frame_spec: &str, format: &str, quality: Option<u32>) -> Result<Vec<u8>, String> {
-        log_webview_start("WebViewInstance::capture_screenshot_frame", &format!("frame={}, format={}", frame_spec, format));
-        
+    pub fn capture_screenshot_frame(
+        &self,
+        frame_spec: &str,
+        format: &str,
+        quality: Option<u32>,
+    ) -> Result<Vec<u8>, String> {
+        log_webview_start(
+            "WebViewInstance::capture_screenshot_frame",
+            &format!("frame={}, format={}", frame_spec, format),
+        );
+
         // Step 1: Resolve the frame and get iframe element's bounding rect from the main page
         // We need to find the iframe element in the main page DOM
         let frame_id = self.resolve_frame_id(frame_spec)?;
-        tracing::info!("[ScreenshotFrame] Resolved '{}' → frame_id={}", frame_spec, frame_id);
-        
+        tracing::info!(
+            "[ScreenshotFrame] Resolved '{}' → frame_id={}",
+            frame_spec,
+            frame_id
+        );
+
         // Get iframe bounding rect using the frame_id to find the corresponding iframe element
-        let rect_script = format!(r#"
+        let rect_script = format!(
+            r#"
             (function() {{
                 // Try to find iframe by various methods
                 var iframes = document.querySelectorAll('iframe');
@@ -1821,30 +2026,38 @@ impl WebViewInstance {
                 }}
                 return JSON.stringify({{ error: "iframe not found for frame spec: {}" }});
             }})();
-        "#, frame_spec, frame_spec, frame_spec, frame_spec, frame_spec);
-        
+        "#,
+            frame_spec, frame_spec, frame_spec, frame_spec, frame_spec
+        );
+
         let rect_result = self.execute_script_sync(&rect_script)?;
         let rect: serde_json::Value = serde_json::from_str(&rect_result)
             .map_err(|e| format!("Failed to parse iframe rect: {}", e))?;
-        
+
         if let Some(error) = rect.get("error") {
             return Err(error.as_str().unwrap_or("iframe not found").to_string());
         }
-        
+
         let x = rect["x"].as_f64().unwrap_or(0.0);
         let y = rect["y"].as_f64().unwrap_or(0.0);
         let width = rect["width"].as_f64().unwrap_or(800.0);
         let height = rect["height"].as_f64().unwrap_or(600.0);
-        
-        tracing::info!("[ScreenshotFrame] iframe rect: x={}, y={}, w={}, h={}", x, y, width, height);
-        
+
+        tracing::info!(
+            "[ScreenshotFrame] iframe rect: x={}, y={}, w={}, h={}",
+            x,
+            y,
+            width,
+            height
+        );
+
         // Step 2: Use CDP Page.captureScreenshot with clip
         let cdp_format = match format {
             "jpeg" | "jpg" => "jpeg",
             "webp" => "webp",
             _ => "png",
         };
-        
+
         let mut params = serde_json::json!({
             "format": cdp_format,
             "clip": {
@@ -1855,24 +2068,26 @@ impl WebViewInstance {
                 "scale": 1.0
             }
         });
-        
+
         if let Some(q) = quality {
             if cdp_format != "png" {
                 params["quality"] = serde_json::json!(q);
             }
         }
-        
+
         let result = self.call_cdp_sync("Page.captureScreenshot", &params.to_string())?;
         let parsed: serde_json::Value = serde_json::from_str(&result)
             .map_err(|e| format!("Failed to parse screenshot result: {}", e))?;
-        
-        let data_str = parsed["data"].as_str()
+
+        let data_str = parsed["data"]
+            .as_str()
             .ok_or("No data in screenshot response")?;
-        
+
         use base64::Engine;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(data_str)
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_str)
             .map_err(|e| format!("Base64 decode error: {}", e))?;
-        
+
         log_webview_success("WebViewInstance::capture_screenshot_frame", None);
         Ok(bytes)
     }
@@ -1963,44 +2178,51 @@ impl WebViewInstance {
     /// This is more bot-detection resistant than JavaScript click()
     /// human_mode: enables bezier curve mouse movement with jitter
     pub fn click_cdp(&self, x: f64, y: f64, human_mode: bool) -> Result<(), String> {
-        log_webview_start("WebViewInstance::click_cdp", &format!("x={}, y={}, human={}", x, y, human_mode));
-        
+        log_webview_start(
+            "WebViewInstance::click_cdp",
+            &format!("x={}, y={}, human={}", x, y, human_mode),
+        );
+
         if let Some(controller) = &self.controller {
             unsafe {
-                let webview = controller.CoreWebView2()
+                let webview = controller
+                    .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
+
                 use rand::Rng;
                 let mut rng = rand::thread_rng();
-                
+
                 if human_mode {
                     // Human-like mouse movement with bezier curve
-                    
+
                     // Random start position (simulating where mouse might be)
                     let start_x: f64 = rng.r#gen::<f64>() * 800.0;
                     let start_y: f64 = rng.r#gen::<f64>() * 100.0; // Start from top area
-                    
+
                     // Distance for timing calculations
                     let distance = ((x - start_x).powi(2) + (y - start_y).powi(2)).sqrt();
                     let curviness = 0.2 + rng.r#gen::<f64>() * 0.3;
-                    
+
                     // Bezier control points (perpendicular offset for natural arc)
                     let mid_x = (start_x + x) / 2.0;
                     let mid_y = (start_y + y) / 2.0;
                     let perp_x = -(y - start_y) / distance * curviness * distance;
                     let perp_y = (x - start_x) / distance * curviness * distance;
-                    
+
                     let cp1x = mid_x + perp_x * (0.3 + rng.r#gen::<f64>() * 0.4);
                     let cp1y = mid_y + perp_y * (0.3 + rng.r#gen::<f64>() * 0.4);
                     let cp2x = mid_x + perp_x * (0.6 + rng.r#gen::<f64>() * 0.4);
                     let cp2y = mid_y + perp_y * (0.6 + rng.r#gen::<f64>() * 0.4);
-                    
+
                     // Cubic bezier interpolation
                     let bezier = |t: f64, p0: f64, p1: f64, p2: f64, p3: f64| -> f64 {
                         let u = 1.0 - t;
-                        u.powi(3) * p0 + 3.0 * u.powi(2) * t * p1 + 3.0 * u * t.powi(2) * p2 + t.powi(3) * p3
+                        u.powi(3) * p0
+                            + 3.0 * u.powi(2) * t * p1
+                            + 3.0 * u * t.powi(2) * p2
+                            + t.powi(3) * p3
                     };
-                    
+
                     // Ease-in-out function
                     let ease_in_out = |t: f64| -> f64 {
                         if t < 0.5 {
@@ -2009,44 +2231,49 @@ impl WebViewInstance {
                             1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
                         }
                     };
-                    
+
                     // Number of steps based on distance
-                    let steps = (20.max((distance / 15.0) as i32).min(60) + rng.gen_range(0..10)) as usize;
+                    let steps =
+                        (20.max((distance / 15.0) as i32).min(60) + rng.gen_range(0..10)) as usize;
                     let total_time_ms = 200.0 + distance * 0.8 + rng.r#gen::<f64>() * 150.0;
-                    
+
                     for i in 0..=steps {
                         let linear_t = i as f64 / steps as f64;
                         let t = ease_in_out(linear_t);
-                        
+
                         let bx = bezier(t, start_x, cp1x, cp2x, x);
                         let by = bezier(t, start_y, cp1y, cp2y, y);
-                        
+
                         // Micro-jitter (decreases near target)
                         let jitter_scale = 3.0 * (1.0 - linear_t * 0.7);
                         let jitter_x = (rng.r#gen::<f64>() - 0.5) * jitter_scale;
                         let jitter_y = (rng.r#gen::<f64>() - 0.5) * jitter_scale;
-                        
+
                         let move_x = bx + jitter_x;
                         let move_y = by + jitter_y;
-                        
+
                         // Send mouseMoved event
                         let mouse_move = format!(
                             r#"{{"type": "mouseMoved", "x": {}, "y": {}}}"#,
                             move_x, move_y
                         );
-                        webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Input.dispatchMouseEvent"),
-                            &HSTRING::from(&mouse_move),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).ok();
-                        
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Input.dispatchMouseEvent"),
+                                &HSTRING::from(&mouse_move),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .ok();
+
                         // Variable delay (faster in middle)
                         let speed_factor = 0.5 + (linear_t * std::f64::consts::PI).sin() * 0.5;
                         let base_delay = total_time_ms / steps as f64;
                         let delay = (base_delay / speed_factor) * (0.7 + rng.r#gen::<f64>() * 0.6);
                         std::thread::sleep(std::time::Duration::from_millis(delay as u64));
                     }
-                    
+
                     // Occasional overshoot and correction (10%)
                     if rng.r#gen::<f64>() < 0.1 {
                         let overshoot_x = x + (rng.r#gen::<f64>() - 0.5) * 20.0;
@@ -2055,40 +2282,52 @@ impl WebViewInstance {
                             r#"{{"type": "mouseMoved", "x": {}, "y": {}}}"#,
                             overshoot_x, overshoot_y
                         );
-                        webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Input.dispatchMouseEvent"),
-                            &HSTRING::from(&overshoot_move),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).ok();
-                        std::thread::sleep(std::time::Duration::from_millis(30 + rng.gen_range(0..50)));
-                        
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Input.dispatchMouseEvent"),
+                                &HSTRING::from(&overshoot_move),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .ok();
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            30 + rng.gen_range(0..50),
+                        ));
+
                         // Correct back to target
-                        let correct_move = format!(
-                            r#"{{"type": "mouseMoved", "x": {}, "y": {}}}"#,
-                            x, y
-                        );
-                        webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Input.dispatchMouseEvent"),
-                            &HSTRING::from(&correct_move),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).ok();
+                        let correct_move =
+                            format!(r#"{{"type": "mouseMoved", "x": {}, "y": {}}}"#, x, y);
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Input.dispatchMouseEvent"),
+                                &HSTRING::from(&correct_move),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .ok();
                     }
-                    
+
                     // Small pause before click
                     std::thread::sleep(std::time::Duration::from_millis(30 + rng.gen_range(0..50)));
                 }
-                
+
                 // Mouse down
                 let mouse_down = format!(
                     r#"{{"type": "mousePressed", "x": {}, "y": {}, "button": "left", "clickCount": 1}}"#,
                     x, y
                 );
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Input.dispatchMouseEvent"),
-                    &HSTRING::from(&mouse_down),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                ).map_err(|e| format!("CDP mousePressed failed: {:?}", e))?;
-                
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Input.dispatchMouseEvent"),
+                        &HSTRING::from(&mouse_down),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
+                    )
+                    .map_err(|e| format!("CDP mousePressed failed: {:?}", e))?;
+
                 // Delay between down and up (varies for human_mode)
                 let click_delay = if human_mode {
                     50 + rng.gen_range(0..100)
@@ -2096,20 +2335,29 @@ impl WebViewInstance {
                     50
                 };
                 std::thread::sleep(std::time::Duration::from_millis(click_delay));
-                
+
                 // Mouse up
                 let mouse_up = format!(
                     r#"{{"type": "mouseReleased", "x": {}, "y": {}, "button": "left", "clickCount": 1}}"#,
                     x, y
                 );
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Input.dispatchMouseEvent"),
-                    &HSTRING::from(&mouse_up),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                ).map_err(|e| format!("CDP mouseReleased failed: {:?}", e))?;
-                
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Input.dispatchMouseEvent"),
+                        &HSTRING::from(&mouse_up),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
+                    )
+                    .map_err(|e| format!("CDP mouseReleased failed: {:?}", e))?;
+
                 log_webview_success("WebViewInstance::click_cdp", None);
-                tracing::info!("[click_cdp] CDP click at ({}, {}), human={}", x, y, human_mode);
+                tracing::info!(
+                    "[click_cdp] CDP click at ({}, {}), human={}",
+                    x,
+                    y,
+                    human_mode
+                );
                 Ok(())
             }
         } else {
@@ -2122,139 +2370,211 @@ impl WebViewInstance {
     /// This emulates real keyboard input at the browser level
     /// human_mode: enables typo simulation, variable delays, and thinking pauses
     pub fn type_cdp(&self, text: &str, char_delay_ms: u64, human_mode: bool) -> Result<(), String> {
-        log_webview_start("WebViewInstance::type_cdp", &format!("len={}, human={}", text.len(), human_mode));
-        
+        log_webview_start(
+            "WebViewInstance::type_cdp",
+            &format!("len={}, human={}", text.len(), human_mode),
+        );
+
         if let Some(controller) = &self.controller {
             unsafe {
-                let webview = controller.CoreWebView2()
+                let webview = controller
+                    .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
+
                 // Adjacent keys for typo simulation
                 let adjacent_keys: std::collections::HashMap<char, Vec<char>> = [
-                    ('a', vec!['s', 'q', 'w', 'z']), ('b', vec!['v', 'n', 'g', 'h']),
-                    ('c', vec!['x', 'v', 'd', 'f']), ('d', vec!['s', 'f', 'e', 'r']),
-                    ('e', vec!['w', 'r', 'd', 's']), ('f', vec!['d', 'g', 'r', 't']),
-                    ('g', vec!['f', 'h', 't', 'y']), ('h', vec!['g', 'j', 'y', 'u']),
-                    ('i', vec!['u', 'o', 'k', 'j']), ('j', vec!['h', 'k', 'u', 'i']),
-                    ('k', vec!['j', 'l', 'i', 'o']), ('l', vec!['k', 'o', 'p']),
-                    ('m', vec!['n', 'j', 'k']), ('n', vec!['b', 'm', 'h', 'j']),
-                    ('o', vec!['i', 'p', 'k', 'l']), ('p', vec!['o', 'l']),
-                    ('q', vec!['w', 'a']), ('r', vec!['e', 't', 'd', 'f']),
-                    ('s', vec!['a', 'd', 'w', 'e']), ('t', vec!['r', 'y', 'f', 'g']),
-                    ('u', vec!['y', 'i', 'h', 'j']), ('v', vec!['c', 'b', 'f', 'g']),
-                    ('w', vec!['q', 'e', 'a', 's']), ('x', vec!['z', 'c', 's', 'd']),
-                    ('y', vec!['t', 'u', 'g', 'h']), ('z', vec!['a', 's', 'x']),
-                ].iter().cloned().collect();
-                
+                    ('a', vec!['s', 'q', 'w', 'z']),
+                    ('b', vec!['v', 'n', 'g', 'h']),
+                    ('c', vec!['x', 'v', 'd', 'f']),
+                    ('d', vec!['s', 'f', 'e', 'r']),
+                    ('e', vec!['w', 'r', 'd', 's']),
+                    ('f', vec!['d', 'g', 'r', 't']),
+                    ('g', vec!['f', 'h', 't', 'y']),
+                    ('h', vec!['g', 'j', 'y', 'u']),
+                    ('i', vec!['u', 'o', 'k', 'j']),
+                    ('j', vec!['h', 'k', 'u', 'i']),
+                    ('k', vec!['j', 'l', 'i', 'o']),
+                    ('l', vec!['k', 'o', 'p']),
+                    ('m', vec!['n', 'j', 'k']),
+                    ('n', vec!['b', 'm', 'h', 'j']),
+                    ('o', vec!['i', 'p', 'k', 'l']),
+                    ('p', vec!['o', 'l']),
+                    ('q', vec!['w', 'a']),
+                    ('r', vec!['e', 't', 'd', 'f']),
+                    ('s', vec!['a', 'd', 'w', 'e']),
+                    ('t', vec!['r', 'y', 'f', 'g']),
+                    ('u', vec!['y', 'i', 'h', 'j']),
+                    ('v', vec!['c', 'b', 'f', 'g']),
+                    ('w', vec!['q', 'e', 'a', 's']),
+                    ('x', vec!['z', 'c', 's', 'd']),
+                    ('y', vec!['t', 'u', 'g', 'h']),
+                    ('z', vec!['a', 's', 'x']),
+                ]
+                .iter()
+                .cloned()
+                .collect();
+
                 let type_char = |webview: &ICoreWebView2, ch: char| -> Result<(), String> {
                     let escaped = ch.to_string().replace('\\', "\\\\").replace('"', "\\\"");
-                    
+
                     let key_down = format!(r#"{{"type": "keyDown", "key": "{}"}}"#, escaped);
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Input.dispatchKeyEvent"),
-                        &HSTRING::from(&key_down),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                    ).map_err(|e| format!("CDP keyDown failed: {:?}", e))?;
-                    
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Input.dispatchKeyEvent"),
+                            &HSTRING::from(&key_down),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
+                        )
+                        .map_err(|e| format!("CDP keyDown failed: {:?}", e))?;
+
                     let char_event = format!(r#"{{"type": "char", "text": "{}"}}"#, escaped);
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Input.dispatchKeyEvent"),
-                        &HSTRING::from(&char_event),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                    ).map_err(|e| format!("CDP char failed: {:?}", e))?;
-                    
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Input.dispatchKeyEvent"),
+                            &HSTRING::from(&char_event),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
+                        )
+                        .map_err(|e| format!("CDP char failed: {:?}", e))?;
+
                     let key_up = format!(r#"{{"type": "keyUp", "key": "{}"}}"#, escaped);
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Input.dispatchKeyEvent"),
-                        &HSTRING::from(&key_up),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                    ).map_err(|e| format!("CDP keyUp failed: {:?}", e))?;
-                    
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Input.dispatchKeyEvent"),
+                            &HSTRING::from(&key_up),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
+                        )
+                        .map_err(|e| format!("CDP keyUp failed: {:?}", e))?;
+
                     Ok(())
                 };
-                
+
                 let type_backspace = |webview: &ICoreWebView2| -> Result<(), String> {
-                    let key_down = r#"{"type": "keyDown", "key": "Backspace", "code": "Backspace"}"#;
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Input.dispatchKeyEvent"),
-                        &HSTRING::from(key_down),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                    ).map_err(|e| format!("CDP Backspace failed: {:?}", e))?;
-                    
+                    let key_down =
+                        r#"{"type": "keyDown", "key": "Backspace", "code": "Backspace"}"#;
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Input.dispatchKeyEvent"),
+                            &HSTRING::from(key_down),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
+                        )
+                        .map_err(|e| format!("CDP Backspace failed: {:?}", e))?;
+
                     std::thread::sleep(std::time::Duration::from_millis(30));
-                    
+
                     let key_up = r#"{"type": "keyUp", "key": "Backspace", "code": "Backspace"}"#;
-                    webview.CallDevToolsProtocolMethod(
-                        &HSTRING::from("Input.dispatchKeyEvent"),
-                        &HSTRING::from(key_up),
-                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                    ).map_err(|e| format!("CDP Backspace up failed: {:?}", e))?;
-                    
+                    webview
+                        .CallDevToolsProtocolMethod(
+                            &HSTRING::from("Input.dispatchKeyEvent"),
+                            &HSTRING::from(key_up),
+                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                CdpCompletedHandler,
+                            ),
+                        )
+                        .map_err(|e| format!("CDP Backspace up failed: {:?}", e))?;
+
                     Ok(())
                 };
-                
+
                 use rand::Rng;
                 let mut rng = rand::thread_rng();
                 let chars: Vec<char> = text.chars().collect();
                 let base_delay: u64 = 50; // Base typing speed ~20 WPM
-                
+
                 for (i, ch) in chars.iter().enumerate() {
                     let ch = *ch;
-                    
+
                     if human_mode {
                         // 1. Adjacent key typo (3% chance for letters)
                         if ch.is_alphabetic() && rng.r#gen::<f64>() < 0.03 {
                             if let Some(typo_chars) = adjacent_keys.get(&ch.to_ascii_lowercase()) {
                                 let typo_char = typo_chars[rng.gen_range(0..typo_chars.len())];
-                                let typo_char = if ch.is_uppercase() { typo_char.to_ascii_uppercase() } else { typo_char };
-                                
+                                let typo_char = if ch.is_uppercase() {
+                                    typo_char.to_ascii_uppercase()
+                                } else {
+                                    typo_char
+                                };
+
                                 // Type wrong character
                                 type_char(&webview, typo_char)?;
-                                std::thread::sleep(std::time::Duration::from_millis(80 + rng.gen_range(0..60)));
-                                
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    80 + rng.gen_range(0..60),
+                                ));
+
                                 // Pause (realize mistake)
-                                std::thread::sleep(std::time::Duration::from_millis(150 + rng.gen_range(0..200)));
-                                
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    150 + rng.gen_range(0..200),
+                                ));
+
                                 // Delete wrong character
                                 type_backspace(&webview)?;
-                                std::thread::sleep(std::time::Duration::from_millis(40 + rng.gen_range(0..30)));
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    40 + rng.gen_range(0..30),
+                                ));
                             }
                         }
-                        
+
                         // 2. Double space typo (2% chance when typing space)
                         if ch == ' ' && rng.r#gen::<f64>() < 0.02 {
                             type_char(&webview, ' ')?;
-                            std::thread::sleep(std::time::Duration::from_millis(50 + rng.gen_range(0..30)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                50 + rng.gen_range(0..30),
+                            ));
                             // Realize mistake
-                            std::thread::sleep(std::time::Duration::from_millis(100 + rng.gen_range(0..150)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                100 + rng.gen_range(0..150),
+                            ));
                             type_backspace(&webview)?;
                         }
-                        
+
                         // 3. Capitalize typo: forgot shift (1.5% at word start)
                         let is_word_start = i == 0 || chars[i - 1] == ' ' || chars[i - 1] == '.';
-                        if is_word_start && ch.is_uppercase() && ch.is_alphabetic() && rng.r#gen::<f64>() < 0.015 {
+                        if is_word_start
+                            && ch.is_uppercase()
+                            && ch.is_alphabetic()
+                            && rng.r#gen::<f64>() < 0.015
+                        {
                             // Type lowercase by mistake
                             type_char(&webview, ch.to_ascii_lowercase())?;
-                            std::thread::sleep(std::time::Duration::from_millis(120 + rng.gen_range(0..80)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                120 + rng.gen_range(0..80),
+                            ));
                             // Notice and fix
                             type_backspace(&webview)?;
-                            std::thread::sleep(std::time::Duration::from_millis(30 + rng.gen_range(0..20)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                30 + rng.gen_range(0..20),
+                            ));
                         }
-                        
+
                         // 4. Capitalize typo: held shift too long (1% when prev was uppercase)
-                        if i > 0 && chars[i - 1].is_uppercase() && chars[i - 1].is_alphabetic() 
-                           && ch.is_lowercase() && ch.is_alphabetic() && rng.r#gen::<f64>() < 0.01 {
-                            // Type uppercase by mistake  
+                        if i > 0
+                            && chars[i - 1].is_uppercase()
+                            && chars[i - 1].is_alphabetic()
+                            && ch.is_lowercase()
+                            && ch.is_alphabetic()
+                            && rng.r#gen::<f64>() < 0.01
+                        {
+                            // Type uppercase by mistake
                             type_char(&webview, ch.to_ascii_uppercase())?;
-                            std::thread::sleep(std::time::Duration::from_millis(100 + rng.gen_range(0..80)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                100 + rng.gen_range(0..80),
+                            ));
                             // Notice and fix
                             type_backspace(&webview)?;
-                            std::thread::sleep(std::time::Duration::from_millis(30 + rng.gen_range(0..20)));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                30 + rng.gen_range(0..20),
+                            ));
                         }
-                        
+
                         // Type correct character
                         type_char(&webview, ch)?;
-                        
+
                         // Variable delay based on character type
                         let delay: u64 = if ['.', ',', '!', '?', ':', ';'].contains(&ch) {
                             // Punctuation = longer pause (thinking)
@@ -2267,9 +2587,14 @@ impl WebViewInstance {
                             70 + rng.gen_range(0..60)
                         } else {
                             // Regular letters = natural variance
-                            let prev_char = if i > 0 { chars[i - 1].to_ascii_lowercase() } else { ' ' };
+                            let prev_char = if i > 0 {
+                                chars[i - 1].to_ascii_lowercase()
+                            } else {
+                                ' '
+                            };
                             let curr_char = ch.to_ascii_lowercase();
-                            let fast_combos = ["th", "he", "in", "er", "an", "re", "on", "at", "en", "nd"];
+                            let fast_combos =
+                                ["th", "he", "in", "er", "an", "re", "on", "at", "en", "nd"];
                             let combo = format!("{}{}", prev_char, curr_char);
                             if fast_combos.contains(&combo.as_str()) {
                                 // Faster for common letter combos (rolling fingers)
@@ -2279,14 +2604,14 @@ impl WebViewInstance {
                                 (base_delay as f64 * (0.6 + rng.r#gen::<f64>() * 0.8)) as u64
                             }
                         };
-                        
+
                         // Occasional longer pause (2% chance - thinking/distraction)
                         let final_delay = if rng.r#gen::<f64>() < 0.02 {
                             delay + 300 + rng.gen_range(0..500)
                         } else {
                             delay
                         };
-                        
+
                         std::thread::sleep(std::time::Duration::from_millis(final_delay));
                     } else {
                         // Normal mode: just type with fixed delay
@@ -2296,9 +2621,13 @@ impl WebViewInstance {
                         }
                     }
                 }
-                
+
                 log_webview_success("WebViewInstance::type_cdp", None);
-                tracing::info!("[type_cdp] Typed {} chars via CDP (human={})", text.len(), human_mode);
+                tracing::info!(
+                    "[type_cdp] Typed {} chars via CDP (human={})",
+                    text.len(),
+                    human_mode
+                );
                 Ok(())
             }
         } else {
@@ -2310,12 +2639,13 @@ impl WebViewInstance {
     /// Press a special key using CDP Input.dispatchKeyEvent
     pub fn press_key_cdp(&self, key: &str) -> Result<(), String> {
         log_webview_start("WebViewInstance::press_key_cdp", key);
-        
+
         if let Some(controller) = &self.controller {
             unsafe {
-                let webview = controller.CoreWebView2()
+                let webview = controller
+                    .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
+
                 // Map common key names to CDP key identifiers
                 let (key_code, code) = match key.to_lowercase().as_str() {
                     "enter" | "return" => ("Enter", "Enter"),
@@ -2330,31 +2660,39 @@ impl WebViewInstance {
                     "space" => (" ", "Space"),
                     _ => (key, key),
                 };
-                
+
                 // keyDown
                 let key_down = format!(
                     r#"{{"type": "keyDown", "key": "{}", "code": "{}"}}"#,
                     key_code, code
                 );
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Input.dispatchKeyEvent"),
-                    &HSTRING::from(&key_down),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                ).map_err(|e| format!("CDP keyDown failed: {:?}", e))?;
-                
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Input.dispatchKeyEvent"),
+                        &HSTRING::from(&key_down),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
+                    )
+                    .map_err(|e| format!("CDP keyDown failed: {:?}", e))?;
+
                 std::thread::sleep(std::time::Duration::from_millis(30));
-                
+
                 // keyUp
                 let key_up = format!(
                     r#"{{"type": "keyUp", "key": "{}", "code": "{}"}}"#,
                     key_code, code
                 );
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Input.dispatchKeyEvent"),
-                    &HSTRING::from(&key_up),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                ).map_err(|e| format!("CDP keyUp failed: {:?}", e))?;
-                
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Input.dispatchKeyEvent"),
+                        &HSTRING::from(&key_up),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCompletedHandler,
+                        ),
+                    )
+                    .map_err(|e| format!("CDP keyUp failed: {:?}", e))?;
+
                 log_webview_success("WebViewInstance::press_key_cdp", None);
                 tracing::info!("[press_key_cdp] Pressed {} via CDP", key);
                 Ok(())
@@ -2370,7 +2708,8 @@ impl WebViewInstance {
     pub fn get_element_center(&self, selector: &str) -> Result<(f64, f64), String> {
         log_webview_start("WebViewInstance::get_element_center", selector);
 
-        let script = format!(r#"
+        let script = format!(
+            r#"
             (function() {{
                 const all = document.querySelectorAll("{}");
                 if (!all.length) return JSON.stringify({{ error: "Element not found" }});
@@ -2388,22 +2727,25 @@ impl WebViewInstance {
                     y: rect.top + rect.height / 2
                 }});
             }})()
-        "#, selector.replace('"', "\\\""));
-        
+        "#,
+            selector.replace('"', "\\\"")
+        );
+
         let request_id = Uuid::new_v4().to_string();
-        let result = self.execute_script(&script, request_id)
+        let result = self
+            .execute_script(&script, request_id)
             .map_err(|e| format!("Script error: {:?}", e))?;
-        
-        let parsed: serde_json::Value = serde_json::from_str(&result)
-            .map_err(|e| format!("Parse error: {}", e))?;
-        
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result).map_err(|e| format!("Parse error: {}", e))?;
+
         if let Some(err) = parsed.get("error") {
             return Err(err.as_str().unwrap_or("Unknown error").to_string());
         }
-        
+
         let x = parsed["x"].as_f64().ok_or("Missing x coordinate")?;
         let y = parsed["y"].as_f64().ok_or("Missing y coordinate")?;
-        
+
         log_webview_success("WebViewInstance::get_element_center", None);
         Ok((x, y))
     }
@@ -2422,31 +2764,43 @@ impl WebViewInstance {
     fn call_cdp_sync(&self, method: &str, params: &str) -> Result<String, String> {
         if let Some(controller) = &self.controller {
             unsafe {
-                let webview = controller.CoreWebView2()
+                let webview = controller
+                    .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
                 let request_id = Uuid::new_v4().to_string();
 
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from(method),
-                    &HSTRING::from(params),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
-                        CdpResultHandler { request_id: request_id.clone() }
-                    ),
-                ).map_err(|e| format!("CDP call failed: {:?}", e))?;
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from(method),
+                        &HSTRING::from(params),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpResultHandler {
+                                request_id: request_id.clone(),
+                            },
+                        ),
+                    )
+                    .map_err(|e| format!("CDP call failed: {:?}", e))?;
 
                 // Wait for result (same pattern as wait_for_script_result)
                 let start = std::time::Instant::now();
                 loop {
                     let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
                     while windows::Win32::UI::WindowsAndMessaging::PeekMessageW(
-                        &mut msg, HWND::default(), 0, 0,
+                        &mut msg,
+                        HWND::default(),
+                        0,
+                        0,
                         windows::Win32::UI::WindowsAndMessaging::PM_REMOVE,
-                    ).as_bool() {
+                    )
+                    .as_bool()
+                    {
                         windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
                         windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
                     }
 
-                    if let Some(result) = PENDING_CDP_RESULTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                    if let Some(result) =
+                        PENDING_CDP_RESULTS.with(|map| map.borrow_mut().remove(&request_id))
+                    {
                         return result;
                     }
 
@@ -2526,12 +2880,17 @@ impl WebViewInstance {
     }
 
     /// Inject files into a <input type="file"> element via CDP DOM.setFileInputFiles
-    pub fn set_file_input_files(&self, selector: &str, file_paths: &[String]) -> Result<String, String> {
+    pub fn set_file_input_files(
+        &self,
+        selector: &str,
+        file_paths: &[String],
+    ) -> Result<String, String> {
         // Step 1: DOM.getDocument to get root nodeId
         let doc_result = self.call_cdp_sync("DOM.getDocument", r#"{"depth": 0}"#)?;
         let doc: serde_json::Value = serde_json::from_str(&doc_result)
             .map_err(|e| format!("Failed to parse DOM.getDocument result: {e}"))?;
-        let root_node_id = doc["root"]["nodeId"].as_i64()
+        let root_node_id = doc["root"]["nodeId"]
+            .as_i64()
             .ok_or_else(|| "No root nodeId in DOM.getDocument response".to_string())?;
 
         // Step 2: DOM.querySelector to find the target element
@@ -2542,7 +2901,8 @@ impl WebViewInstance {
         let query_result = self.call_cdp_sync("DOM.querySelector", &query_params.to_string())?;
         let query: serde_json::Value = serde_json::from_str(&query_result)
             .map_err(|e| format!("Failed to parse DOM.querySelector result: {e}"))?;
-        let node_id = query["nodeId"].as_i64()
+        let node_id = query["nodeId"]
+            .as_i64()
             .ok_or_else(|| format!("Element not found for selector: {selector}"))?;
         if node_id == 0 {
             return Err(format!("Element not found for selector: {selector}"));
@@ -2554,19 +2914,31 @@ impl WebViewInstance {
             "files": file_paths,
         });
         let result = self.call_cdp_sync("DOM.setFileInputFiles", &set_params.to_string())?;
-        tracing::info!("[FormInject] Set {} file(s) on '{}' (nodeId={})", file_paths.len(), selector, node_id);
+        tracing::info!(
+            "[FormInject] Set {} file(s) on '{}' (nodeId={})",
+            file_paths.len(),
+            selector,
+            node_id
+        );
         Ok(result)
     }
 
     /// Inject files into a <input type="file"> inside an iframe
-    pub fn set_file_input_files_in_frame(&self, selector: &str, file_paths: &[String], frame_spec: &str) -> Result<String, String> {
+    pub fn set_file_input_files_in_frame(
+        &self,
+        selector: &str,
+        file_paths: &[String],
+        frame_spec: &str,
+    ) -> Result<String, String> {
         let frame_id = self.resolve_frame_id(frame_spec)?;
 
         // Step 1: DOM.getDocument with depth to include iframes
-        let doc_result = self.call_cdp_sync("DOM.getDocument", r#"{"depth": -1, "pierce": true}"#)?;
+        let doc_result =
+            self.call_cdp_sync("DOM.getDocument", r#"{"depth": -1, "pierce": true}"#)?;
         let doc: serde_json::Value = serde_json::from_str(&doc_result)
             .map_err(|e| format!("Failed to parse DOM.getDocument result: {e}"))?;
-        let root_node_id = doc["root"]["nodeId"].as_i64()
+        let root_node_id = doc["root"]["nodeId"]
+            .as_i64()
             .ok_or_else(|| "No root nodeId in DOM.getDocument response".to_string())?;
 
         // Step 2: Find frame owner element, then querySelector within it
@@ -2575,10 +2947,12 @@ impl WebViewInstance {
             "frameId": frame_id,
             "worldName": "webview-bridge-inject"
         });
-        let world_result = self.call_cdp_sync("Page.createIsolatedWorld", &create_params.to_string())?;
+        let world_result =
+            self.call_cdp_sync("Page.createIsolatedWorld", &create_params.to_string())?;
         let world: serde_json::Value = serde_json::from_str(&world_result)
             .map_err(|e| format!("Failed to create isolated world: {e}"))?;
-        let context_id = world["executionContextId"].as_i64()
+        let context_id = world["executionContextId"]
+            .as_i64()
             .ok_or_else(|| "No executionContextId from createIsolatedWorld".to_string())?;
 
         // Use Runtime.evaluate to get the element in the frame
@@ -2596,7 +2970,10 @@ impl WebViewInstance {
             .map_err(|e| format!("Failed to evaluate in frame: {e}"))?;
         let found = eval_val["result"]["value"].as_bool().unwrap_or(false);
         if !found {
-            return Err(format!("Element '{}' not found in frame '{}'", selector, frame_spec));
+            return Err(format!(
+                "Element '{}' not found in frame '{}'",
+                selector, frame_spec
+            ));
         }
 
         // Use DOM.querySelector on the frame's document node
@@ -2608,10 +2985,13 @@ impl WebViewInstance {
         let query_result = self.call_cdp_sync("DOM.querySelector", &query_params.to_string())?;
         let query: serde_json::Value = serde_json::from_str(&query_result)
             .map_err(|e| format!("Failed to parse DOM.querySelector result: {e}"))?;
-        let node_id = query["nodeId"].as_i64()
+        let node_id = query["nodeId"]
+            .as_i64()
             .ok_or_else(|| format!("Element not found in frame for selector: {selector}"))?;
         if node_id == 0 {
-            return Err(format!("Element not found in frame for selector: {selector}"));
+            return Err(format!(
+                "Element not found in frame for selector: {selector}"
+            ));
         }
 
         let set_params = serde_json::json!({
@@ -2619,7 +2999,13 @@ impl WebViewInstance {
             "files": file_paths,
         });
         let result = self.call_cdp_sync("DOM.setFileInputFiles", &set_params.to_string())?;
-        tracing::info!("[FormInject] Set {} file(s) on '{}' in frame '{}' (nodeId={})", file_paths.len(), selector, frame_spec, node_id);
+        tracing::info!(
+            "[FormInject] Set {} file(s) on '{}' in frame '{}' (nodeId={})",
+            file_paths.len(),
+            selector,
+            frame_spec,
+            node_id
+        );
         Ok(result)
     }
 
@@ -2635,17 +3021,20 @@ impl WebViewInstance {
             "frameId": frame_id,
             "worldName": "webview-bridge-frame"
         });
-        let world_result = self.call_cdp_sync(
-            "Page.createIsolatedWorld",
-            &create_params.to_string(),
-        )?;
+        let world_result =
+            self.call_cdp_sync("Page.createIsolatedWorld", &create_params.to_string())?;
         let world_parsed: serde_json::Value = serde_json::from_str(&world_result)
             .map_err(|e| format!("Failed to parse isolated world: {}", e))?;
-        let context_id = world_parsed.get("executionContextId")
+        let context_id = world_parsed
+            .get("executionContextId")
             .and_then(|v| v.as_i64())
             .ok_or("No executionContextId in response")?;
 
-        tracing::info!("[Frame] Got contextId={} for frame_id={}", context_id, frame_id);
+        tracing::info!(
+            "[Frame] Got contextId={} for frame_id={}",
+            context_id,
+            frame_id
+        );
 
         // Execute the script in that context
         let eval_params = serde_json::json!({
@@ -2654,16 +3043,14 @@ impl WebViewInstance {
             "returnByValue": true,
             "awaitPromise": true,
         });
-        let eval_result = self.call_cdp_sync(
-            "Runtime.evaluate",
-            &eval_params.to_string(),
-        )?;
+        let eval_result = self.call_cdp_sync("Runtime.evaluate", &eval_params.to_string())?;
         let eval_parsed: serde_json::Value = serde_json::from_str(&eval_result)
             .map_err(|e| format!("Failed to parse eval result: {}", e))?;
 
         // Check for exceptions
         if let Some(exception) = eval_parsed.get("exceptionDetails") {
-            let msg = exception.get("text")
+            let msg = exception
+                .get("text")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Script exception in frame");
             return Err(format!("Frame script error: {}", msg));
@@ -2675,7 +3062,8 @@ impl WebViewInstance {
                 Ok(val.to_string())
             } else {
                 // No value (void return) — return the type/description
-                let desc = result.get("description")
+                let desc = result
+                    .get("description")
                     .or_else(|| result.get("type"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("undefined");
@@ -2780,34 +3168,34 @@ impl WebViewInstance {
     /// Returns all cookies including HttpOnly, Secure, SameSite attributes
     pub fn get_cookies(&self) -> WinResult<Vec<CookieInfo>> {
         log_webview_start("WebViewInstance::get_cookies", "CDP");
-        
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller.CoreWebView2()?;
                 let request_id = Uuid::new_v4().to_string();
-                
+
                 // Call CDP Network.getCookies
                 let params = "{}"; // Empty params gets all cookies for current URL
-                
+
                 log_webview_debug(
                     "WebViewInstance::get_cookies",
                     &format!("CDP Network.getCookies, request_id={}", request_id),
                 );
-                
+
                 webview.CallDevToolsProtocolMethod(
                     &HSTRING::from("Network.getCookies"),
                     &HSTRING::from(params),
                     &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
                         CdpCookieHandler {
                             request_id: request_id.clone(),
-                        }
+                        },
                     ),
                 )?;
-                
+
                 // Wait for CDP result
                 let start = std::time::Instant::now();
                 let timeout = std::time::Duration::from_secs(10);
-                
+
                 loop {
                     if start.elapsed() > timeout {
                         log_webview_error("WebViewInstance::get_cookies", "CDP timeout");
@@ -2816,37 +3204,54 @@ impl WebViewInstance {
                             HSTRING::from("CDP timeout"),
                         ));
                     }
-                    
+
                     // Check for result
-                    let result = PENDING_CDP_COOKIES.with(|map| {
-                        map.borrow_mut().remove(&request_id)
-                    });
-                    
+                    let result =
+                        PENDING_CDP_COOKIES.with(|map| map.borrow_mut().remove(&request_id));
+
                     if let Some(res) = result {
                         match res {
                             Ok(json_str) => {
                                 // Parse CDP response: {"cookies": [...]}
                                 let parsed: serde_json::Value = serde_json::from_str(&json_str)
-                                    .map_err(|e| Error::new(
-                                        windows::core::HRESULT(0x80070057u32 as i32),
-                                        HSTRING::from(format!("Failed to parse CDP response: {}", e)),
-                                    ))?;
-                                
-                                if let Some(cookies_arr) = parsed.get("cookies") {
-                                    let cookies: Vec<CookieInfo> = serde_json::from_value(cookies_arr.clone())
-                                        .map_err(|e| Error::new(
+                                    .map_err(|e| {
+                                        Error::new(
                                             windows::core::HRESULT(0x80070057u32 as i32),
-                                            HSTRING::from(format!("Failed to parse cookies: {}", e)),
-                                        ))?;
-                                    
+                                            HSTRING::from(format!(
+                                                "Failed to parse CDP response: {}",
+                                                e
+                                            )),
+                                        )
+                                    })?;
+
+                                if let Some(cookies_arr) = parsed.get("cookies") {
+                                    let cookies: Vec<CookieInfo> = serde_json::from_value(
+                                        cookies_arr.clone(),
+                                    )
+                                    .map_err(|e| {
+                                        Error::new(
+                                            windows::core::HRESULT(0x80070057u32 as i32),
+                                            HSTRING::from(format!(
+                                                "Failed to parse cookies: {}",
+                                                e
+                                            )),
+                                        )
+                                    })?;
+
                                     log_webview_success(
                                         "WebViewInstance::get_cookies",
                                         Some(start.elapsed().as_millis()),
                                     );
-                                    tracing::info!("[get_cookies] CDP returned {} cookies (including HttpOnly)", cookies.len());
+                                    tracing::info!(
+                                        "[get_cookies] CDP returned {} cookies (including HttpOnly)",
+                                        cookies.len()
+                                    );
                                     return Ok(cookies);
                                 } else {
-                                    log_webview_error("WebViewInstance::get_cookies", "No cookies in response");
+                                    log_webview_error(
+                                        "WebViewInstance::get_cookies",
+                                        "No cookies in response",
+                                    );
                                     return Ok(vec![]);
                                 }
                             }
@@ -2859,9 +3264,11 @@ impl WebViewInstance {
                             }
                         }
                     }
-                    
+
                     // Process message pump
-                    use windows::Win32::UI::WindowsAndMessaging::{MSG, PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE};
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+                    };
                     let mut msg = MSG::default();
                     while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
                         TranslateMessage(&msg);
@@ -2896,22 +3303,25 @@ impl WebViewInstance {
             priority: None,
         })
     }
-    
+
     /// Set a cookie with full attributes via CDP (Network.setCookie)
     pub fn set_cookie_full(&self, cookie: CookieInfo) -> Result<(), String> {
         log_webview_start(
             "WebViewInstance::set_cookie",
-            &format!("name={}, domain={}, httpOnly={}", cookie.name, cookie.domain, cookie.http_only),
+            &format!(
+                "name={}, domain={}, httpOnly={}",
+                cookie.name, cookie.domain, cookie.http_only
+            ),
         );
-        
+
         if let Some(controller) = &self.controller {
             unsafe {
                 let webview = controller
                     .CoreWebView2()
                     .map_err(|e| format!("CoreWebView2 error: {:?}", e))?;
-                
+
                 let request_id = Uuid::new_v4().to_string();
-                
+
                 // Build CDP Network.setCookie params
                 let mut params = serde_json::json!({
                     "name": cookie.name,
@@ -2919,7 +3329,7 @@ impl WebViewInstance {
                     "domain": cookie.domain,
                     "path": cookie.path,
                 });
-                
+
                 if let Some(expires) = cookie.expires {
                     params["expires"] = serde_json::json!(expires);
                 }
@@ -2932,44 +3342,55 @@ impl WebViewInstance {
                 if let Some(ref same_site) = cookie.same_site {
                     params["sameSite"] = serde_json::json!(same_site);
                 }
-                
+
                 let params_str = params.to_string();
-                
-                webview.CallDevToolsProtocolMethod(
-                    &HSTRING::from("Network.setCookie"),
-                    &HSTRING::from(&params_str),
-                    &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
-                        CdpCookieHandler {
-                            request_id: request_id.clone(),
-                        }
-                    ),
-                ).map_err(|e| format!("CDP call failed: {:?}", e))?;
-                
-                // Wait for CDP result  
+
+                webview
+                    .CallDevToolsProtocolMethod(
+                        &HSTRING::from("Network.setCookie"),
+                        &HSTRING::from(&params_str),
+                        &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                            CdpCookieHandler {
+                                request_id: request_id.clone(),
+                            },
+                        ),
+                    )
+                    .map_err(|e| format!("CDP call failed: {:?}", e))?;
+
+                // Wait for CDP result
                 let start = std::time::Instant::now();
                 let timeout = std::time::Duration::from_secs(5);
-                
+
                 loop {
                     if start.elapsed() > timeout {
                         log_webview_error("WebViewInstance::set_cookie", "CDP timeout");
                         return Err("CDP timeout".to_string());
                     }
-                    
-                    let result = PENDING_CDP_COOKIES.with(|map| {
-                        map.borrow_mut().remove(&request_id)
-                    });
-                    
+
+                    let result =
+                        PENDING_CDP_COOKIES.with(|map| map.borrow_mut().remove(&request_id));
+
                     if let Some(res) = result {
                         match res {
                             Ok(json_str) => {
                                 // Check CDP response: {"success": true/false}
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                                    if parsed.get("success").and_then(|v| v.as_bool()) == Some(false) {
-                                        log_webview_error("WebViewInstance::set_cookie", "Cookie was not set (success=false)");
+                                if let Ok(parsed) =
+                                    serde_json::from_str::<serde_json::Value>(&json_str)
+                                {
+                                    if parsed.get("success").and_then(|v| v.as_bool())
+                                        == Some(false)
+                                    {
+                                        log_webview_error(
+                                            "WebViewInstance::set_cookie",
+                                            "Cookie was not set (success=false)",
+                                        );
                                         return Err("Cookie was not set".to_string());
                                     }
                                 }
-                                log_webview_success("WebViewInstance::set_cookie", Some(start.elapsed().as_millis()));
+                                log_webview_success(
+                                    "WebViewInstance::set_cookie",
+                                    Some(start.elapsed().as_millis()),
+                                );
                                 return Ok(());
                             }
                             Err(e) => {
@@ -2978,9 +3399,11 @@ impl WebViewInstance {
                             }
                         }
                     }
-                    
+
                     // Process message pump
-                    use windows::Win32::UI::WindowsAndMessaging::{MSG, PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE};
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+                    };
                     let mut msg = MSG::default();
                     while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
                         TranslateMessage(&msg);
@@ -2999,7 +3422,7 @@ impl WebViewInstance {
     /// Wrapper that calls capture_screenshot_cdp() for backward compatibility
     pub fn screenshot(&self) -> Result<String, String> {
         log_webview_start("WebViewInstance::screenshot", "CDP wrapper");
-        
+
         // Use CDP implementation (viewport only, PNG format)
         match self.capture_screenshot_cdp(false, "png", None) {
             Ok(png_data) => {
@@ -3019,7 +3442,7 @@ impl WebViewInstance {
     /// Returns all cookies including HttpOnly
     pub fn get_cookies_json(&self) -> Result<String, String> {
         log_webview_start("WebViewInstance::get_cookies_json", "CDP");
-        
+
         match self.get_cookies() {
             Ok(cookies) => {
                 let json = serde_json::to_string(&cookies)
@@ -3038,16 +3461,16 @@ impl WebViewInstance {
     /// Supports HttpOnly, Secure, SameSite attributes
     pub fn set_cookies_json(&self, cookies_json: &str) -> Result<(), String> {
         log_webview_start("WebViewInstance::set_cookies_json", "CDP");
-        
+
         // Parse JSON as array of CookieInfo
-        let cookies: Vec<CookieInfo> = serde_json::from_str(cookies_json)
-            .map_err(|e| format!("Invalid JSON: {}", e))?;
-        
+        let cookies: Vec<CookieInfo> =
+            serde_json::from_str(cookies_json).map_err(|e| format!("Invalid JSON: {}", e))?;
+
         let count = cookies.len();
         for cookie in cookies {
             self.set_cookie_full(cookie)?;
         }
-        
+
         tracing::info!("[set_cookies_json] Set {} cookies via CDP", count);
         log_webview_success("WebViewInstance::set_cookies_json", None);
         Ok(())
@@ -3057,15 +3480,26 @@ impl WebViewInstance {
     /// Previously used native CapturePreview API, now uses CDP Page.captureScreenshot
     pub fn capture_preview_native(&self) -> Result<Vec<u8>, String> {
         log_webview_start("WebViewInstance::capture_preview_native", "CDP wrapper");
-        
+
         // Delegate to CDP implementation (viewport only, PNG format)
         self.capture_screenshot_cdp(false, "png", None)
     }
 
     /// Wait for a selector to appear in the DOM
-    pub fn wait_for_selector(&self, selector: &str, timeout_ms: u64, frame: Option<&str>) -> Result<bool, String> {
-        log_webview_start("WebViewInstance::wait_for_selector", &format!("selector={}, timeout={}ms, frame={:?}", selector, timeout_ms, frame));
-        
+    pub fn wait_for_selector(
+        &self,
+        selector: &str,
+        timeout_ms: u64,
+        frame: Option<&str>,
+    ) -> Result<bool, String> {
+        log_webview_start(
+            "WebViewInstance::wait_for_selector",
+            &format!(
+                "selector={}, timeout={}ms, frame={:?}",
+                selector, timeout_ms, frame
+            ),
+        );
+
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
         let escaped_selector = selector.replace("'", "\\'");
@@ -3080,7 +3514,10 @@ impl WebViewInstance {
                 match self.execute_in_frame(&check_script, frame_spec) {
                     Ok(val) => {
                         if val == "true" {
-                            log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+                            log_webview_success(
+                                "WebViewInstance::wait_for_selector",
+                                Some(start.elapsed().as_millis()),
+                            );
                             return Ok(true);
                         }
                     }
@@ -3088,14 +3525,17 @@ impl WebViewInstance {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+            log_webview_success(
+                "WebViewInstance::wait_for_selector",
+                Some(start.elapsed().as_millis()),
+            );
             return Ok(false);
         }
-        
+
         // Main frame: use ExecuteScript with message pump
         while start.elapsed() < timeout {
             let script = check_script.clone();
-            
+
             if let Some(controller) = &self.controller {
                 unsafe {
                     let webview = controller
@@ -3106,17 +3546,19 @@ impl WebViewInstance {
                     webview
                         .ExecuteScript(
                             &HSTRING::from(&script),
-                            &ICoreWebView2ExecuteScriptCompletedHandler::from(ExecuteScriptHandler {
-                                request_id: request_id.clone(),
-                                hwnd: self.get_hwnd(),
-                            }),
+                            &ICoreWebView2ExecuteScriptCompletedHandler::from(
+                                ExecuteScriptHandler {
+                                    request_id: request_id.clone(),
+                                    hwnd: self.get_hwnd(),
+                                },
+                            ),
                         )
                         .map_err(|e| format!("ExecuteScript failed: {:?}", e))?;
 
                     // Wait for result with short timeout
                     let poll_start = std::time::Instant::now();
                     let poll_timeout = std::time::Duration::from_secs(2);
-                    
+
                     loop {
                         // Pump messages
                         let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
@@ -3133,11 +3575,16 @@ impl WebViewInstance {
                             windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
                         }
 
-                        if let Some(result) = PENDING_SCRIPT_RESULTS.with(|map| map.borrow_mut().remove(&request_id)) {
+                        if let Some(result) =
+                            PENDING_SCRIPT_RESULTS.with(|map| map.borrow_mut().remove(&request_id))
+                        {
                             match result {
                                 Ok(val) => {
                                     if val == "true" {
-                                        log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+                                        log_webview_success(
+                                            "WebViewInstance::wait_for_selector",
+                                            Some(start.elapsed().as_millis()),
+                                        );
                                         return Ok(true);
                                     }
                                     // Element not found yet, continue polling
@@ -3158,21 +3605,36 @@ impl WebViewInstance {
                 log_webview_error("WebViewInstance::wait_for_selector", "WebView not ready");
                 return Err("WebView not ready".to_string());
             }
-            
+
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        
+
         // Final check
-        log_webview_success("WebViewInstance::wait_for_selector", Some(start.elapsed().as_millis()));
+        log_webview_success(
+            "WebViewInstance::wait_for_selector",
+            Some(start.elapsed().as_millis()),
+        );
         Ok(false)
     }
 
     /// Extract data from DOM elements
-    pub fn extract(&self, selector: &str, attribute: &str, extract_all: bool) -> Result<String, String> {
-        log_webview_start("WebViewInstance::extract", &format!("selector={}, attr={}, all={}", selector, attribute, extract_all));
-        
+    pub fn extract(
+        &self,
+        selector: &str,
+        attribute: &str,
+        extract_all: bool,
+    ) -> Result<String, String> {
+        log_webview_start(
+            "WebViewInstance::extract",
+            &format!(
+                "selector={}, attr={}, all={}",
+                selector, attribute, extract_all
+            ),
+        );
+
         let script = if extract_all {
-            format!(r#"
+            format!(
+                r#"
                 (function() {{
                     const elements = document.querySelectorAll('{}');
                     return Array.from(elements).map(el => {{
@@ -3187,9 +3649,14 @@ impl WebViewInstance {
                         }}
                     }});
                 }})();
-            "#, selector.replace("'", "\\'"), attribute, attribute)
+            "#,
+                selector.replace("'", "\\'"),
+                attribute,
+                attribute
+            )
         } else {
-            format!(r#"
+            format!(
+                r#"
                 (function() {{
                     const el = document.querySelector('{}');
                     if (!el) return null;
@@ -3203,7 +3670,11 @@ impl WebViewInstance {
                         default: return el.getAttribute('{}') || el.innerText;
                     }}
                 }})();
-            "#, selector.replace("'", "\\'"), attribute, attribute)
+            "#,
+                selector.replace("'", "\\'"),
+                attribute,
+                attribute
+            )
         };
 
         if let Some(controller) = &self.controller {
@@ -3240,49 +3711,70 @@ impl WebViewInstance {
         }
     }
     pub fn manage_network(&self, action: crate::core::NetworkAction) -> Result<String, String> {
-        log_webview_start("WebViewInstance::manage_network", &format!("action={:?}", action));
+        log_webview_start(
+            "WebViewInstance::manage_network",
+            &format!("action={:?}", action),
+        );
 
         match action {
             crate::core::NetworkAction::Enable { max_logs } => {
                 let max = max_logs.unwrap_or(100);
                 MAX_NETWORK_LOGS.with(|m| *m.borrow_mut() = max);
                 NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = true);
-                
+
                 if let Some(controller) = &self.controller {
                     unsafe {
                         let webview = controller.CoreWebView2().map_err(|e| format!("{:?}", e))?;
-                        
+
                         // Register event handlers via GetDevToolsProtocolEventReceiver
-                        let req_receiver = webview.GetDevToolsProtocolEventReceiver(
-                            &HSTRING::from("Network.requestWillBeSent"),
-                        ).map_err(|e| format!("{:?}", e))?;
-                        let mut token_req: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
-                        req_receiver.add_DevToolsProtocolEventReceived(
-                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(NetworkRequestReceivedHandler),
-                            &mut token_req,
-                        ).map_err(|e| format!("{:?}", e))?;
-                        
-                        let res_receiver = webview.GetDevToolsProtocolEventReceiver(
-                            &HSTRING::from("Network.responseReceived"),
-                        ).map_err(|e| format!("{:?}", e))?;
-                        let mut token_res: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
-                        res_receiver.add_DevToolsProtocolEventReceived(
-                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(NetworkResponseReceivedHandler),
-                            &mut token_res,
-                        ).map_err(|e| format!("{:?}", e))?;
-                        
+                        let req_receiver = webview
+                            .GetDevToolsProtocolEventReceiver(&HSTRING::from(
+                                "Network.requestWillBeSent",
+                            ))
+                            .map_err(|e| format!("{:?}", e))?;
+                        let mut token_req: windows::Win32::System::WinRT::EventRegistrationToken =
+                            Default::default();
+                        req_receiver
+                            .add_DevToolsProtocolEventReceived(
+                                &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(
+                                    NetworkRequestReceivedHandler,
+                                ),
+                                &mut token_req,
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
+
+                        let res_receiver = webview
+                            .GetDevToolsProtocolEventReceiver(&HSTRING::from(
+                                "Network.responseReceived",
+                            ))
+                            .map_err(|e| format!("{:?}", e))?;
+                        let mut token_res: windows::Win32::System::WinRT::EventRegistrationToken =
+                            Default::default();
+                        res_receiver
+                            .add_DevToolsProtocolEventReceived(
+                                &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(
+                                    NetworkResponseReceivedHandler,
+                                ),
+                                &mut token_res,
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
+
                         NETWORK_EVENT_TOKENS.with(|map| {
                             let mut m = map.borrow_mut();
                             m.insert("requestWillBeSent".to_string(), token_req);
                             m.insert("responseReceived".to_string(), token_res);
                         });
-                        
+
                         // Enable Network domain
-                         webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Network.enable"),
-                            &HSTRING::from("{}"),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).map_err(|e| format!("{:?}", e))?;
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Network.enable"),
+                                &HSTRING::from("{}"),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
 
                         // Enable auto-attach to iframe/worker targets so their network
                         // events are forwarded to the main CDP session (flatten=true).
@@ -3293,67 +3785,90 @@ impl WebViewInstance {
                         ).map_err(|e| format!("{:?}", e))?;
 
                         // Listen for Target.attachedToTarget to enable Network in child sessions
-                        let attach_receiver = webview.GetDevToolsProtocolEventReceiver(
-                            &HSTRING::from("Target.attachedToTarget"),
-                        ).map_err(|e| format!("{:?}", e))?;
+                        let attach_receiver = webview
+                            .GetDevToolsProtocolEventReceiver(&HSTRING::from(
+                                "Target.attachedToTarget",
+                            ))
+                            .map_err(|e| format!("{:?}", e))?;
                         let mut token_attach: windows::Win32::System::WinRT::EventRegistrationToken = Default::default();
-                        attach_receiver.add_DevToolsProtocolEventReceived(
-                            &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(TargetAttachedHandler),
-                            &mut token_attach,
-                        ).map_err(|e| format!("{:?}", e))?;
+                        attach_receiver
+                            .add_DevToolsProtocolEventReceived(
+                                &ICoreWebView2DevToolsProtocolEventReceivedEventHandler::from(
+                                    TargetAttachedHandler,
+                                ),
+                                &mut token_attach,
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
 
                         NETWORK_EVENT_TOKENS.with(|map| {
-                            map.borrow_mut().insert("attachedToTarget".to_string(), token_attach);
+                            map.borrow_mut()
+                                .insert("attachedToTarget".to_string(), token_attach);
                         });
                     }
                 }
                 Ok("Network monitoring enabled (with iframe support)".to_string())
-            },
-             crate::core::NetworkAction::Disable => {
-                 NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = false);
-                 
-                  if let Some(controller) = &self.controller {
+            }
+            crate::core::NetworkAction::Disable => {
+                NETWORK_MONITORING_ENABLED.with(|e| *e.borrow_mut() = false);
+
+                if let Some(controller) = &self.controller {
                     unsafe {
                         let webview = controller.CoreWebView2().map_err(|e| format!("{:?}", e))?;
-                        
-                         // Disable Network domain
-                         webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Network.disable"),
-                            &HSTRING::from("{}"),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).map_err(|e| format!("{:?}", e))?;
-                        
+
+                        // Disable Network domain
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Network.disable"),
+                                &HSTRING::from("{}"),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
+
                         // Disable auto-attach to iframe targets
-                        webview.CallDevToolsProtocolMethod(
-                            &HSTRING::from("Target.setAutoAttach"),
-                            &HSTRING::from(r#"{"autoAttach":false,"waitForDebuggerOnStart":false}"#),
-                            &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(CdpCompletedHandler),
-                        ).map_err(|e| format!("{:?}", e))?;
+                        webview
+                            .CallDevToolsProtocolMethod(
+                                &HSTRING::from("Target.setAutoAttach"),
+                                &HSTRING::from(
+                                    r#"{"autoAttach":false,"waitForDebuggerOnStart":false}"#,
+                                ),
+                                &ICoreWebView2CallDevToolsProtocolMethodCompletedHandler::from(
+                                    CdpCompletedHandler,
+                                ),
+                            )
+                            .map_err(|e| format!("{:?}", e))?;
 
                         // Unregister event handlers via GetDevToolsProtocolEventReceiver
                         NETWORK_EVENT_TOKENS.with(|map| {
                             let mut m = map.borrow_mut();
                             if let Some(token) = m.remove("requestWillBeSent") {
-                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Network.requestWillBeSent")) {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(
+                                    &HSTRING::from("Network.requestWillBeSent"),
+                                ) {
                                     let _ = receiver.remove_DevToolsProtocolEventReceived(token);
                                 }
                             }
                             if let Some(token) = m.remove("responseReceived") {
-                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Network.responseReceived")) {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(
+                                    &HSTRING::from("Network.responseReceived"),
+                                ) {
                                     let _ = receiver.remove_DevToolsProtocolEventReceived(token);
                                 }
                             }
                             if let Some(token) = m.remove("attachedToTarget") {
-                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(&HSTRING::from("Target.attachedToTarget")) {
+                                if let Ok(receiver) = webview.GetDevToolsProtocolEventReceiver(
+                                    &HSTRING::from("Target.attachedToTarget"),
+                                ) {
                                     let _ = receiver.remove_DevToolsProtocolEventReceived(token);
                                 }
                             }
                         });
                     }
                 }
-                 Ok("Network monitoring disabled".to_string())
-             },
-             crate::core::NetworkAction::GetLogs { filter } => {
+                Ok("Network monitoring disabled".to_string())
+            }
+            crate::core::NetworkAction::GetLogs { filter } => {
                 let logs = NETWORK_LOGS_MAP.with(|map| {
                     let m = map.borrow();
                     let mut vec: Vec<crate::core::NetworkLogEntry> = m.values().cloned().collect();
@@ -3362,15 +3877,20 @@ impl WebViewInstance {
                         vec.retain(|entry| entry.request.url.contains(&f));
                     }
                     // Sort by timestamp
-                    vec.sort_by(|a, b| a.request.timestamp.partial_cmp(&b.request.timestamp).unwrap_or(std::cmp::Ordering::Equal));
+                    vec.sort_by(|a, b| {
+                        a.request
+                            .timestamp
+                            .partial_cmp(&b.request.timestamp)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
                     vec
                 });
                 serde_json::to_string(&logs).map_err(|e| format!("{:?}", e))
-             },
-             crate::core::NetworkAction::ClearLogs => {
-                 NETWORK_LOGS_MAP.with(|map| map.borrow_mut().clear());
-                 Ok("Logs cleared".to_string())
-             }
+            }
+            crate::core::NetworkAction::ClearLogs => {
+                NETWORK_LOGS_MAP.with(|map| map.borrow_mut().clear());
+                Ok("Logs cleared".to_string())
+            }
         }
     }
 }

@@ -17,7 +17,11 @@ pub fn get(
         return Ok(());
     }
 
-    let cookies = resp.body.get("cookies").cloned().unwrap_or(serde_json::json!([]));
+    let cookies = resp
+        .body
+        .get("cookies")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
     let count = cookies.as_array().map(|a| a.len()).unwrap_or(0);
     let data_str = serde_json::to_string_pretty(&cookies).unwrap_or_else(|_| "[]".to_string());
 
@@ -27,8 +31,7 @@ pub fn get(
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &data_str)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
@@ -42,12 +45,7 @@ pub fn get(
     Ok(())
 }
 
-pub fn set(
-    client: &WbClient,
-    opts: &OutputOpts,
-    session: &str,
-    file: &str,
-) -> Result<(), WbError> {
+pub fn set(client: &WbClient, opts: &OutputOpts, session: &str, file: &str) -> Result<(), WbError> {
     let content = std::fs::read_to_string(file)
         .map_err(|e| WbError::general(format!("Cannot read cookie file '{}': {}", file, e)))?;
     let cookies: serde_json::Value = serde_json::from_str(&content)
@@ -67,8 +65,18 @@ pub fn set(
     if opts.json {
         output::print_json(&resp.body);
     } else {
-        let count = resp.body.get("set_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        output::print_result(opts, &format!("{count} cookies set on '{session}' [{} ms]", resp.elapsed_ms));
+        let count = resp
+            .body
+            .get("set_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        output::print_result(
+            opts,
+            &format!(
+                "{count} cookies set on '{session}' [{} ms]",
+                resp.elapsed_ms
+            ),
+        );
     }
     Ok(())
 }
@@ -98,8 +106,18 @@ pub fn import(
         output::print_json(&resp.body);
     } else {
         // Medium fix: server returns "imported_count" at root level (verified in api_v2.rs:1343)
-        let count = resp.body.get("imported_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        output::print_result(opts, &format!("{count} cookies imported from {browser} [{} ms]", resp.elapsed_ms));
+        let count = resp
+            .body
+            .get("imported_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        output::print_result(
+            opts,
+            &format!(
+                "{count} cookies imported from {browser} [{} ms]",
+                resp.elapsed_ms
+            ),
+        );
     }
     Ok(())
 }

@@ -66,7 +66,9 @@ pub fn run(
     resp.check_success("Snapshot execution failed")?;
 
     // Parse the JS result — server may return pre-parsed JSON object or a JSON string
-    let result_val = resp.body.get("result")
+    let result_val = resp
+        .body
+        .get("result")
         .ok_or_else(|| WbError::general("No result from snapshot script"))?;
     let snap: serde_json::Value = if let Some(s) = result_val.as_str() {
         // Server returned a string — parse it as JSON
@@ -83,7 +85,10 @@ pub fn run(
     }
 
     // Build text output
-    let title = snap.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
+    let title = snap
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(untitled)");
     let url = snap.get("url").and_then(|v| v.as_str()).unwrap_or("");
     let elements = snap.get("elements").and_then(|v| v.as_array());
 
@@ -103,7 +108,10 @@ pub fn run(
             let value = el.get("value").and_then(|v| v.as_str());
             let placeholder = el.get("placeholder").and_then(|v| v.as_str());
             let checked = el.get("checked").and_then(|v| v.as_bool()).unwrap_or(false);
-            let disabled = el.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let disabled = el
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             // Build element descriptor
             let mut desc = format!("[{ref_id}] ");
@@ -147,8 +155,12 @@ pub fn run(
             }
 
             // Flags
-            if checked { desc.push_str(" [checked]"); }
-            if disabled { desc.push_str(" [disabled]"); }
+            if checked {
+                desc.push_str(" [checked]");
+            }
+            if disabled {
+                desc.push_str(" [disabled]");
+            }
 
             text.push_str(&desc);
             text.push('\n');
@@ -166,8 +178,7 @@ pub fn run(
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &text)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path

@@ -134,7 +134,7 @@ pub fn generate_wait_script(request: &WaitRequest) -> String {
     } else {
         format!("[\"{}\"]", request.selector.replace('"', "\\\""))
     };
-    
+
     let condition = match request.condition {
         WaitCondition::Present => "present",
         WaitCondition::Visible => "visible",
@@ -147,28 +147,35 @@ pub fn generate_wait_script(request: &WaitRequest) -> String {
         WaitCondition::NavigationComplete => "navigation_complete",
         WaitCondition::NetworkIdle => "network_idle",
     };
-    
-    let text_json = request.text.as_ref()
+
+    let text_json = request
+        .text
+        .as_ref()
         .map(|t| format!("\"{}\"", t.replace('"', "\\\"")))
         .unwrap_or_else(|| "null".to_string());
-    
-    let attr_json = request.attribute.as_ref()
+
+    let attr_json = request
+        .attribute
+        .as_ref()
         .map(|a| format!("\"{}\"", a.replace('"', "\\\"")))
         .unwrap_or_else(|| "null".to_string());
-    
-    let value_json = request.value.as_ref()
+
+    let value_json = request
+        .value
+        .as_ref()
         .map(|v| format!("\"{}\"", v.replace('"', "\\\"")))
         .unwrap_or_else(|| "null".to_string());
-    
-    let extract_attr = request.extract.as_ref()
+
+    let extract_attr = request
+        .extract
+        .as_ref()
         .map(|e| format!("\"{}\"", e.attribute.replace('"', "\\\"")))
         .unwrap_or_else(|| "null".to_string());
-    
-    let extract_all = request.extract.as_ref()
-        .map(|e| e.all)
-        .unwrap_or(false);
 
-    format!(r#"
+    let extract_all = request.extract.as_ref().map(|e| e.all).unwrap_or(false);
+
+    format!(
+        r#"
 (function() {{
     const config = {{
         selectors: {selectors},
@@ -411,18 +418,18 @@ pub struct SelectorWithCondition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_wait_condition_default() {
         assert_eq!(WaitCondition::default(), WaitCondition::Present);
     }
-    
+
     #[test]
     fn test_wait_condition_equality() {
         assert_eq!(WaitCondition::Visible, WaitCondition::Visible);
         assert_ne!(WaitCondition::Visible, WaitCondition::Present);
     }
-    
+
     #[test]
     fn test_generate_wait_script() {
         let request = WaitRequest {
@@ -445,7 +452,7 @@ mod tests {
         assert!(script.contains("#submit"));
         assert!(script.contains("5000"));
     }
-    
+
     #[test]
     fn test_generate_wait_script_text_contains() {
         let request = WaitRequest {
@@ -467,7 +474,7 @@ mod tests {
         assert!(script.contains("text_contains"));
         assert!(script.contains("Success"));
     }
-    
+
     #[test]
     fn test_generate_wait_script_attribute_equals() {
         let request = WaitRequest {
@@ -490,7 +497,7 @@ mod tests {
         assert!(script.contains("disabled"));
         assert!(script.contains("true"));
     }
-    
+
     #[test]
     fn test_generate_wait_script_with_extract() {
         let request = WaitRequest {
@@ -515,7 +522,7 @@ mod tests {
         assert!(script.contains("innerHTML"));
         assert!(script.contains("true")); // extractAll
     }
-    
+
     #[test]
     fn test_generate_wait_script_multiple_selectors() {
         let request = WaitRequest {
@@ -539,7 +546,7 @@ mod tests {
         assert!(script.contains("#c"));
         assert!(script.contains("waitAll: true"));
     }
-    
+
     #[test]
     fn test_generate_wait_script_stable() {
         let request = WaitRequest {
@@ -561,7 +568,7 @@ mod tests {
         assert!(script.contains("stable"));
         assert!(script.contains("2000")); // stable_ms
     }
-    
+
     #[test]
     fn test_generate_wait_script_all_conditions() {
         let conditions = vec![
@@ -576,7 +583,7 @@ mod tests {
             WaitCondition::NavigationComplete,
             WaitCondition::NetworkIdle,
         ];
-        
+
         for condition in conditions {
             let request = WaitRequest {
                 session: "test".to_string(),
@@ -598,7 +605,7 @@ mod tests {
             assert!(!script.is_empty());
         }
     }
-    
+
     #[test]
     fn test_wait_request_deserialize() {
         let json = r##"{
@@ -607,32 +614,32 @@ mod tests {
             "condition": "text_contains",
             "text": "Submit"
         }"##;
-        
+
         let req: WaitRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.session, "test");
         assert_eq!(req.condition, WaitCondition::TextContains);
         assert_eq!(req.text, Some("Submit".to_string()));
         assert_eq!(req.timeout_ms, 30000); // default
     }
-    
+
     #[test]
     fn test_wait_request_deserialize_defaults() {
         let json = r##"{"session": "main", "selector": "#btn"}"##;
-        
+
         let req: WaitRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.condition, WaitCondition::Present);
         assert_eq!(req.timeout_ms, 30000);
         assert_eq!(req.stable_ms, 500);
         assert!(!req.wait_all);
     }
-    
+
     #[test]
     fn test_default_functions() {
         assert_eq!(default_timeout(), 30000);
         assert_eq!(default_stable_ms(), 500);
         assert_eq!(default_extract_attr(), "text");
     }
-    
+
     #[test]
     fn test_extract_options_deserialize() {
         let json = r##"{"attribute": "href", "all": true}"##;
@@ -640,7 +647,7 @@ mod tests {
         assert_eq!(opt.attribute, "href");
         assert!(opt.all);
     }
-    
+
     #[test]
     fn test_extract_options_default() {
         let json = r##"{}"##;
@@ -648,7 +655,7 @@ mod tests {
         assert_eq!(opt.attribute, "text");
         assert!(!opt.all);
     }
-    
+
     #[test]
     fn test_multi_wait_request_deserialize() {
         let json = r##"{
@@ -659,14 +666,14 @@ mod tests {
             ],
             "wait_all": true
         }"##;
-        
+
         let req: MultiWaitRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.selectors.len(), 2);
         assert!(req.wait_all);
         assert_eq!(req.selectors[0].condition, WaitCondition::Visible);
         assert_eq!(req.selectors[1].condition, WaitCondition::Present); // default
     }
-    
+
     #[test]
     fn test_selector_with_condition() {
         let swc = SelectorWithCondition {
@@ -677,9 +684,8 @@ mod tests {
                 all: false,
             }),
         };
-        
+
         assert_eq!(swc.condition, WaitCondition::Clickable);
         assert!(swc.extract.is_some());
     }
 }
-

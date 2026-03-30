@@ -21,7 +21,9 @@ pub fn run(
     } else if let Some(s) = script {
         s.to_string()
     } else {
-        return Err(WbError::general("Provide a script argument or --file <path>"));
+        return Err(WbError::general(
+            "Provide a script argument or --file <path>",
+        ));
     };
 
     // Medium fix: always send timeout_ms explicitly
@@ -42,7 +44,11 @@ pub fn run(
     }
 
     // Extract result — may be any JSON type
-    let result = resp.body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+    let result = resp
+        .body
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let result_str = match &result {
         serde_json::Value::String(s) => s.clone(),
         other => serde_json::to_string_pretty(other).unwrap_or_else(|_| "null".to_string()),
@@ -54,8 +60,7 @@ pub fn run(
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &result_str)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path

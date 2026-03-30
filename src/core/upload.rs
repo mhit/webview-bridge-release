@@ -17,7 +17,9 @@ pub struct UploadedFile {
 
 /// Get uploads directory for a session
 pub fn uploads_dir(session: &str) -> PathBuf {
-    super::config::AppConfig::data_dir().join("uploads").join(session)
+    super::config::AppConfig::data_dir()
+        .join("uploads")
+        .join(session)
 }
 
 /// Sanitize a filename for safe storage.

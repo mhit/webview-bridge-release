@@ -1,6 +1,6 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 pub fn run(
     client: &WbClient,
@@ -36,19 +36,33 @@ pub fn run(
         return Ok(());
     }
 
-    let stored = resp.body.get("stored_filename").and_then(|v| v.as_str()).unwrap_or("?");
+    let stored = resp
+        .body
+        .get("stored_filename")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
     let size = resp.body.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
     let url = resp.body.get("url").and_then(|v| v.as_str()).unwrap_or("?");
 
-    output::print_result(opts, &format!(
-        "Uploaded: {} ({}) [{} ms]\n  URL: {}",
-        stored, format_bytes(size), resp.elapsed_ms, url
-    ));
+    output::print_result(
+        opts,
+        &format!(
+            "Uploaded: {} ({}) [{} ms]\n  URL: {}",
+            stored,
+            format_bytes(size),
+            resp.elapsed_ms,
+            url
+        ),
+    );
     Ok(())
 }
 
 fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 { return format!("{bytes} B"); }
-    if bytes < 1024 * 1024 { return format!("{:.1} KB", bytes as f64 / 1024.0); }
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    if bytes < 1024 * 1024 {
+        return format!("{:.1} KB", bytes as f64 / 1024.0);
+    }
     format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }

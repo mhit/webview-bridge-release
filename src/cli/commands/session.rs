@@ -9,23 +9,35 @@ pub fn acquire(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), W
     if opts.json {
         output::print_json(&resp.body);
     } else {
-        let is_new = resp.body.get("is_new").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_new = resp
+            .body
+            .get("is_new")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let status = if is_new { "created" } else { "reused" };
         let url = resp.body.get("current_url").and_then(|v| v.as_str());
-        let logged_in = resp.body
-            .get("auth_status").and_then(|a| a.get("logged_in")).and_then(|v| v.as_bool());
+        let logged_in = resp
+            .body
+            .get("auth_status")
+            .and_then(|a| a.get("logged_in"))
+            .and_then(|v| v.as_bool());
 
         let login_note = match logged_in {
             Some(true) => " [logged in]",
             Some(false) => " [not logged in]",
             None => "",
         };
-        let url_note = url.map(|u| format!(" — {}", output::truncate_str(u, 60))).unwrap_or_default();
+        let url_note = url
+            .map(|u| format!(" — {}", output::truncate_str(u, 60)))
+            .unwrap_or_default();
 
-        output::print_result(opts, &format!(
-            "Session '{name}' ready ({status}){login_note}{url_note} [{} ms]",
-            resp.elapsed_ms
-        ));
+        output::print_result(
+            opts,
+            &format!(
+                "Session '{name}' ready ({status}){login_note}{url_note} [{} ms]",
+                resp.elapsed_ms
+            ),
+        );
 
         // Show contextual hints (skip in quiet mode)
         if !opts.quiet {
@@ -51,7 +63,10 @@ pub fn release(client: &WbClient, opts: &OutputOpts, name: &str) -> Result<(), W
     if opts.json {
         output::print_json(&resp.body);
     } else {
-        output::print_result(opts, &format!("Session '{name}' released [{} ms]", resp.elapsed_ms));
+        output::print_result(
+            opts,
+            &format!("Session '{name}' released [{} ms]", resp.elapsed_ms),
+        );
     }
     Ok(())
 }
@@ -71,7 +86,10 @@ pub fn list(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
         } else {
             for s in arr {
                 let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                let url = s.get("current_url").and_then(|v| v.as_str()).unwrap_or("about:blank");
+                let url = s
+                    .get("current_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("about:blank");
                 let url_display = output::truncate_str(url, 60);
                 output::print_result(opts, &format!("{name}\t{url_display}"));
             }

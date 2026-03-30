@@ -1,8 +1,8 @@
 use windows::{
     Win32::Foundation::*,
-    Win32::UI::WindowsAndMessaging::*,
     Win32::System::LibraryLoader::GetModuleHandleW,
-    core::{Result, Error, HSTRING, PCWSTR, w},
+    Win32::UI::WindowsAndMessaging::*,
+    core::{Error, HSTRING, PCWSTR, Result, w},
 };
 
 pub mod webview_instance;

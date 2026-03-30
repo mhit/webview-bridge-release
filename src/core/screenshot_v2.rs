@@ -14,47 +14,47 @@ use serde::{Deserialize, Serialize};
 pub struct ScreenshotRequest {
     /// Session name
     pub session: String,
-    
+
     /// Capture mode
     #[serde(default)]
     pub mode: CaptureMode,
-    
+
     /// Element selector (for element mode)
     #[serde(default)]
     pub selector: Option<String>,
-    
+
     /// Image format
     #[serde(default)]
     pub format: ImageFormat,
-    
+
     /// Quality (1-100, for JPEG/WebP)
     #[serde(default = "default_quality")]
     pub quality: u8,
-    
+
     /// Wait for images to load
     #[serde(default = "default_true")]
     pub wait_for_images: bool,
-    
+
     /// Device emulation preset
     #[serde(default)]
     pub device: Option<String>,
-    
+
     /// Custom viewport size
     #[serde(default)]
     pub viewport: Option<Viewport>,
-    
+
     /// Padding around element (for element mode)
     #[serde(default)]
     pub padding: Option<u32>,
-    
+
     /// Hide elements matching these selectors
     #[serde(default)]
     pub hide_selectors: Option<Vec<String>>,
-    
+
     /// Timeout in ms
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
-    
+
     /// Target iframe (index, name, or URL substring)
     #[serde(default)]
     pub frame: Option<String>,
@@ -103,7 +103,7 @@ impl ImageFormat {
             ImageFormat::Webp => "image/webp",
         }
     }
-    
+
     pub fn extension(&self) -> &'static str {
         match self {
             ImageFormat::Png => "png",
@@ -306,7 +306,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1".to_string(),
         },
-        
+
         // ============================================================================
         // Google Pixel
         // ============================================================================
@@ -387,7 +387,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36".to_string(),
         },
-        
+
         // ============================================================================
         // Samsung Galaxy
         // ============================================================================
@@ -446,7 +446,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (Linux; Android 14; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36".to_string(),
         },
-        
+
         // ============================================================================
         // Tablets - iPad
         // ============================================================================
@@ -505,7 +505,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string(),
         },
-        
+
         // ============================================================================
         // Tablets - Android
         // ============================================================================
@@ -531,7 +531,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
         },
-        
+
         // ============================================================================
         // Desktop - Common Resolutions
         // ============================================================================
@@ -579,7 +579,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
         },
-        
+
         // ============================================================================
         // Desktop - Mac
         // ============================================================================
@@ -627,7 +627,7 @@ pub fn get_device_presets() -> Vec<DevicePreset> {
             },
             user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15".to_string(),
         },
-        
+
         // ============================================================================
         // Special / Common Breakpoints
         // ============================================================================
@@ -713,16 +713,17 @@ pub fn find_device_preset(name: &str) -> Option<DevicePreset> {
 
 /// Generate JavaScript for element screenshot
 pub fn generate_element_screenshot_script(selector: &str, padding: u32) -> String {
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     const el = document.querySelector("{}");
     if (!el) {{
         return JSON.stringify({{ error: "Element not found" }});
     }}
-    
+
     const rect = el.getBoundingClientRect();
     const padding = {};
-    
+
     return JSON.stringify({{
         x: Math.max(0, rect.x - padding),
         y: Math.max(0, rect.y - padding + window.scrollY),
@@ -731,7 +732,10 @@ pub fn generate_element_screenshot_script(selector: &str, padding: u32) -> Strin
         scrollY: window.scrollY
     }});
 }})();
-"#, selector.replace('"', "\\\""), padding)
+"#,
+        selector.replace('"', "\\\""),
+        padding
+    )
 }
 
 /// Generate JavaScript for full-page dimensions
@@ -740,17 +744,17 @@ pub fn generate_full_page_dimensions_script() -> String {
 (function() {
     const body = document.body;
     const html = document.documentElement;
-    
+
     const height = Math.max(
         body.scrollHeight, body.offsetHeight,
         html.clientHeight, html.scrollHeight, html.offsetHeight
     );
-    
+
     const width = Math.max(
         body.scrollWidth, body.offsetWidth,
         html.clientWidth, html.scrollWidth, html.offsetWidth
     );
-    
+
     return JSON.stringify({
         width: width,
         height: height,
@@ -758,21 +762,23 @@ pub fn generate_full_page_dimensions_script() -> String {
         viewportHeight: window.innerHeight
     });
 })();
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Generate JavaScript to wait for images
 pub fn generate_wait_for_images_script(timeout_ms: u64) -> String {
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     return new Promise((resolve) => {{
         const images = Array.from(document.images);
         const startTime = Date.now();
         const timeout = {};
-        
+
         function checkImages() {{
             const allLoaded = images.every(img => img.complete);
-            
+
             if (allLoaded) {{
                 resolve(JSON.stringify({{ loaded: images.length, elapsed: Date.now() - startTime }}));
             }} else if (Date.now() - startTime > timeout) {{
@@ -782,7 +788,7 @@ pub fn generate_wait_for_images_script(timeout_ms: u64) -> String {
                 setTimeout(checkImages, 100);
             }}
         }}
-        
+
         if (images.length === 0) {{
             resolve(JSON.stringify({{ loaded: 0, elapsed: 0 }}));
         }} else {{
@@ -790,21 +796,24 @@ pub fn generate_wait_for_images_script(timeout_ms: u64) -> String {
         }}
     }});
 }})();
-"#, timeout_ms)
+"#,
+        timeout_ms
+    )
 }
 
 /// Generate JavaScript to force load all lazy images via DOM manipulation
 /// This is more efficient than scrolling - directly manipulates loading attributes
 pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
-    format!(r#"
+    format!(
+        r#"
 (async function() {{
     const startTime = Date.now();
     const timeout = {timeout};
-    
+
     // Collect all images
     const allImages = Array.from(document.images);
     let lazyCount = 0;
-    
+
     // Force load lazy images by manipulating DOM
     allImages.forEach(img => {{
         // Handle loading="lazy" attribute
@@ -812,28 +821,28 @@ pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
             img.loading = 'eager';
             lazyCount++;
         }}
-        
+
         // Handle data-src patterns (common lazy loading libraries)
-        const dataSrc = img.getAttribute('data-src') || 
-                        img.getAttribute('data-lazy-src') || 
+        const dataSrc = img.getAttribute('data-src') ||
+                        img.getAttribute('data-lazy-src') ||
                         img.getAttribute('data-original') ||
                         img.getAttribute('data-lazy');
         if (dataSrc && !img.src.includes(dataSrc)) {{
             img.src = dataSrc;
             lazyCount++;
         }}
-        
+
         // Handle srcset lazy loading
-        const dataSrcset = img.getAttribute('data-srcset') || 
+        const dataSrcset = img.getAttribute('data-srcset') ||
                           img.getAttribute('data-lazy-srcset');
         if (dataSrcset && !img.srcset) {{
             img.srcset = dataSrcset;
         }}
-        
+
         // Remove lazy classes that might prevent loading
         img.classList.remove('lazy', 'lazyload', 'lazy-load', 'b-lazy');
     }});
-    
+
     // Also handle background images in data attributes
     document.querySelectorAll('[data-bg], [data-background-image]').forEach(el => {{
         const bg = el.getAttribute('data-bg') || el.getAttribute('data-background-image');
@@ -841,11 +850,11 @@ pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
             el.style.backgroundImage = `url(${{bg}})`;
         }}
     }});
-    
+
     // Wait for all images to load
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
     const isLoaded = (img) => img.complete && img.naturalHeight > 0;
-    
+
     while ((Date.now() - startTime) < timeout) {{
         const loadedCount = allImages.filter(isLoaded).length;
         if (loadedCount === allImages.length) {{
@@ -859,7 +868,7 @@ pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
         }}
         await wait(100);
     }}
-    
+
     // Timeout - return current state
     const loadedCount = allImages.filter(isLoaded).length;
     return JSON.stringify({{
@@ -871,7 +880,9 @@ pub fn generate_force_load_lazy_images_script(timeout_ms: u64) -> String {
         elapsed: Date.now() - startTime
     }});
 }})();
-"#, timeout = timeout_ms)
+"#,
+        timeout = timeout_ms
+    )
 }
 
 /// Generate JavaScript for full-page screenshot with lazy loading support
@@ -887,12 +898,13 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
     } else {
         format!(", {}", quality as f32 / 100.0)
     };
-    
-    format!(r#"
+
+    format!(
+        r#"
 (async function() {{
     const body = document.body;
     const html = document.documentElement;
-    
+
     // Get full page dimensions
     const fullWidth = Math.max(
         body.scrollWidth, body.offsetWidth,
@@ -902,18 +914,18 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
         body.scrollHeight, body.offsetHeight,
         html.clientHeight, html.scrollHeight, html.offsetHeight
     );
-    
+
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const originalScrollX = window.scrollX;
     const originalScrollY = window.scrollY;
-    
+
     // Create canvas for full page
     const canvas = document.createElement('canvas');
     canvas.width = fullWidth;
     canvas.height = fullHeight;
     const ctx = canvas.getContext('2d');
-    
+
     // Function to capture current viewport using html2canvas-like approach
     const captureViewport = async () => {{
         // Create a temporary canvas
@@ -921,11 +933,11 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
         tempCanvas.width = viewportWidth;
         tempCanvas.height = viewportHeight;
         const tempCtx = tempCanvas.getContext('2d');
-        
+
         // Draw background
         tempCtx.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
         tempCtx.fillRect(0, 0, viewportWidth, viewportHeight);
-        
+
         // Get computed styles and render visible content
         // (Simplified version - for production, would use html2canvas or similar)
         const elements = document.body.getElementsByTagName('*');
@@ -933,7 +945,7 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
             const rect = el.getBoundingClientRect();
             // Skip elements outside viewport
             if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
-            
+
             // Handle images
             if (el.tagName === 'IMG' && el.complete && el.naturalHeight > 0) {{
                 try {{
@@ -941,10 +953,10 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
                 }} catch (e) {{}}
             }}
         }}
-        
+
         return tempCanvas;
     }};
-    
+
     // For now, return page dimensions and a simple screenshot
     // Full stitching would require multiple captures
     try {{
@@ -952,15 +964,15 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
         c.width = Math.min(fullWidth, 1920);
         c.height = Math.min(fullHeight, 10000);
         const x = c.getContext('2d');
-        
+
         // Fill background
         x.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
         x.fillRect(0, 0, c.width, c.height);
-        
+
         // Return base64 image
         const dataUrl = c.toDataURL('{mime_type}'{quality});
         const base64 = dataUrl.replace(/^data:image\\/\\w+;base64,/, '');
-        
+
         return JSON.stringify({{
             success: true,
             width: fullWidth,
@@ -978,25 +990,32 @@ pub fn generate_full_page_screenshot_script(quality: u8, format: &str) -> String
         }});
     }}
 }})();
-"#, mime_type = mime_type, quality = quality_arg)
+"#,
+        mime_type = mime_type,
+        quality = quality_arg
+    )
 }
 
 /// Generate JavaScript to scroll to position
 pub fn generate_scroll_to_script(x: i32, y: i32) -> String {
-    format!(r#"
+    format!(
+        r#"
 window.scrollTo({}, {});
 JSON.stringify({{ scrollX: window.scrollX, scrollY: window.scrollY }});
-"#, x, y)
+"#,
+        x, y
+    )
 }
 
 /// Generate JavaScript to hide elements
 pub fn generate_hide_elements_script(selectors: &[String]) -> String {
     let selectors_json = serde_json::to_string(selectors).unwrap_or_else(|_| "[]".to_string());
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     const selectors = {};
     const hidden = [];
-    
+
     for (const selector of selectors) {{
         const elements = document.querySelectorAll(selector);
         for (const el of elements) {{
@@ -1004,20 +1023,23 @@ pub fn generate_hide_elements_script(selectors: &[String]) -> String {
             hidden.push(selector);
         }}
     }}
-    
+
     return JSON.stringify({{ hidden: hidden.length }});
 }})();
-"#, selectors_json)
+"#,
+        selectors_json
+    )
 }
 
 /// Generate JavaScript to restore hidden elements
 pub fn generate_restore_elements_script(selectors: &[String]) -> String {
     let selectors_json = serde_json::to_string(selectors).unwrap_or_else(|_| "[]".to_string());
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     const selectors = {};
     let restored = 0;
-    
+
     for (const selector of selectors) {{
         const elements = document.querySelectorAll(selector);
         for (const el of elements) {{
@@ -1025,15 +1047,18 @@ pub fn generate_restore_elements_script(selectors: &[String]) -> String {
             restored++;
         }}
     }}
-    
+
     return JSON.stringify({{ restored: restored }});
 }})();
-"#, selectors_json)
+"#,
+        selectors_json
+    )
 }
 
 /// Generate JavaScript to set viewport meta tag (for mobile emulation)
 pub fn generate_viewport_meta_script(width: u32, height: u32, _scale: f32) -> String {
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     let viewport = document.querySelector('meta[name="viewport"]');
     if (!viewport) {{
@@ -1044,43 +1069,45 @@ pub fn generate_viewport_meta_script(width: u32, height: u32, _scale: f32) -> St
     viewport.content = 'width={}, height={}, initial-scale=1';
     return JSON.stringify({{ set: true }});
 }})();
-"#, width, height)
+"#,
+        width, height
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_capture_mode_default() {
         assert_eq!(CaptureMode::default(), CaptureMode::Viewport);
     }
-    
+
     #[test]
     fn test_capture_mode_equality() {
         assert_eq!(CaptureMode::FullPage, CaptureMode::FullPage);
         assert_ne!(CaptureMode::Viewport, CaptureMode::Element);
     }
-    
+
     #[test]
     fn test_image_format_default() {
         assert_eq!(ImageFormat::default(), ImageFormat::Png);
     }
-    
+
     #[test]
     fn test_image_format_mime_type() {
         assert_eq!(ImageFormat::Png.mime_type(), "image/png");
         assert_eq!(ImageFormat::Jpeg.mime_type(), "image/jpeg");
         assert_eq!(ImageFormat::Webp.mime_type(), "image/webp");
     }
-    
+
     #[test]
     fn test_image_format_extension() {
         assert_eq!(ImageFormat::Png.extension(), "png");
         assert_eq!(ImageFormat::Jpeg.extension(), "jpg");
         assert_eq!(ImageFormat::Webp.extension(), "webp");
     }
-    
+
     #[test]
     fn test_find_device_preset() {
         let preset = find_device_preset("iphone_14");
@@ -1089,30 +1116,30 @@ mod tests {
         assert_eq!(preset.viewport.width, 390);
         assert!(preset.viewport.is_mobile);
     }
-    
+
     #[test]
     fn test_device_preset_case_insensitive() {
         let preset = find_device_preset("IPHONE_14");
         assert!(preset.is_some());
     }
-    
+
     #[test]
     fn test_find_device_preset_not_found() {
         let preset = find_device_preset("nonexistent_device");
         assert!(preset.is_none());
     }
-    
+
     #[test]
     fn test_all_device_presets() {
         let presets = get_device_presets();
         assert!(presets.len() >= 8);
-        
+
         // Verify all presets are findable
         for preset in &presets {
             assert!(find_device_preset(&preset.name).is_some());
         }
     }
-    
+
     #[test]
     fn test_desktop_presets() {
         let desktop = find_device_preset("desktop_1080p").unwrap();
@@ -1121,7 +1148,7 @@ mod tests {
         assert_eq!(desktop.viewport.width, 1920);
         assert_eq!(desktop.viewport.height, 1080);
     }
-    
+
     #[test]
     fn test_tablet_presets() {
         let ipad = find_device_preset("ipad_pro_12").unwrap();
@@ -1129,7 +1156,7 @@ mod tests {
         assert!(ipad.viewport.has_touch);
         assert!(ipad.viewport.width > 1000); // Larger than phones
     }
-    
+
     #[test]
     fn test_generate_element_screenshot_script() {
         let script = generate_element_screenshot_script("#main", 10);
@@ -1137,13 +1164,13 @@ mod tests {
         assert!(script.contains("getBoundingClientRect"));
         assert!(script.contains("padding"));
     }
-    
+
     #[test]
     fn test_generate_element_screenshot_script_escapes_quotes() {
         let script = generate_element_screenshot_script(r#".class[data-id="test"]"#, 0);
         assert!(script.contains("data-id"));
     }
-    
+
     #[test]
     fn test_generate_full_page_dimensions_script() {
         let script = generate_full_page_dimensions_script();
@@ -1151,7 +1178,7 @@ mod tests {
         assert!(script.contains("offsetHeight"));
         assert!(script.contains("clientHeight"));
     }
-    
+
     #[test]
     fn test_generate_wait_for_images_script() {
         let script = generate_wait_for_images_script(5000);
@@ -1159,7 +1186,7 @@ mod tests {
         assert!(script.contains("document.images"));
         assert!(script.contains("complete"));
     }
-    
+
     #[test]
     fn test_generate_scroll_to_script() {
         let script = generate_scroll_to_script(100, 500);
@@ -1167,7 +1194,7 @@ mod tests {
         assert!(script.contains("500"));
         assert!(script.contains("scrollTo"));
     }
-    
+
     #[test]
     fn test_generate_hide_elements_script() {
         let selectors = vec![".ad".to_string(), "#banner".to_string()];
@@ -1176,7 +1203,7 @@ mod tests {
         assert!(script.contains("#banner"));
         assert!(script.contains("visibility"));
     }
-    
+
     #[test]
     fn test_generate_restore_elements_script() {
         let selectors = vec![".ad".to_string()];
@@ -1184,7 +1211,7 @@ mod tests {
         assert!(script.contains(".ad"));
         assert!(script.contains("removeProperty"));
     }
-    
+
     #[test]
     fn test_generate_viewport_meta_script() {
         let script = generate_viewport_meta_script(375, 667, 2.0);
@@ -1192,7 +1219,7 @@ mod tests {
         assert!(script.contains("667"));
         assert!(script.contains("viewport"));
     }
-    
+
     #[test]
     fn test_screenshot_request_deserialize() {
         let json = r##"{
@@ -1201,18 +1228,18 @@ mod tests {
             "format": "jpeg",
             "quality": 85
         }"##;
-        
+
         let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.session, "test");
         assert_eq!(req.mode, CaptureMode::FullPage);
         assert_eq!(req.format, ImageFormat::Jpeg);
         assert_eq!(req.quality, 85);
     }
-    
+
     #[test]
     fn test_screenshot_request_deserialize_defaults() {
         let json = r##"{"session": "main"}"##;
-        
+
         let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.mode, CaptureMode::Viewport);
         assert_eq!(req.format, ImageFormat::Png);
@@ -1220,33 +1247,33 @@ mod tests {
         assert!(req.wait_for_images);
         assert_eq!(req.timeout_ms, 30000);
     }
-    
+
     #[test]
     fn test_screenshot_request_with_device() {
         let json = r##"{"session": "main", "device": "iphone_14"}"##;
-        
+
         let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.device, Some("iphone_14".to_string()));
     }
-    
+
     #[test]
     fn test_screenshot_request_with_viewport() {
         let json = r##"{
             "session": "main",
             "viewport": {"width": 1920, "height": 1080}
         }"##;
-        
+
         let req: ScreenshotRequest = serde_json::from_str(json).unwrap();
         let viewport = req.viewport.unwrap();
         assert_eq!(viewport.width, 1920);
         assert_eq!(viewport.height, 1080);
         assert_eq!(viewport.device_scale_factor, 1.0); // default
     }
-    
+
     #[test]
     fn test_viewport_deserialize() {
         let json = r##"{"width": 375, "height": 667, "device_scale_factor": 2.0, "is_mobile": true, "has_touch": true}"##;
-        
+
         let viewport: Viewport = serde_json::from_str(json).unwrap();
         assert_eq!(viewport.width, 375);
         assert_eq!(viewport.height, 667);
@@ -1254,7 +1281,7 @@ mod tests {
         assert!(viewport.is_mobile);
         assert!(viewport.has_touch);
     }
-    
+
     #[test]
     fn test_default_functions() {
         assert_eq!(default_quality(), 90);
@@ -1263,4 +1290,3 @@ mod tests {
         assert_eq!(default_scale(), 1.0);
     }
 }
-

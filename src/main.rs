@@ -8,13 +8,13 @@ pub mod webview;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 use std::sync::atomic::Ordering;
+use tokio::sync::mpsc;
 use windows::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
+use windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
+use crate::api_v2::{V2AppState, create_v2_router, init_auth_token, init_session_manager_v2};
 use crate::core::{AppCommand, SessionManager, SessionOptions};
-use crate::api_v2::{create_v2_router, init_auth_token, init_session_manager_v2, V2AppState};
 use rand::Rng;
 
 pub const WM_CHECK_QUEUE: u32 = WM_USER + 200;
@@ -29,7 +29,10 @@ struct Config {
 
 fn parse_args() -> Option<Config> {
     let args: Vec<String> = std::env::args().collect();
-    let mut config = Config { bind: None, port: None };
+    let mut config = Config {
+        bind: None,
+        port: None,
+    };
 
     let mut i = 1;
     while i < args.len() {
@@ -40,7 +43,9 @@ fn parse_args() -> Option<Config> {
                 println!("Usage: webview-bridge-rust.exe [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --bind <IP>       Bind address (default: from config.toml or 127.0.0.1)");
+                println!(
+                    "  --bind <IP>       Bind address (default: from config.toml or 127.0.0.1)"
+                );
                 println!("  --port <PORT>     Port number (default: from config.toml or 9400)");
                 println!("  --help, -h        Show this help message");
                 return None;
@@ -94,9 +99,13 @@ unsafe extern "system" fn webview_seh_guard(exception_info: *mut EXCEPTION_POINT
     const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
     const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 
-    if exception_info.is_null() { return EXCEPTION_CONTINUE_SEARCH; }
+    if exception_info.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     let record_ptr = unsafe { (*exception_info).ExceptionRecord };
-    if record_ptr.is_null() { return EXCEPTION_CONTINUE_SEARCH; }
+    if record_ptr.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     let code = unsafe { (*record_ptr).ExceptionCode.0 } as u32;
     if code != STATUS_BREAKPOINT {
         return EXCEPTION_CONTINUE_SEARCH;
@@ -108,14 +117,22 @@ unsafe extern "system" fn webview_seh_guard(exception_info: *mut EXCEPTION_POINT
     let exc_addr = unsafe { (*record_ptr).ExceptionAddress as usize };
     let in_webview_dll = {
         use crate::webview::webview_instance::{
-            EMBEDDED_BROWSER_BASE, EMBEDDED_BROWSER_END,
-            EMBEDDED_BROWSER_BASE2, EMBEDDED_BROWSER_END2,
+            EMBEDDED_BROWSER_BASE, EMBEDDED_BROWSER_BASE2, EMBEDDED_BROWSER_END,
+            EMBEDDED_BROWSER_END2,
         };
         let slots = [
-            (EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed), EMBEDDED_BROWSER_END.load(Ordering::Relaxed)),
-            (EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed), EMBEDDED_BROWSER_END2.load(Ordering::Relaxed)),
+            (
+                EMBEDDED_BROWSER_BASE.load(Ordering::Relaxed),
+                EMBEDDED_BROWSER_END.load(Ordering::Relaxed),
+            ),
+            (
+                EMBEDDED_BROWSER_BASE2.load(Ordering::Relaxed),
+                EMBEDDED_BROWSER_END2.load(Ordering::Relaxed),
+            ),
         ];
-        slots.iter().any(|&(b, e)| b != 0 && e > b && exc_addr >= b && exc_addr < e)
+        slots
+            .iter()
+            .any(|&(b, e)| b != 0 && e > b && exc_addr >= b && exc_addr < e)
     };
 
     // Check if this thread is currently inside a WebView2 COM call.
@@ -129,19 +146,26 @@ unsafe extern "system" fn webview_seh_guard(exception_info: *mut EXCEPTION_POINT
 
     // Decrement guard counter to prevent re-catching on the same thread.
     if in_call {
-        let _ = crate::webview::webview_instance::IN_WEBVIEW_CALL
-            .try_with(|c| c.try_borrow_mut().map(|mut v| { if *v > 0 { *v -= 1; } }));
+        let _ = crate::webview::webview_instance::IN_WEBVIEW_CALL.try_with(|c| {
+            c.try_borrow_mut().map(|mut v| {
+                if *v > 0 {
+                    *v -= 1;
+                }
+            })
+        });
     }
 
     // Mark the session as dead so wait_for_script_result / navigate exits immediately.
-    let _ = crate::webview::webview_instance::WEBVIEW_PROCESS_FAILED
-        .try_with(|f| f.try_borrow_mut().map(|mut v| { *v = true; }));
+    let _ = crate::webview::webview_instance::WEBVIEW_PROCESS_FAILED.try_with(|f| {
+        f.try_borrow_mut().map(|mut v| {
+            *v = true;
+        })
+    });
 
     // Store the exception address for deferred logging — tracing::error! is not safe
     // to call inside a VEH handler (may allocate memory or acquire locks).
     // The address is logged at the next safe call site that reads VEH_CRASH_ADDR.
-    crate::webview::webview_instance::VEH_CRASH_ADDR
-        .store(exc_addr, Ordering::Relaxed);
+    crate::webview::webview_instance::VEH_CRASH_ADDR.store(exc_addr, Ordering::Relaxed);
 
     EXCEPTION_CONTINUE_EXECUTION
 }
@@ -149,7 +173,9 @@ unsafe extern "system" fn webview_seh_guard(exception_info: *mut EXCEPTION_POINT
 fn main() {
     // Install vectored exception handler to survive WebView2 assertion crashes.
     // Must be done before any WebView2 sessions are created.
-    unsafe { AddVectoredExceptionHandler(1, Some(webview_seh_guard)); }
+    unsafe {
+        AddVectoredExceptionHandler(1, Some(webview_seh_guard));
+    }
 
     // Parse command line arguments
     let cli = match parse_args() {
@@ -159,10 +185,14 @@ fn main() {
 
     // Resolve bind/port: CLI args > config.toml > hardcoded defaults
     let toml_cfg = crate::core::config::AppConfig::load();
-    let bind: IpAddr = cli.bind
-        .unwrap_or_else(|| toml_cfg.server.bind.parse().unwrap_or([127, 0, 0, 1].into()));
-    let port: u16 = cli.port
-        .unwrap_or(toml_cfg.server.port);
+    let bind: IpAddr = cli.bind.unwrap_or_else(|| {
+        toml_cfg
+            .server
+            .bind
+            .parse()
+            .unwrap_or([127, 0, 0, 1].into())
+    });
+    let port: u16 = cli.port.unwrap_or(toml_cfg.server.port);
 
     // Channel: tray "Exit" → server graceful shutdown
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
@@ -198,8 +228,10 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
     let app_config = crate::core::config::init_config();
     {
         let cfg = app_config.read().unwrap();
-        eprintln!("Config loaded: AI enabled={}, provider={}, model={}",
-            cfg.ai.enabled, cfg.ai.provider, cfg.ai.model);
+        eprintln!(
+            "Config loaded: AI enabled={}, provider={}, model={}",
+            cfg.ai.enabled, cfg.ai.provider, cfg.ai.model
+        );
         if cfg.ai.api_key.is_some() {
             eprintln!("AI API key: configured from file");
         }
@@ -209,11 +241,15 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
             eprintln!("[AUTH] Authentication disabled (no_auth=true in config)");
         } else {
             let token = generate_auth_token();
-            eprintln!("[AUTH] Dashboard token: {}...{}", &token[..4], &token[token.len()-4..]);
+            eprintln!(
+                "[AUTH] Dashboard token: {}...{}",
+                &token[..4],
+                &token[token.len() - 4..]
+            );
             init_auth_token(token);
         }
     }
-    
+
     // Initialize logging — write to file since windows_subsystem="windows" has no console
     let log_dir = crate::core::config::AppConfig::data_dir();
     let file_appender = tracing_appender::rolling::never(&log_dir, "server.log");
@@ -225,7 +261,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
         .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
     tracing::info!("WebView Bridge Server v2 starting...");
@@ -236,13 +272,13 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
 
     // Initialize v2 session manager using the unified data directory
     let data_dir = crate::core::config::AppConfig::data_dir();
-    
+
     // Ensure data directory exists
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
         tracing::warn!("Failed to create data directory {:?}: {}", data_dir, e);
     }
     tracing::info!("Data directory: {:?}", data_dir);
-    
+
     init_session_manager_v2(data_dir, 20);
     crate::api_v2::set_core_session_manager(manager.clone());
 
@@ -300,7 +336,11 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
     let app = v2_router.nest("/ws", ws_router);
 
     // Run server
-    tracing::info!("listening on {} with {} command processors", addr, COMMAND_PROCESSOR_COUNT);
+    tracing::info!(
+        "listening on {} with {} command processors",
+        addr,
+        COMMAND_PROCESSOR_COUNT
+    );
     tracing::info!("API: http://{}/", addr);
     tracing::info!("MCP: webview-bridge-rust.exe --mcp-stdio (requires server running)");
 
@@ -311,7 +351,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
         loop {
             interval.tick().await;
             let manager = crate::api_v2::get_session_manager_v2();
-            
+
             // 1. Suspend idle sessions and close their WebView windows
             let suspended = manager.auto_suspend_idle(idle_timeout_secs);
             for (session_name, session_id) in &suspended {
@@ -321,12 +361,16 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
                     id: session_id.clone(),
                     resp_tx: tx,
                 });
-                tracing::info!("[AutoCleanup] Closed WebView for suspended session '{}' (id={})", session_name, session_id);
+                tracing::info!(
+                    "[AutoCleanup] Closed WebView for suspended session '{}' (id={})",
+                    session_name,
+                    session_id
+                );
             }
             if !suspended.is_empty() {
                 tracing::info!("[AutoCleanup] Suspended {} idle sessions", suspended.len());
             }
-            
+
             // 2. Cleanup TTL-expired sessions
             if let Ok(expired_ids) = manager.cleanup_expired() {
                 for session_id in &expired_ids {
@@ -338,7 +382,10 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
                     });
                 }
                 if !expired_ids.is_empty() {
-                    tracing::info!("[AutoCleanup] Cleaned up {} expired sessions", expired_ids.len());
+                    tracing::info!(
+                        "[AutoCleanup] Cleaned up {} expired sessions",
+                        expired_ids.len()
+                    );
                 }
             }
         }
@@ -353,12 +400,9 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
         .ok();
     };
 
-    match axum::serve(
-        tokio::net::TcpListener::bind(&addr).await.unwrap(),
-        app,
-    )
-    .with_graceful_shutdown(shutdown_signal)
-    .await
+    match axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
     {
         Ok(_) => tracing::info!("Server shut down gracefully"),
         Err(e) => tracing::error!("Server error: {:?}", e),
@@ -379,7 +423,11 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.get_info(&id);
             let _ = resp_tx.send(result);
         }
-        AppCommand::ExecuteScript { id, script, resp_tx } => {
+        AppCommand::ExecuteScript {
+            id,
+            script,
+            resp_tx,
+        } => {
             let result = manager.execute_script(&id, script).await;
             let _ = resp_tx.send(result);
         }
@@ -387,7 +435,11 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.remove_session(&id).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::Snapshot { id, format, resp_tx } => {
+        AppCommand::Snapshot {
+            id,
+            format,
+            resp_tx,
+        } => {
             let result = manager.snapshot(&id, format).await;
             let _ = resp_tx.send(result);
         }
@@ -399,47 +451,105 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.get_cookies(&id).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SetCookies { id, cookies, resp_tx } => {
+        AppCommand::SetCookies {
+            id,
+            cookies,
+            resp_tx,
+        } => {
             let result = manager.set_cookies(&id, cookies).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::WaitForSelector { id, selector, timeout_ms, frame, resp_tx } => {
-            let result = manager.wait_for_selector(&id, selector, timeout_ms, frame).await;
+        AppCommand::WaitForSelector {
+            id,
+            selector,
+            timeout_ms,
+            frame,
+            resp_tx,
+        } => {
+            let result = manager
+                .wait_for_selector(&id, selector, timeout_ms, frame)
+                .await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SetVisibility { id, visible, resp_tx } => {
+        AppCommand::SetVisibility {
+            id,
+            visible,
+            resp_tx,
+        } => {
             let result = manager.set_visibility(&id, visible).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SimulateDevice { id, device_name, resp_tx } => {
+        AppCommand::SimulateDevice {
+            id,
+            device_name,
+            resp_tx,
+        } => {
             let result = manager.simulate_device(&id, device_name).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SetViewport { id, width, height, resp_tx } => {
+        AppCommand::SetViewport {
+            id,
+            width,
+            height,
+            resp_tx,
+        } => {
             let result = manager.set_viewport(&id, width, height).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SetUserAgent { id, user_agent, resp_tx } => {
+        AppCommand::SetUserAgent {
+            id,
+            user_agent,
+            resp_tx,
+        } => {
             let result = manager.set_user_agent(&id, user_agent).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::ScreenshotCdp { id, full_page, format, quality, frame, resp_tx } => {
-            let result = manager.screenshot_cdp(&id, full_page, &format, quality, frame).await;
+        AppCommand::ScreenshotCdp {
+            id,
+            full_page,
+            format,
+            quality,
+            frame,
+            resp_tx,
+        } => {
+            let result = manager
+                .screenshot_cdp(&id, full_page, &format, quality, frame)
+                .await;
             let _ = resp_tx.send(result);
         }
         AppCommand::ResetDeviceEmulation { id, resp_tx } => {
             let result = manager.reset_device_emulation(&id).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::SetViewportCdp { id, width, height, device_scale_factor, is_mobile, resp_tx } => {
-            let result = manager.set_viewport_cdp(&id, width, height, device_scale_factor, is_mobile).await;
+        AppCommand::SetViewportCdp {
+            id,
+            width,
+            height,
+            device_scale_factor,
+            is_mobile,
+            resp_tx,
+        } => {
+            let result = manager
+                .set_viewport_cdp(&id, width, height, device_scale_factor, is_mobile)
+                .await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::ClickCdp { id, selector, human_mode, resp_tx } => {
+        AppCommand::ClickCdp {
+            id,
+            selector,
+            human_mode,
+            resp_tx,
+        } => {
             let result = manager.click_cdp(&id, selector, human_mode).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::TypeCdp { id, text, char_delay_ms, human_mode, resp_tx } => {
+        AppCommand::TypeCdp {
+            id,
+            text,
+            char_delay_ms,
+            human_mode,
+            resp_tx,
+        } => {
             let result = manager.type_cdp(&id, text, char_delay_ms, human_mode).await;
             let _ = resp_tx.send(result);
         }
@@ -447,7 +557,11 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.press_key_cdp(&id, key).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::ManageNetwork { id, action, resp_tx } => {
+        AppCommand::ManageNetwork {
+            id,
+            action,
+            resp_tx,
+        } => {
             let result = manager.manage_network(&id, action).await;
             let _ = resp_tx.send(result);
         }
@@ -455,12 +569,25 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
             let result = manager.get_frames(&id).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::ExecuteInFrame { id, script, frame, resp_tx } => {
+        AppCommand::ExecuteInFrame {
+            id,
+            script,
+            frame,
+            resp_tx,
+        } => {
             let result = manager.execute_in_frame(&id, &script, &frame).await;
             let _ = resp_tx.send(result);
         }
-        AppCommand::FormInjectFile { id, selector, file_paths, frame, resp_tx } => {
-            let result = manager.form_inject_file(&id, &selector, &file_paths, frame).await;
+        AppCommand::FormInjectFile {
+            id,
+            selector,
+            file_paths,
+            frame,
+            resp_tx,
+        } => {
+            let result = manager
+                .form_inject_file(&id, &selector, &file_paths, frame)
+                .await;
             let _ = resp_tx.send(result);
         }
     }

@@ -15,9 +15,20 @@ pub fn run(client: &WbClient, opts: &OutputOpts) -> Result<(), WbError> {
     }
 
     // Server status
-    let status = health.body.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let version = health.body.get("version").and_then(|v| v.as_str()).unwrap_or("?");
-    output::print_result(opts, &format!("Server: {status} (v{version}) [{} ms]", health.elapsed_ms));
+    let status = health
+        .body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let version = health
+        .body
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    output::print_result(
+        opts,
+        &format!("Server: {status} (v{version}) [{} ms]", health.elapsed_ms),
+    );
 
     // Sessions
     if let Some(arr) = sessions.body.get("sessions").and_then(|v| v.as_array()) {

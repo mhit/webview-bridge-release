@@ -1,11 +1,7 @@
 use crate::client::{WbClient, WbError};
 use crate::output::OutputOpts;
 
-pub fn run(
-    client: &WbClient,
-    opts: &OutputOpts,
-    session: &str,
-) -> Result<(), WbError> {
+pub fn run(client: &WbClient, opts: &OutputOpts, session: &str) -> Result<(), WbError> {
     let resp = client.get(&format!("/frames?session={}", session))?;
     resp.check_success("Failed to list frames")?;
 
@@ -14,8 +10,7 @@ pub fn run(
         return Ok(());
     }
 
-    let frames = resp.body.get("frames")
-        .and_then(|v| v.as_array());
+    let frames = resp.body.get("frames").and_then(|v| v.as_array());
 
     if let Some(frames) = frames {
         if frames.is_empty() {
@@ -29,7 +24,11 @@ pub fn run(
             let parent = frame.get("parent_id").and_then(|v| v.as_str());
 
             let indent = if parent.is_some() { "  " } else { "" };
-            let name_part = if !name.is_empty() { format!(" name=\"{}\"", name) } else { String::new() };
+            let name_part = if !name.is_empty() {
+                format!(" name=\"{}\"", name)
+            } else {
+                String::new()
+            };
 
             println!("{}{}{}", indent, url, name_part);
             if !opts.quiet {

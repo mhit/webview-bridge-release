@@ -47,7 +47,11 @@ pub fn run(
     }
 
     // Parse the JS result
-    let result = resp.body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+    let result = resp
+        .body
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     // Medium fix: return error instead of swallowing parse failure
     let result_obj = match &result {
         serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s)
@@ -59,7 +63,16 @@ pub fn run(
         return Err(WbError::general(format!("Select failed: {err}")));
     }
 
-    let selected = result_obj.get("text").and_then(|v| v.as_str()).unwrap_or(value);
-    output::print_result(opts, &format!("Selected '{selected}' in '{target}' [{} ms]", resp.elapsed_ms));
+    let selected = result_obj
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or(value);
+    output::print_result(
+        opts,
+        &format!(
+            "Selected '{selected}' in '{target}' [{} ms]",
+            resp.elapsed_ms
+        ),
+    );
     Ok(())
 }

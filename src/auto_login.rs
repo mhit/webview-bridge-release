@@ -3,8 +3,8 @@
 //! Uses the `op` CLI binary to retrieve credentials and fill login forms.
 //! Credentials are never logged or exposed in API responses — only usernames.
 
-use std::process::Command;
 use serde_json::Value;
+use std::process::Command;
 
 /// Build an `op` Command with:
 /// - `CREATE_NO_WINDOW` on Windows (no black console popup)
@@ -22,7 +22,11 @@ fn op_cmd(op_path: &str) -> Command {
     let mut cmd = Command::new(op_path);
 
     // Inject service account token if configured — eliminates interactive auth prompts.
-    if let Some(token) = crate::core::config::get_config().session.op_service_account_token.as_deref() {
+    if let Some(token) = crate::core::config::get_config()
+        .session
+        .op_service_account_token
+        .as_deref()
+    {
         if !token.is_empty() {
             cmd.env("OP_SERVICE_ACCOUNT_TOKEN", token);
         }
@@ -117,7 +121,11 @@ pub fn find_op_binary(config_path: Option<&str>) -> Option<String> {
 ///
 /// `item_name` can be an item name, title, or UUID.
 /// `vault` is required when using a service account token.
-pub fn fetch_credentials(op_path: &str, item_name: &str, vault: Option<&str>) -> Result<Credentials, String> {
+pub fn fetch_credentials(
+    op_path: &str,
+    item_name: &str,
+    vault: Option<&str>,
+) -> Result<Credentials, String> {
     let mut cmd = op_cmd(op_path);
     cmd.args(["item", "get", item_name, "--format", "json"]);
     if let Some(v) = vault {
@@ -158,7 +166,11 @@ pub fn fetch_credentials(op_path: &str, item_name: &str, vault: Option<&str>) ->
         .ok_or("No PASSWORD field in 1Password item")?
         .to_string();
 
-    Ok(Credentials { op_item_id, username, password })
+    Ok(Credentials {
+        op_item_id,
+        username,
+        password,
+    })
 }
 
 /// Read a secret reference using `op read`.
@@ -192,8 +204,8 @@ pub fn search_items_by_url(op_path: &str, url: &str) -> Result<Vec<(String, Stri
         return Err(format!("op item list failed: {}", stderr.trim()));
     }
 
-    let items: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Parse error: {}", e))?;
+    let items: Value =
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("Parse error: {}", e))?;
 
     let target_host = extract_host(url);
 

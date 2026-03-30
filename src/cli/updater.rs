@@ -287,11 +287,11 @@ fn validate_binary(bytes: &[u8]) -> Result<(), UpdateError> {
         return Err(UpdateError::Io("Downloaded file too small".into()));
     }
     let valid = match &bytes[..4] {
-        [0x7f, b'E', b'L', b'F'] => true,     // ELF (Linux)
-        [b'M', b'Z', ..] => true,              // PE (Windows)
-        [0xcf, 0xfa, 0xed, 0xfe] => true,      // Mach-O 64-bit (macOS)
-        [0xfe, 0xed, 0xfa, 0xcf] => true,      // Mach-O 64-bit BE
-        [0xca, 0xfe, 0xba, 0xbe] => true,      // Universal binary (macOS)
+        [0x7f, b'E', b'L', b'F'] => true, // ELF (Linux)
+        [b'M', b'Z', ..] => true,         // PE (Windows)
+        [0xcf, 0xfa, 0xed, 0xfe] => true, // Mach-O 64-bit (macOS)
+        [0xfe, 0xed, 0xfa, 0xcf] => true, // Mach-O 64-bit BE
+        [0xca, 0xfe, 0xba, 0xbe] => true, // Universal binary (macOS)
         _ => false,
     };
     if !valid {
@@ -315,16 +315,11 @@ fn replace_binary(new_bytes: &[u8]) -> Result<(), UpdateError> {
         .map_err(|e| UpdateError::Io(format!("Cannot resolve path: {e}")))?;
 
     // Write new binary to a temp file in the SAME directory (required for atomic rename)
-    let tmp_path = actual_path.with_extension(if cfg!(windows) {
-        "new.exe"
-    } else {
-        "new"
-    });
+    let tmp_path = actual_path.with_extension(if cfg!(windows) { "new.exe" } else { "new" });
 
     // Write new bytes to temp file
-    std::fs::write(&tmp_path, new_bytes).map_err(|e| {
-        UpdateError::Io(format!("Cannot write temp binary: {e}"))
-    })?;
+    std::fs::write(&tmp_path, new_bytes)
+        .map_err(|e| UpdateError::Io(format!("Cannot write temp binary: {e}")))?;
 
     // Set executable permission on Unix before rename
     #[cfg(unix)]
@@ -379,20 +374,12 @@ fn replace_binary(new_bytes: &[u8]) -> Result<(), UpdateError> {
 pub fn cleanup_old_binary() {
     if let Ok(exe) = std::env::current_exe() {
         if let Ok(actual) = std::fs::canonicalize(&exe) {
-            let old = actual.with_extension(if cfg!(windows) {
-                "old.exe"
-            } else {
-                "old"
-            });
+            let old = actual.with_extension(if cfg!(windows) { "old.exe" } else { "old" });
             if old.exists() {
                 std::fs::remove_file(&old).ok();
             }
             // Also clean up any leftover .new temp file from interrupted update
-            let tmp = actual.with_extension(if cfg!(windows) {
-                "new.exe"
-            } else {
-                "new"
-            });
+            let tmp = actual.with_extension(if cfg!(windows) { "new.exe" } else { "new" });
             if tmp.exists() {
                 std::fs::remove_file(&tmp).ok();
             }

@@ -1,7 +1,7 @@
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 pub fn run(
     client: &WbClient,
@@ -41,8 +41,20 @@ pub fn run(
     let script = build_extract_script(&sel_json, &field_pairs, limit)?;
 
     if scroll {
-        return run_scroll_collect(client, opts, session, &sel_json, &field_pairs, limit,
-            output_path, frame, scroll_max, scroll_dedup, scroll_delay, scroll_amount);
+        return run_scroll_collect(
+            client,
+            opts,
+            session,
+            &sel_json,
+            &field_pairs,
+            limit,
+            output_path,
+            frame,
+            scroll_max,
+            scroll_dedup,
+            scroll_delay,
+            scroll_amount,
+        );
     }
 
     let body = serde_json::json!({
@@ -55,7 +67,9 @@ pub fn run(
     resp.check_success("Extract execution failed")?;
 
     // Parse the result
-    let result_val = resp.body.get("result")
+    let result_val = resp
+        .body
+        .get("result")
         .ok_or_else(|| WbError::general("No result from extract script"))?;
     let data: serde_json::Value = match result_val {
         serde_json::Value::String(s) => serde_json::from_str(s)
@@ -77,8 +91,7 @@ pub fn run(
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &data_str)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
@@ -87,7 +100,10 @@ pub fn run(
             .map_err(|e| WbError::general(format!("File save error: {e}")))?
     };
 
-    output::print_result(opts, &format!("{count} items extracted [{} ms]", resp.elapsed_ms));
+    output::print_result(
+        opts,
+        &format!("{count} items extracted [{} ms]", resp.elapsed_ms),
+    );
     output::print_saved(opts, &path);
     Ok(())
 }
@@ -125,7 +141,9 @@ fn run_scroll_collect(
         let resp = client.post("/execute", &body)?;
         resp.check_success("Extract execution failed")?;
 
-        let result_val = resp.body.get("result")
+        let result_val = resp
+            .body
+            .get("result")
             .ok_or_else(|| WbError::general("No result from extract script"))?;
         let batch: serde_json::Value = match result_val {
             serde_json::Value::String(s) => serde_json::from_str(s)
@@ -162,7 +180,13 @@ fn run_scroll_collect(
         }
 
         if !opts.json {
-            eprint!("\r  scroll {}/{}: +{} new, {} total", i + 1, scroll_max, new_count, accumulated.len());
+            eprint!(
+                "\r  scroll {}/{}: +{} new, {} total",
+                i + 1,
+                scroll_max,
+                new_count,
+                accumulated.len()
+            );
         }
 
         // Early exit: 3 consecutive rounds with 0 new items
@@ -223,8 +247,7 @@ fn run_scroll_collect(
     }
 
     let path = if let Some(p) = output_path {
-        let path = output::validate_output_path(p)
-            .map_err(|e| WbError::general(e))?;
+        let path = output::validate_output_path(p).map_err(|e| WbError::general(e))?;
         std::fs::write(&path, &data_str)
             .map_err(|e| WbError::general(format!("File write error: {e}")))?;
         path
@@ -233,7 +256,12 @@ fn run_scroll_collect(
             .map_err(|e| WbError::general(format!("File save error: {e}")))?
     };
 
-    output::print_result(opts, &format!("{count} items extracted (scroll mode, {total_duplicates} dupes removed) [{elapsed} ms]"));
+    output::print_result(
+        opts,
+        &format!(
+            "{count} items extracted (scroll mode, {total_duplicates} dupes removed) [{elapsed} ms]"
+        ),
+    );
     output::print_saved(opts, &path);
     Ok(())
 }
@@ -260,8 +288,9 @@ fn build_extract_script(
             .map(|(name, sub_sel)| {
                 let name_j = serde_json::to_string(name)
                     .map_err(|e| WbError::general(format!("Invalid field name '{name}': {e}")))?;
-                let sub_j = serde_json::to_string(sub_sel)
-                    .map_err(|e| WbError::general(format!("Invalid sub-selector '{sub_sel}': {e}")))?;
+                let sub_j = serde_json::to_string(sub_sel).map_err(|e| {
+                    WbError::general(format!("Invalid sub-selector '{sub_sel}': {e}"))
+                })?;
                 Ok(format!(
                     "    {name_j}: (() => {{ const s = el.querySelector({sub_j}); \
                      return s ? (s.textContent || '').trim() : null; }})()"

@@ -2,12 +2,14 @@
 //!
 //! Robust implementations wrapping V2 API
 
-use super::types::*;
 use super::robustness::*;
-use crate::api_v2::{build_navigate_hints, get_session_manager_v2, run_snapshot_for_session, V2AppState};
+use super::types::*;
+use crate::api_v2::{
+    V2AppState, build_navigate_hints, get_session_manager_v2, run_snapshot_for_session,
+};
 use crate::core::AppCommand;
-use tokio::sync::oneshot;
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 // ============================================================================
 // Tool Router
@@ -28,7 +30,11 @@ pub async fn route_tool(
         if err.code == "SESSION_NOT_FOUND" && tool != "session" {
             if let Some(session_name) = params.get("session").and_then(|s| s.as_str()) {
                 if !session_name.is_empty() {
-                    tracing::info!("Auto-reacquiring session '{}' for tool '{}'", session_name, tool);
+                    tracing::info!(
+                        "Auto-reacquiring session '{}' for tool '{}'",
+                        session_name,
+                        tool
+                    );
 
                     // Build a minimal acquire request
                     let acquire_req = SessionRequest {
@@ -54,7 +60,11 @@ pub async fn route_tool(
 
                     let acquire_result = handle_session(acquire_req, state).await;
                     if acquire_result.success {
-                        tracing::info!("Session '{}' re-acquired, retrying '{}'", session_name, tool);
+                        tracing::info!(
+                            "Session '{}' re-acquired, retrying '{}'",
+                            session_name,
+                            tool
+                        );
                         let retry_result = route_tool_inner(tool, params, state).await;
                         // Return retry result with a note about auto-reacquire
                         if retry_result.success {
@@ -64,8 +74,13 @@ pub async fn route_tool(
                         return retry_result;
                     }
                     // Acquire failed — return original error with hint
-                    return McpToolResponse::error("SESSION_NOT_FOUND",
-                        &format!("Session '{}' not found. Auto-reacquire failed — the session may have been deleted. Create a new session: use the session tool with {{\"acquire\": \"{}\"}}", session_name, session_name));
+                    return McpToolResponse::error(
+                        "SESSION_NOT_FOUND",
+                        &format!(
+                            "Session '{}' not found. Auto-reacquire failed — the session may have been deleted. Create a new session: use the session tool with {{\"acquire\": \"{}\"}}",
+                            session_name, session_name
+                        ),
+                    );
                 }
             }
         }
@@ -81,67 +96,73 @@ async fn route_tool_inner(
     state: &V2AppState,
 ) -> McpToolResponse {
     match tool {
-        "navigate" => {
-            match serde_json::from_value::<NavigateRequest>(params) {
-                Ok(req) => handle_navigate(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid navigate params: {}", e)),
+        "navigate" => match serde_json::from_value::<NavigateRequest>(params) {
+            Ok(req) => handle_navigate(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid navigate params: {}", e))
             }
-        }
-        "interact" => {
-            match serde_json::from_value::<InteractRequest>(params) {
-                Ok(req) => handle_interact(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid interact params: {}", e)),
+        },
+        "interact" => match serde_json::from_value::<InteractRequest>(params) {
+            Ok(req) => handle_interact(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid interact params: {}", e))
             }
-        }
-        "capture" => {
-            match serde_json::from_value::<CaptureRequest>(params) {
-                Ok(req) => handle_capture(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid capture params: {}", e)),
+        },
+        "capture" => match serde_json::from_value::<CaptureRequest>(params) {
+            Ok(req) => handle_capture(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid capture params: {}", e))
             }
-        }
-        "extract" => {
-            match serde_json::from_value::<ExtractRequest>(params) {
-                Ok(req) => handle_extract(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid extract params: {}", e)),
+        },
+        "extract" => match serde_json::from_value::<ExtractRequest>(params) {
+            Ok(req) => handle_extract(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid extract params: {}", e))
             }
-        }
-        "session" => {
-            match serde_json::from_value::<SessionRequest>(params) {
-                Ok(req) => handle_session(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid session params: {}", e)),
+        },
+        "session" => match serde_json::from_value::<SessionRequest>(params) {
+            Ok(req) => handle_session(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid session params: {}", e))
             }
-        }
-        "media" => {
-            match serde_json::from_value::<MediaRequest>(params) {
-                Ok(req) => handle_media(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid media params: {}", e)),
+        },
+        "media" => match serde_json::from_value::<MediaRequest>(params) {
+            Ok(req) => handle_media(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid media params: {}", e))
             }
-        }
-        "snapshot" => {
-            match serde_json::from_value::<SnapshotRequest>(params) {
-                Ok(req) => handle_snapshot(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid snapshot params: {}", e)),
+        },
+        "snapshot" => match serde_json::from_value::<SnapshotRequest>(params) {
+            Ok(req) => handle_snapshot(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid snapshot params: {}", e))
             }
-        }
-        "execute" => {
-            match serde_json::from_value::<ExecuteRequest>(params) {
-                Ok(req) => handle_execute(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid execute params: {}", e)),
+        },
+        "execute" => match serde_json::from_value::<ExecuteRequest>(params) {
+            Ok(req) => handle_execute(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid execute params: {}", e))
             }
-        }
-        "agent" => {
-            match serde_json::from_value::<AgentRequest>(params) {
-                Ok(req) => handle_agent(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid agent params: {}", e)),
+        },
+        "agent" => match serde_json::from_value::<AgentRequest>(params) {
+            Ok(req) => handle_agent(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid agent params: {}", e))
             }
-        }
-        "network" => {
-            match serde_json::from_value::<NetworkRequest>(params) {
-                Ok(req) => handle_network(req, state).await,
-                Err(e) => McpToolResponse::error("INVALID_PARAMS", &format!("Invalid network params: {}", e)),
+        },
+        "network" => match serde_json::from_value::<NetworkRequest>(params) {
+            Ok(req) => handle_network(req, state).await,
+            Err(e) => {
+                McpToolResponse::error("INVALID_PARAMS", &format!("Invalid network params: {}", e))
             }
-        }
-        _ => McpToolResponse::error("UNKNOWN_TOOL", &format!("Unknown tool: '{}'. Available tools: navigate, interact, capture, snapshot, extract, session, media, execute, agent, network", tool)),
+        },
+        _ => McpToolResponse::error(
+            "UNKNOWN_TOOL",
+            &format!(
+                "Unknown tool: '{}'. Available tools: navigate, interact, capture, snapshot, extract, session, media, execute, agent, network",
+                tool
+            ),
+        ),
     }
 }
 
@@ -149,14 +170,26 @@ async fn route_tool_inner(
 // Helper: Execute Script
 // ============================================================================
 
-async fn execute_script(session: &str, script: String, state: &V2AppState, timeout_ms: u64) -> Result<String, String> {
+async fn execute_script(
+    session: &str,
+    script: String,
+    state: &V2AppState,
+    timeout_ms: u64,
+) -> Result<String, String> {
     execute_script_in(session, script, state, timeout_ms, None).await
 }
 
-async fn execute_script_in(session: &str, script: String, state: &V2AppState, timeout_ms: u64, frame: Option<&str>) -> Result<String, String> {
+async fn execute_script_in(
+    session: &str,
+    script: String,
+    state: &V2AppState,
+    timeout_ms: u64,
+    frame: Option<&str>,
+) -> Result<String, String> {
     let manager = get_session_manager_v2();
 
-    let handle = manager.get_handle(session)
+    let handle = manager
+        .get_handle(session)
         .ok_or_else(|| format!("Session '{}' not found", session))?;
 
     let (tx, rx) = oneshot::channel();
@@ -191,18 +224,19 @@ async fn execute_script_in(session: &str, script: String, state: &V2AppState, ti
 
 async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, String> {
     let manager = get_session_manager_v2();
-    
-    let handle = manager.get_handle(session)
+
+    let handle = manager
+        .get_handle(session)
         .ok_or_else(|| format!("Session '{}' not found", session))?;
-    
+
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::GetCookies {
         id: handle.id.clone(),
         resp_tx: tx,
     };
-    
+
     state.cmd_tx.send(cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.")?;
-    
+
     match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
@@ -215,10 +249,15 @@ async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, St
 // Helper: Set Cookies (CDP via AppCommand)
 // ============================================================================
 
-async fn set_cookies_cdp(session: &str, cookies_json: String, state: &V2AppState) -> Result<(), String> {
+async fn set_cookies_cdp(
+    session: &str,
+    cookies_json: String,
+    state: &V2AppState,
+) -> Result<(), String> {
     let manager = get_session_manager_v2();
 
-    let handle = manager.get_handle(session)
+    let handle = manager
+        .get_handle(session)
         .ok_or_else(|| format!("Session '{}' not found", session))?;
 
     let (tx, rx) = oneshot::channel();
@@ -240,20 +279,23 @@ async fn set_cookies_cdp(session: &str, cookies_json: String, state: &V2AppState
 
 /// Convert ImportedCookie list to CDP CookieInfo JSON array
 fn imported_cookies_to_cdp_json(cookies: &[crate::core::cookie_import::ImportedCookie]) -> String {
-    let cdp_cookies: Vec<serde_json::Value> = cookies.iter().map(|c| {
-        let mut obj = serde_json::json!({
-            "name": c.name,
-            "value": c.value,
-            "domain": c.domain,
-            "path": c.path,
-            "secure": c.secure,
-            "http_only": c.http_only,
-        });
-        if let Some(exp) = c.expires {
-            obj["expires"] = serde_json::json!(exp as f64);
-        }
-        obj
-    }).collect();
+    let cdp_cookies: Vec<serde_json::Value> = cookies
+        .iter()
+        .map(|c| {
+            let mut obj = serde_json::json!({
+                "name": c.name,
+                "value": c.value,
+                "domain": c.domain,
+                "path": c.path,
+                "secure": c.secure,
+                "http_only": c.http_only,
+            });
+            if let Some(exp) = c.expires {
+                obj["expires"] = serde_json::json!(exp as f64);
+            }
+            obj
+        })
+        .collect();
     serde_json::to_string(&cdp_cookies).unwrap_or_else(|_| "[]".to_string())
 }
 
@@ -263,12 +305,17 @@ fn imported_cookies_to_cdp_json(cookies: &[crate::core::cookie_import::ImportedC
 
 async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolResponse {
     let manager = get_session_manager_v2();
-    
+
     let handle = match manager.get_handle(&req.session) {
         Some(h) => h,
-        None => return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session)),
+        None => {
+            return McpToolResponse::error(
+                "SESSION_NOT_FOUND",
+                &format!("Session '{}' not found", req.session),
+            );
+        }
     };
-    
+
     // Send navigate command
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::Navigate {
@@ -276,11 +323,11 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
         url: req.url.clone(),
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return McpToolResponse::error("COMMAND_FAILED", "Failed to send navigate command");
     }
-    
+
     // Wait for basic navigation
     match tokio::time::timeout(Duration::from_millis(req.timeout_ms), rx).await {
         Ok(Ok(Ok(()))) => {}
@@ -288,7 +335,7 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
         Ok(Err(_)) => return McpToolResponse::error("CHANNEL_CLOSED", "Navigation channel closed"),
         Err(_) => return McpToolResponse::error("TIMEOUT", "Navigation timed out"),
     }
-    
+
     // Apply wait_for condition
     let wait_result = match req.wait_for {
         WaitForCondition::Load => Ok("load".to_string()),
@@ -303,14 +350,15 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
         }
         WaitForCondition::Selector => {
             if let Some(selector) = &req.wait_selector {
-                let script = generate_wait_for_condition_script("element", Some(selector), req.timeout_ms);
+                let script =
+                    generate_wait_for_condition_script("element", Some(selector), req.timeout_ms);
                 execute_script(&req.session, script, state, req.timeout_ms).await
             } else {
                 Err("wait_selector is required when using 'Selector' condition. Example: {\"condition\": \"Selector\", \"wait_selector\": \".my-element\"}".to_string())
             }
         }
     };
-    
+
     match wait_result {
         Ok(_) => {
             // Optional post-load idle wait for JS-heavy pages (charts, realtime dashboards)
@@ -319,11 +367,13 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
             }
             // Auto-snapshot: capture interactive elements so caller doesn't need a separate call
             let snapshot = run_snapshot_for_session(&state.cmd_tx, &handle.id).await;
-            let elem_count = snapshot.as_ref()
+            let elem_count = snapshot
+                .as_ref()
                 .and_then(|s| s.get("elements"))
                 .and_then(|e| e.as_array())
                 .map(|a| a.len());
-            let final_url = snapshot.as_ref()
+            let final_url = snapshot
+                .as_ref()
                 .and_then(|s| s.get("url"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&req.url);
@@ -345,7 +395,7 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
                 }
             }
             McpToolResponse::success_json(result)
-        },
+        }
         Err(e) => McpToolResponse::error("WAIT_FAILED", &e),
     }
 }
@@ -357,21 +407,22 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
 async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolResponse {
     let mut completed_actions: Vec<usize> = vec![];
     let mut screenshots: Vec<String> = vec![];
-    
+
     for (index, action) in req.actions.iter().enumerate() {
         // Apply slow mode delay
         if req.options.slow_mode_ms > 0 && index > 0 {
             tokio::time::sleep(Duration::from_millis(req.options.slow_mode_ms)).await;
         }
-        
+
         let result = execute_action_with_retry(
             &req.session,
             action,
             &req.options,
             state,
             req.frame.as_deref(),
-        ).await;
-        
+        )
+        .await;
+
         match result {
             Ok(screenshot) => {
                 completed_actions.push(index);
@@ -407,16 +458,19 @@ async fn handle_interact(req: InteractRequest, state: &V2AppState) -> McpToolRes
             }
         }
     }
-    
+
     let mut text = format!("Completed {} actions successfully", completed_actions.len());
     if !screenshots.is_empty() {
         // screenshots contain browser:// URIs - also provide HTTP URLs
-        let http_urls: Vec<String> = screenshots.iter().filter_map(|uri| {
-            // Parse browser://screenshots/{session}/{filename}
-            let stripped = uri.strip_prefix("browser://screenshots/")?;
-            let (session, filename) = stripped.split_once('/')?;
-            Some(to_screenshot_http_url(session, filename))
-        }).collect();
+        let http_urls: Vec<String> = screenshots
+            .iter()
+            .filter_map(|uri| {
+                // Parse browser://screenshots/{session}/{filename}
+                let stripped = uri.strip_prefix("browser://screenshots/")?;
+                let (session, filename) = stripped.split_once('/')?;
+                Some(to_screenshot_http_url(session, filename))
+            })
+            .collect();
         text.push_str(&format!("\nScreenshots: {:?}", screenshots));
         if !http_urls.is_empty() {
             text.push_str(&format!("\nView at: {:?}", http_urls));
@@ -434,20 +488,32 @@ async fn execute_action_with_retry(
     frame: Option<&str>,
 ) -> Result<Option<String>, String> {
     let mut last_error = String::new();
-    
+
     for attempt in 0..=options.retry_count {
         if attempt > 0 {
-            tokio::time::sleep(Duration::from_millis(options.retry_delay_ms * attempt as u64)).await;
+            tokio::time::sleep(Duration::from_millis(
+                options.retry_delay_ms * attempt as u64,
+            ))
+            .await;
         }
-        
+
         // Human mode: add random delay before action (100-500ms)
         if options.human_mode {
             let delay = 100 + (rand::random::<u64>() % 400);
             tracing::info!("[human_mode] Pre-action delay: {}ms", delay);
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
-        
-        match execute_action(session, action, options.wait_timeout_ms, state, options.human_mode, frame).await {
+
+        match execute_action(
+            session,
+            action,
+            options.wait_timeout_ms,
+            state,
+            options.human_mode,
+            frame,
+        )
+        .await
+        {
             Ok(screenshot) => {
                 // Human mode: add random delay after action (50-200ms)
                 if options.human_mode {
@@ -463,7 +529,7 @@ async fn execute_action_with_retry(
             }
         }
     }
-    
+
     Err(last_error)
 }
 
@@ -476,9 +542,13 @@ async fn execute_action(
     frame: Option<&str>,
 ) -> Result<Option<String>, String> {
     match action {
-        Action::Click { target, wait_after_ms } => {
+        Action::Click {
+            target,
+            wait_after_ms,
+        } => {
             // Quick element check (sync, no polling loop)
-            let check_script = format!(r#"
+            let check_script = format!(
+                r#"
                 (function() {{
                     const el = document.querySelector("{}");
                     if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
@@ -486,7 +556,9 @@ async fn execute_action(
                     if (rect.width === 0 || rect.height === 0) return JSON.stringify({{ success: false, error: "Element hidden" }});
                     return JSON.stringify({{ success: true }});
                 }})()
-            "#, target.replace('"', "\\\""));
+            "#,
+                target.replace('"', "\\\"")
+            );
             let check_result = execute_script_in(session, check_script, state, 5000, frame).await?;
 
             let parsed: serde_json::Value = serde_json::from_str(&check_result)
@@ -502,9 +574,13 @@ async fn execute_action(
                 tracing::info!("[human_mode] Pre-click delay: {}ms", delay);
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
-            
+
             // CDP click
-            tracing::info!("[cdp] Using CDP Input.dispatchMouseEvent for click: {}, human={}", target, human_mode);
+            tracing::info!(
+                "[cdp] Using CDP Input.dispatchMouseEvent for click: {}, human={}",
+                target,
+                human_mode
+            );
             let manager = get_session_manager_v2();
             if let Some(handle) = manager.get_handle(session) {
                 let (tx, rx) = oneshot::channel();
@@ -524,24 +600,32 @@ async fn execute_action(
             } else {
                 return Err(format!("Session '{}' not found", session));
             }
-            
+
             // Wait after click
             if let Some(ms) = wait_after_ms {
                 tokio::time::sleep(Duration::from_millis(*ms)).await;
             }
-            
+
             Ok(None)
         }
-        
-        Action::Type { target, value, clear, instant } => {
+
+        Action::Type {
+            target,
+            value,
+            clear,
+            instant,
+        } => {
             // Quick element check
-            let check_script = format!(r#"
+            let check_script = format!(
+                r#"
                 (function() {{
                     const el = document.querySelector("{}");
                     if (!el) return JSON.stringify({{ success: false, error: "Element not found" }});
                     return JSON.stringify({{ success: true }});
                 }})()
-            "#, target.replace('"', "\\\""));
+            "#,
+                target.replace('"', "\\\"")
+            );
             let check_result = execute_script_in(session, check_script, state, 5000, frame).await?;
 
             let parsed: serde_json::Value = serde_json::from_str(&check_result)
@@ -552,9 +636,20 @@ async fn execute_action(
             }
 
             // CDP type (instant=true uses 0 delay, normal uses 20ms, human_mode uses random)
-            let char_delay = if *instant { 0 } else if human_mode { 50 + (rand::random::<u64>() % 100) } else { 20 };
-            tracing::info!("[cdp] Type via CDP: {} chars, delay={}ms, instant={}", value.len(), char_delay, instant);
-            
+            let char_delay = if *instant {
+                0
+            } else if human_mode {
+                50 + (rand::random::<u64>() % 100)
+            } else {
+                20
+            };
+            tracing::info!(
+                "[cdp] Type via CDP: {} chars, delay={}ms, instant={}",
+                value.len(),
+                char_delay,
+                instant
+            );
+
             let manager = get_session_manager_v2();
             if let Some(handle) = manager.get_handle(session) {
                 // Click to focus
@@ -572,22 +667,25 @@ async fn execute_action(
                     Ok(Err(_)) => return Err("Session communication lost. The browser session may have crashed. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.".to_string()),
                     Err(_) => return Err("Focus click timed out. The input element may not be visible. Try: scroll to the element first.".to_string()),
                 }
-                
+
                 if !*instant {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                
+
                 // Clear if requested
                 if *clear {
-                    let clear_script = format!(r#"
+                    let clear_script = format!(
+                        r#"
                         (function() {{
                             const el = document.querySelector("{}");
                             if (el) {{ el.value = ""; el.dispatchEvent(new Event('input', {{bubbles: true}})); }}
                         }})()
-                    "#, target.replace('"', "\\\""));
+                    "#,
+                        target.replace('"', "\\\"")
+                    );
                     let _ = execute_script_in(session, clear_script, state, 2000, frame).await;
                 }
-                
+
                 // Type via CDP
                 let (type_tx, type_rx) = oneshot::channel();
                 let type_cmd = crate::core::AppCommand::TypeCdp {
@@ -598,8 +696,12 @@ async fn execute_action(
                     resp_tx: type_tx,
                 };
                 state.cmd_tx.send(type_cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.")?;
-                
-                let type_timeout_secs = if *instant { 10 } else { (value.len() as u64 * char_delay / 1000) + 10 };
+
+                let type_timeout_secs = if *instant {
+                    10
+                } else {
+                    (value.len() as u64 * char_delay / 1000) + 10
+                };
                 match tokio::time::timeout(Duration::from_secs(type_timeout_secs), type_rx).await {
                     Ok(Ok(Ok(()))) => tracing::info!("[cdp] Type succeeded: {} chars", value.len()),
                     Ok(Ok(Err(e))) => return Err(format!("CDP type failed: {}", e)),
@@ -609,11 +711,15 @@ async fn execute_action(
             } else {
                 return Err(format!("Session '{}' not found", session));
             }
-            
+
             Ok(None)
         }
-        
-        Action::Wait { condition, value, timeout_ms: wait_timeout } => {
+
+        Action::Wait {
+            condition,
+            value,
+            timeout_ms: wait_timeout,
+        } => {
             let condition_str = match condition {
                 WaitCondition::Element => "element",
                 WaitCondition::ElementVisible => "element_visible",
@@ -628,33 +734,39 @@ async fn execute_action(
                     return Ok(None);
                 }
             };
-            
-            let script = generate_wait_for_condition_script(
-                condition_str,
-                value.as_deref(),
-                *wait_timeout,
-            );
-            
-            let result = execute_script_in(session, script, state, *wait_timeout + 1000, frame).await?;
-            
+
+            let script =
+                generate_wait_for_condition_script(condition_str, value.as_deref(), *wait_timeout);
+
+            let result =
+                execute_script_in(session, script, state, *wait_timeout + 1000, frame).await?;
+
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .map_err(|e| format!("Failed to parse wait result: {}", e))?;
-            
+
             if !parsed["success"].as_bool().unwrap_or(false) {
-                return Err(parsed["error"].as_str().unwrap_or("Wait condition not met").to_string());
+                return Err(parsed["error"]
+                    .as_str()
+                    .unwrap_or("Wait condition not met")
+                    .to_string());
             }
-            
+
             Ok(None)
         }
-        
+
         Action::Screenshot => {
             let path = take_screenshot(session, state).await?;
             Ok(Some(path))
         }
-        
-        Action::Scroll { direction, amount, target } => {
+
+        Action::Scroll {
+            direction,
+            amount,
+            target,
+        } => {
             let scroll_script = if let Some(selector) = target {
-                format!(r#"
+                format!(
+                    r#"
                     const el = document.querySelector("{}");
                     if (el) {{
                         el.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
@@ -662,7 +774,9 @@ async fn execute_action(
                     }} else {{
                         JSON.stringify({{ success: false, error: "Element not found" }});
                     }}
-                "#, selector.replace('"', "\\\""))
+                "#,
+                    selector.replace('"', "\\\"")
+                )
             } else if human_mode {
                 // Human-like inertia scroll: starts fast, gradually slows down
                 let (dx, dy) = match direction {
@@ -671,7 +785,8 @@ async fn execute_action(
                     ScrollDirection::Right => (*amount, 0),
                     ScrollDirection::Left => (-amount, 0),
                 };
-                format!(r#"
+                format!(
+                    r#"
 (async function() {{
     const totalX = {};
     const totalY = {};
@@ -712,7 +827,9 @@ async fn execute_action(
         steps: steps
     }});
 }})();
-"#, dx, dy)
+"#,
+                    dx, dy
+                )
             } else {
                 let (x, y) = match direction {
                     ScrollDirection::Down => (0, *amount),
@@ -720,13 +837,17 @@ async fn execute_action(
                     ScrollDirection::Right => (*amount, 0),
                     ScrollDirection::Left => (-amount, 0),
                 };
-                format!(r#"
+                format!(
+                    r#"
                     window.scrollBy({}, {});
                     JSON.stringify({{ success: true, scrollX: window.scrollX, scrollY: window.scrollY }});
-                "#, x, y)
+                "#,
+                    x, y
+                )
             };
-            
-            let scroll_result = execute_script_in(session, scroll_script, state, timeout_ms, frame).await?;
+
+            let scroll_result =
+                execute_script_in(session, scroll_script, state, timeout_ms, frame).await?;
 
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&scroll_result) {
                 if parsed["success"].as_bool() == Some(false) {
@@ -737,7 +858,8 @@ async fn execute_action(
         }
 
         Action::Hover { target } => {
-            let hover_script = format!(r#"
+            let hover_script = format!(
+                r#"
                 const el = document.querySelector("{}");
                 if (el) {{
                     el.dispatchEvent(new MouseEvent('mouseenter', {{ bubbles: true }}));
@@ -746,9 +868,12 @@ async fn execute_action(
                 }} else {{
                     JSON.stringify({{ success: false, error: "Element not found" }});
                 }}
-            "#, target.replace('"', "\\\""));
+            "#,
+                target.replace('"', "\\\"")
+            );
 
-            let hover_result = execute_script_in(session, hover_script, state, timeout_ms, frame).await?;
+            let hover_result =
+                execute_script_in(session, hover_script, state, timeout_ms, frame).await?;
 
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&hover_result) {
                 if parsed["success"].as_bool() == Some(false) {
@@ -759,7 +884,8 @@ async fn execute_action(
         }
 
         Action::Select { target, value } => {
-            let select_script = format!(r#"
+            let select_script = format!(
+                r#"
                 const el = document.querySelector("{}");
                 if (el) {{
                     el.value = "{}";
@@ -768,9 +894,13 @@ async fn execute_action(
                 }} else {{
                     JSON.stringify({{ success: false, error: "Element not found" }});
                 }}
-            "#, target.replace('"', "\\\""), value.replace('"', "\\\""));
+            "#,
+                target.replace('"', "\\\""),
+                value.replace('"', "\\\"")
+            );
 
-            let select_result = execute_script_in(session, select_script, state, timeout_ms, frame).await?;
+            let select_result =
+                execute_script_in(session, select_script, state, timeout_ms, frame).await?;
 
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&select_result) {
                 if parsed["success"].as_bool() == Some(false) {
@@ -791,24 +921,28 @@ fn to_screenshot_uri(session: &str, filename: &str) -> String {
 fn to_screenshot_http_url(session: &str, filename: &str) -> String {
     let cfg = crate::core::config::get_config();
     let port = cfg.server.port;
-    format!("http://127.0.0.1:{}/media/screenshots/{}/{}", port, session, filename)
+    format!(
+        "http://127.0.0.1:{}/media/screenshots/{}/{}",
+        port, session, filename
+    )
 }
 
 async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, String> {
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    
+
     // Create screenshot directory
     let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(session);
     let _ = std::fs::create_dir_all(&screenshot_dir);
-    
+
     let filename = format!("cap_{}.png", timestamp);
     let screenshot_path = screenshot_dir.join(&filename);
-    
+
     // Take screenshot via CDP
     let manager = get_session_manager_v2();
-    let handle = manager.get_handle(session)
+    let handle = manager
+        .get_handle(session)
         .ok_or_else(|| format!("Session '{}' not found", session))?;
-    
+
     let (tx, rx) = oneshot::channel();
     let cdp_cmd = crate::core::AppCommand::ScreenshotCdp {
         id: handle.id.clone(),
@@ -818,9 +952,9 @@ async fn take_screenshot(session: &str, state: &V2AppState) -> Result<String, St
         frame: None,
         resp_tx: tx,
     };
-    
+
     state.cmd_tx.send(cdp_cmd).map_err(|_| "Failed to send command to session. The session may not be active. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.")?;
-    
+
     match tokio::time::timeout(Duration::from_secs(30), rx).await {
         Ok(Ok(Ok(bytes))) => {
             // Save to file
@@ -855,20 +989,22 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
 
     // 4. Extract interactive elements for AI context
     let elements_script = generate_extract_interactive_elements_script();
-    let elements_result = execute_script_in(&req.session, elements_script, state, 5000, frame).await
+    let elements_result = execute_script_in(&req.session, elements_script, state, 5000, frame)
+        .await
         .unwrap_or_else(|_| r#"{"error": "Failed to extract elements"}"#.to_string());
-    
+
     let parsed: serde_json::Value = serde_json::from_str(&elements_result)
         .unwrap_or(serde_json::json!({"error": "Parse failed"}));
-    
+
     // 4.5 Optional: LLM analysis for mid-range scores
     let mut analyzed_result = if req.analyze_interactivity {
         let ai_config = crate::core::ai::AiConfig::default();
         if ai_config.is_available() {
-            match crate::mcp_v3::visual_interactivity::analyze_with_llm(&elements_result, &ai_config) {
-                Ok(analyzed) => {
-                    serde_json::from_str(&analyzed).unwrap_or(parsed.clone())
-                }
+            match crate::mcp_v3::visual_interactivity::analyze_with_llm(
+                &elements_result,
+                &ai_config,
+            ) {
+                Ok(analyzed) => serde_json::from_str(&analyzed).unwrap_or(parsed.clone()),
                 Err(e) => {
                     eprintln!("[Visual Interactivity] LLM analysis failed: {}", e);
                     parsed.clone()
@@ -880,35 +1016,44 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     } else {
         parsed.clone()
     };
-    
+
     // Re-sort elements by score after LLM analysis
     if req.analyze_interactivity {
-        if let Some(elements) = analyzed_result.get_mut("elements").and_then(|e| e.as_array_mut()) {
+        if let Some(elements) = analyzed_result
+            .get_mut("elements")
+            .and_then(|e| e.as_array_mut())
+        {
             elements.sort_by(|a, b| {
-                let score_a = a.get("interactivity")
+                let score_a = a
+                    .get("interactivity")
                     .and_then(|i| i.get("score"))
                     .and_then(|s| s.as_f64())
                     .unwrap_or(0.0);
-                let score_b = b.get("interactivity")
+                let score_b = b
+                    .get("interactivity")
                     .and_then(|i| i.get("score"))
                     .and_then(|s| s.as_f64())
                     .unwrap_or(0.0);
-                score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+                score_b
+                    .partial_cmp(&score_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
     }
-    
+
     // 4.6 Optional: Vision LLM analysis for images without alt text
     let final_result = if req.analyze_vision {
         let ai_config = crate::core::ai::AiConfig::default();
         if ai_config.is_available() {
             // Future: Capture viewport screenshot and pass to Vision LLM
-            
+
             // Get elements that need vision analysis
-            let needs_vision_elements: Vec<_> = analyzed_result.get("elements")
+            let needs_vision_elements: Vec<_> = analyzed_result
+                .get("elements")
                 .and_then(|e| e.as_array())
                 .map(|elements| {
-                    elements.iter()
+                    elements
+                        .iter()
                         .enumerate()
                         .filter(|(_, el)| {
                             el.get("interactivity")
@@ -918,35 +1063,43 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                         })
                         .take(5)
                         .map(|(idx, el)| {
-                            let selector = el.get("selector").and_then(|s| s.as_str()).unwrap_or("");
+                            let selector =
+                                el.get("selector").and_then(|s| s.as_str()).unwrap_or("");
                             let tag = el.get("tag").and_then(|t| t.as_str()).unwrap_or("");
                             let visual = el.get("visual");
                             let size = visual.and_then(|v| v.get("size"));
-                            let width = size.and_then(|s| s.get("width")).and_then(|w| w.as_i64()).unwrap_or(0);
-                            let height = size.and_then(|s| s.get("height")).and_then(|h| h.as_i64()).unwrap_or(0);
+                            let width = size
+                                .and_then(|s| s.get("width"))
+                                .and_then(|w| w.as_i64())
+                                .unwrap_or(0);
+                            let height = size
+                                .and_then(|s| s.get("height"))
+                                .and_then(|h| h.as_i64())
+                                .unwrap_or(0);
                             (idx, selector.to_string(), tag.to_string(), width, height)
                         })
                         .collect()
                 })
                 .unwrap_or_default();
-            
+
             if !needs_vision_elements.is_empty() {
                 // Build prompt with element positions for Vision LLM
-                let mut prompt = String::from(
-                    "このページのスクリーンショットを分析してください。\n\n" 
-                );
+                let mut prompt =
+                    String::from("このページのスクリーンショットを分析してください。\n\n");
                 prompt.push_str("以下の画像要素のクリック可能性と内容を判断してください:\n");
-                
+
                 for (idx, selector, tag, width, height) in &needs_vision_elements {
                     prompt.push_str(&format!(
                         "- 要素{}: {} ({}x{}px) セレクタ: {}\n",
                         idx, tag, width, height, selector
                     ));
                 }
-                
+
                 prompt.push_str("\nJSON形式で回答:\n");
-                prompt.push_str(r#"[{"index": 0, "description": "商品画像", "action": "click_product"}]"#);
-                
+                prompt.push_str(
+                    r#"[{"index": 0, "description": "商品画像", "action": "click_product"}]"#,
+                );
+
                 // Call Vision LLM
                 let vision_result = match ai_config.provider.to_lowercase().as_str() {
                     "ollama" => {
@@ -961,33 +1114,57 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                             Err("Gemini not available".to_string())
                         }
                     }
-                    _ => Err("Unsupported provider".to_string())
+                    _ => Err("Unsupported provider".to_string()),
                 };
-                
+
                 // Apply vision results if successful
                 if let Ok(response) = vision_result {
                     let mut result = analyzed_result.clone();
                     // Parse response and update elements
-                    if let Some(elements) = result.get_mut("elements").and_then(|e| e.as_array_mut()) {
+                    if let Some(elements) =
+                        result.get_mut("elements").and_then(|e| e.as_array_mut())
+                    {
                         // Try to extract JSON array from response
                         if let Some(start) = response.find('[') {
                             if let Some(end) = response.rfind(']') {
                                 let json_str = &response[start..=end];
-                                if let Ok(vision_data) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                                if let Ok(vision_data) =
+                                    serde_json::from_str::<Vec<serde_json::Value>>(json_str)
+                                {
                                     for item in vision_data {
-                                        if let Some(idx) = item.get("index").and_then(|i| i.as_u64()) {
+                                        if let Some(idx) =
+                                            item.get("index").and_then(|i| i.as_u64())
+                                        {
                                             if let Some(el) = elements.get_mut(idx as usize) {
-                                                if let Some(desc) = item.get("description").and_then(|d| d.as_str()) {
-                                                    el["vision_description"] = serde_json::json!(desc);
+                                                if let Some(desc) =
+                                                    item.get("description").and_then(|d| d.as_str())
+                                                {
+                                                    el["vision_description"] =
+                                                        serde_json::json!(desc);
                                                     // Update label if empty
-                                                    if el.get("label").and_then(|l| l.as_str()).unwrap_or("").is_empty() {
-                                                        el["label"] = serde_json::json!(desc.chars().take(30).collect::<String>());
+                                                    if el
+                                                        .get("label")
+                                                        .and_then(|l| l.as_str())
+                                                        .unwrap_or("")
+                                                        .is_empty()
+                                                    {
+                                                        el["label"] = serde_json::json!(
+                                                            desc.chars()
+                                                                .take(30)
+                                                                .collect::<String>()
+                                                        );
                                                     }
                                                 }
-                                                if let Some(_action) = item.get("action").and_then(|a| a.as_str()) {
-                                                    if let Some(interactivity) = el.get_mut("interactivity") {
-                                                        interactivity["analyzed_by"] = serde_json::json!("vision");
-                                                        interactivity["needs_vision"] = serde_json::json!(false);
+                                                if let Some(_action) =
+                                                    item.get("action").and_then(|a| a.as_str())
+                                                {
+                                                    if let Some(interactivity) =
+                                                        el.get_mut("interactivity")
+                                                    {
+                                                        interactivity["analyzed_by"] =
+                                                            serde_json::json!("vision");
+                                                        interactivity["needs_vision"] =
+                                                            serde_json::json!(false);
                                                     }
                                                 }
                                             }
@@ -1010,29 +1187,35 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
     } else {
         analyzed_result.clone()
     };
-    
+
     // Build AI-optimized text response
     let url = final_result["url"].as_str().unwrap_or("Unknown");
     let title = final_result["title"].as_str().unwrap_or("Unknown");
-    
+
     let mut text = format!("URL: {}\nTitle: {}\n\n【操作可能要素】\n", url, title);
-    
+
     if let Some(elements) = final_result["elements"].as_array() {
         // Filter: score >= 0.4, limit to top 20 for context efficiency
         // (threshold raised due to position bonuses)
-        let filtered: Vec<_> = elements.iter()
+        let filtered: Vec<_> = elements
+            .iter()
             .filter(|el| {
                 el.get("interactivity")
                     .and_then(|i| i.get("score"))
                     .and_then(|s| s.as_f64())
-                    .unwrap_or(0.0) >= 0.4
+                    .unwrap_or(0.0)
+                    >= 0.4
             })
             .take(20)
             .collect();
-        
+
         // Show count info
-        text.push_str(&format!("({}要素中 上位{}件)\n", elements.len(), filtered.len()));
-        
+        text.push_str(&format!(
+            "({}要素中 上位{}件)\n",
+            elements.len(),
+            filtered.len()
+        ));
+
         for el in filtered {
             // Truncate selector for AI context efficiency
             let selector = el["selector"].as_str().unwrap_or("?");
@@ -1044,31 +1227,31 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             let label = el["label"].as_str();
             let value = el["value"].as_str();
             let el_type = el["type"].as_str();
-            
+
             // Include interactivity score if available
             let score = el["interactivity"]["score"].as_f64();
             let analyzed_by = el["interactivity"]["analyzed_by"].as_str();
-            
+
             // Get size and position from visual properties
             let width = el["visual"]["size"]["width"].as_u64().unwrap_or(0);
             let height = el["visual"]["size"]["height"].as_u64().unwrap_or(0);
             let in_viewport = el["inViewport"].as_bool().unwrap_or(true);
-            
+
             let mut line = format!("- {}", short_selector);
-            
+
             if let Some(s) = score {
                 line.push_str(&format!(" [score:{:.2}]", s));
             }
-            
+
             // Add size info (compact format)
             if width > 0 && height > 0 {
                 line.push_str(&format!(" {}×{}", width, height));
             }
-            
+
             if !in_viewport {
                 line.push_str(" (画面外)");
             }
-            
+
             if let Some(a) = analyzed_by {
                 if a == "llm" {
                     line.push_str(" (LLM)");
@@ -1084,10 +1267,13 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
             if let Some(v) = value {
                 if !v.is_empty() {
-                    line.push_str(&format!(" value=\"{}\"", v.chars().take(20).collect::<String>()));
+                    line.push_str(&format!(
+                        " value=\"{}\"",
+                        v.chars().take(20).collect::<String>()
+                    ));
                 }
             }
-            
+
             // Show first predicted action
             if let Some(actions) = el["interactivity"]["predicted_actions"].as_array() {
                 if let Some(first) = actions.first() {
@@ -1096,32 +1282,35 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                     }
                 }
             }
-            
+
             text.push_str(&line);
             text.push('\n');
         }
     }
-    
+
     // Add challenge detection results with AI-actionable strategies
     if let Some(challenges) = final_result.get("challenges").and_then(|c| c.as_array()) {
         if !challenges.is_empty() {
             text.push_str("\n【チャレンジ検出】\n");
             for challenge in challenges {
-                let challenge_type = challenge.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                let challenge_type = challenge
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("unknown");
                 let auto_strategy = challenge.get("auto_strategy");
-                
+
                 // Get recommended action
                 let action = auto_strategy
                     .and_then(|s| s.get("action"))
                     .and_then(|a| a.as_str())
                     .unwrap_or("unknown");
-                
+
                 let message = auto_strategy
                     .and_then(|s| s.get("message"))
                     .and_then(|m| m.as_str());
-                
+
                 text.push_str(&format!("- {}: ", challenge_type));
-                
+
                 match action {
                     "proceed" => {
                         text.push_str("自動処理可能");
@@ -1152,17 +1341,16 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
         }
     }
 
-    
     // 5. Take screenshot (save to file, return URL)
     if req.screenshot {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!("cap_{}.png", timestamp);
-        
+
         // Get screenshot output directory (inside session profile folder)
         let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(&req.session);
         let _ = std::fs::create_dir_all(&screenshot_dir);
         let screenshot_path = screenshot_dir.join(&filename);
-        
+
         // Use CDP screenshot for full_page or when explicitly requested
         if req.use_cdp || req.full_page {
             // Get session manager
@@ -1177,19 +1365,25 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                     frame: None,
                     resp_tx: tx,
                 };
-                
+
                 if state.cmd_tx.send(cdp_cmd).is_ok() {
                     match tokio::time::timeout(Duration::from_secs(30), rx).await {
                         Ok(Ok(Ok(bytes))) => {
                             // Save to file
                             match std::fs::write(&screenshot_path, &bytes) {
                                 Ok(_) => {
-                                    text.push_str(&format!("\n【スクリーンショット】(CDP)\n{}　({} bytes)\nView: {}",
-                                        to_screenshot_uri(&req.session, &filename), bytes.len(),
-                                        to_screenshot_http_url(&req.session, &filename)));
+                                    text.push_str(&format!(
+                                        "\n【スクリーンショット】(CDP)\n{}　({} bytes)\nView: {}",
+                                        to_screenshot_uri(&req.session, &filename),
+                                        bytes.len(),
+                                        to_screenshot_http_url(&req.session, &filename)
+                                    ));
                                 }
                                 Err(e) => {
-                                    text.push_str(&format!("\n【スクリーンショット保存失敗】{}", e));
+                                    text.push_str(&format!(
+                                        "\n【スクリーンショット保存失敗】{}",
+                                        e
+                                    ));
                                 }
                             }
                         }
@@ -1227,8 +1421,16 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                     }
                 })();
             "#;
-            
-            match execute_script_in(&req.session, screenshot_script.to_string(), state, 5000, frame).await {
+
+            match execute_script_in(
+                &req.session,
+                screenshot_script.to_string(),
+                state,
+                5000,
+                frame,
+            )
+            .await
+            {
                 Ok(result) => {
                     text.push_str(&format!("\n【ページ情報】\n{}", result));
                 }
@@ -1238,7 +1440,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     // Handle additional includes
     if req.include.contains(&CaptureInclude::Cookies) {
         // Use CDP Network.getCookies for HttpOnly cookies
@@ -1248,7 +1450,12 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                     text.push_str(&format!("\n\n【Cookies】({}件)\n", cookies.len()));
                     for cookie in cookies.iter().take(20) {
                         let name = cookie["name"].as_str().unwrap_or("?");
-                        let value = cookie["value"].as_str().unwrap_or("").chars().take(30).collect::<String>();
+                        let value = cookie["value"]
+                            .as_str()
+                            .unwrap_or("")
+                            .chars()
+                            .take(30)
+                            .collect::<String>();
                         let http_only = cookie["httpOnly"].as_bool().unwrap_or(false);
                         let suffix = if http_only { " [HttpOnly]" } else { "" };
                         text.push_str(&format!("- {}={}{}\n", name, value, suffix));
@@ -1264,15 +1471,18 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     if req.include.contains(&CaptureInclude::FullText) {
         let max_chars = req.text_max_chars.unwrap_or(5000);
-        let text_script = format!(r#"
+        let text_script = format!(
+            r#"
             JSON.stringify({{
                 text: document.body.innerText.substring(0, {})
             }});
-        "#, max_chars);
-        
+        "#,
+            max_chars
+        );
+
         if let Ok(result) = execute_script_in(&req.session, text_script, state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(full_text) = parsed["text"].as_str() {
@@ -1281,15 +1491,18 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     if req.include.contains(&CaptureInclude::Html) {
         let max_chars = req.text_max_chars.unwrap_or(50000);
-        let html_script = format!(r#"
+        let html_script = format!(
+            r#"
             JSON.stringify({{
                 html: document.documentElement.outerHTML.substring(0, {})
             }});
-        "#, max_chars);
-        
+        "#,
+            max_chars
+        );
+
         if let Ok(result) = execute_script_in(&req.session, html_script, state, 5000, frame).await {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(html) = parsed["html"].as_str() {
@@ -1298,11 +1511,12 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     if req.include.contains(&CaptureInclude::Images) {
         let images_script = generate_collect_images_script(None, 50, 50, 30);
-        
-        if let Ok(result) = execute_script_in(&req.session, images_script, state, 5000, frame).await {
+
+        if let Ok(result) = execute_script_in(&req.session, images_script, state, 5000, frame).await
+        {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(images) = parsed["images"].as_array() {
                     text.push_str(&format!("\n\n【画像】({}件)\n", images.len()));
@@ -1311,7 +1525,13 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                         let alt = img["alt"].as_str().unwrap_or("");
                         let w = img["width"].as_u64().unwrap_or(0);
                         let h = img["height"].as_u64().unwrap_or(0);
-                        text.push_str(&format!("- {}x{} {} {}\n", w, h, alt, src.chars().take(60).collect::<String>()));
+                        text.push_str(&format!(
+                            "- {}x{} {} {}\n",
+                            w,
+                            h,
+                            alt,
+                            src.chars().take(60).collect::<String>()
+                        ));
                     }
                     if images.len() > 10 {
                         text.push_str(&format!("... 他{}件\n", images.len() - 10));
@@ -1320,7 +1540,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     // AI Summarization
     if req.summarize {
         // Get page text for summarization
@@ -1329,14 +1549,20 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                 text: document.body.innerText.substring(0, 8000)
             });
         "#;
-        
-        if let Ok(result) = execute_script_in(&req.session, text_script.to_string(), state, 5000, frame).await {
+
+        if let Ok(result) =
+            execute_script_in(&req.session, text_script.to_string(), state, 5000, frame).await
+        {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
                 if let Some(page_text) = parsed["text"].as_str() {
                     // Create AI client
                     let config = crate::core::config::get_config();
-                    tracing::info!("[summarize] provider={}, model={}", config.ai.provider, config.ai.model);
-                    
+                    tracing::info!(
+                        "[summarize] provider={}, model={}",
+                        config.ai.provider,
+                        config.ai.model
+                    );
+
                     let ai_config = crate::core::ai::AiConfig {
                         enabled: config.ai.enabled,
                         provider: config.ai.provider.clone(),
@@ -1346,22 +1572,27 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                         daily_budget_usd: config.ai.daily_budget_usd,
                         daily_usage_usd: 0.0,
                     };
-                    
+
                     // Debug: check Ollama availability
                     if config.ai.provider.to_lowercase() == "ollama" {
                         let ollama = crate::core::ai::OllamaClient::new(&ai_config);
-                        tracing::info!("[summarize] Ollama available: {}, base_url: {}", ollama.is_available(), ollama.base_url);
-                        
+                        tracing::info!(
+                            "[summarize] Ollama available: {}, base_url: {}",
+                            ollama.is_available(),
+                            ollama.base_url
+                        );
+
                         // Use Ollama directly (skip AiClient fallback logic)
                         let truncated_text: String = page_text.chars().take(4000).collect();
                         let prompt = format!(
                             "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
                             truncated_text
                         );
-                        
+
                         match ollama.call(&prompt, None) {
                             Ok(summary) => {
-                                text.push_str(&format!("\n\n【AI要約】(ollama/{})\n{}", 
+                                text.push_str(&format!(
+                                    "\n\n【AI要約】(ollama/{})\n{}",
                                     config.ai.model,
                                     summary.trim()
                                 ));
@@ -1376,10 +1607,11 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
                             "以下のウェブページの内容を200文字以内で簡潔に要約してください。\n\n---\n{}",
                             truncated_text
                         );
-                        
+
                         match client.call(&prompt, None) {
                             Ok(summary) => {
-                                text.push_str(&format!("\n\n【AI要約】({})\n{}", 
+                                text.push_str(&format!(
+                                    "\n\n【AI要約】({})\n{}",
                                     client.provider_name(),
                                     summary.trim()
                                 ));
@@ -1395,7 +1627,7 @@ async fn handle_capture(req: CaptureRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     McpToolResponse::success_text(text)
 }
 
@@ -1413,8 +1645,9 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
     } else {
         5000 // Default 5s auto-wait for elements to appear
     };
-    
-    let wait_script = format!(r#"
+
+    let wait_script = format!(
+        r#"
         (async function() {{
             const timeout = {};
             const startTime = Date.now();
@@ -1427,15 +1660,27 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
             }}
             return JSON.stringify({{ success: false, count: document.querySelectorAll("{}").length }});
         }})();
-    "#, auto_wait_timeout, req.selector.replace('"', "\\\""), min_count, req.selector.replace('"', "\\\""));
-    
-    let wait_result = execute_script_in(&req.session, wait_script, state, auto_wait_timeout + 1000, frame).await;
-    
+    "#,
+        auto_wait_timeout,
+        req.selector.replace('"', "\\\""),
+        min_count,
+        req.selector.replace('"', "\\\"")
+    );
+
+    let wait_result = execute_script_in(
+        &req.session,
+        wait_script,
+        state,
+        auto_wait_timeout + 1000,
+        frame,
+    )
+    .await;
+
     // Log wait result for diagnostics
     if let Ok(ref wr) = wait_result {
         tracing::info!("[extract] Element wait result: {}", wr);
     }
-    
+
     // Handle scroll-and-collect mode: extract → scroll → repeat with dedup
     if req.scroll_for_more {
         use std::collections::HashSet;
@@ -1453,7 +1698,8 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
         for i in 0..req.scroll_max {
             // Extract current visible items
             let extract_script = generate_extract_data_script(&req.selector, &req.fields, None);
-            let batch_result = execute_script_in(&req.session, extract_script, state, 10000, frame).await;
+            let batch_result =
+                execute_script_in(&req.session, extract_script, state, 10000, frame).await;
 
             let mut new_count = 0usize;
             if let Ok(json) = batch_result {
@@ -1489,14 +1735,22 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                 }
             }
 
-            tracing::info!("[extract scroll] iteration {}/{}: +{} new, {} total, {} dupes",
-                i + 1, req.scroll_max, new_count, accumulated.len(), total_duplicates);
+            tracing::info!(
+                "[extract scroll] iteration {}/{}: +{} new, {} total, {} dupes",
+                i + 1,
+                req.scroll_max,
+                new_count,
+                accumulated.len(),
+                total_duplicates
+            );
 
             // Early exit: 3 consecutive rounds with 0 new items
             if new_count == 0 {
                 no_new_streak += 1;
                 if no_new_streak >= 3 {
-                    tracing::info!("[extract scroll] stopping: 3 consecutive rounds with no new items");
+                    tracing::info!(
+                        "[extract scroll] stopping: 3 consecutive rounds with no new items"
+                    );
                     break;
                 }
             } else {
@@ -1525,8 +1779,10 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
         // Return accumulated results
         let count = accumulated.len();
         let data = serde_json::Value::Array(accumulated);
-        let summary = format!("Extracted {} unique items ({} scrolls, {} duplicates removed)",
-            count, req.scroll_max, total_duplicates);
+        let summary = format!(
+            "Extracted {} unique items ({} scrolls, {} duplicates removed)",
+            count, req.scroll_max, total_duplicates
+        );
 
         return McpToolResponse::success_text(
             serde_json::to_string(&serde_json::json!({
@@ -1535,27 +1791,30 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                 "scroll_mode": true,
                 "duplicates_removed": total_duplicates,
                 "summary": summary,
-            })).unwrap_or_else(|_| "{}".to_string())
+            }))
+            .unwrap_or_else(|_| "{}".to_string()),
         );
     }
 
     // Non-scroll mode: single extraction
     let extract_script = generate_extract_data_script(&req.selector, &req.fields, req.limit);
-    let result = execute_script_in(&req.session, extract_script, state, 10000, frame).await
+    let result = execute_script_in(&req.session, extract_script, state, 10000, frame)
+        .await
         .map_err(|e| format!("Extract failed: {}", e));
 
     match result {
         Ok(json) => {
-            let parsed: serde_json::Value = serde_json::from_str(&json)
-                .unwrap_or(serde_json::json!({"error": "Parse failed"}));
+            let parsed: serde_json::Value =
+                serde_json::from_str(&json).unwrap_or(serde_json::json!({"error": "Parse failed"}));
 
             let count = parsed["count"].as_u64().unwrap_or(0);
             let data = parsed["data"].clone();
-            
+
             // If still 0 items, provide diagnostic info
             if count == 0 {
                 // Try to get page info for debugging
-                let diag_script = format!(r#"
+                let diag_script = format!(
+                    r#"
                     JSON.stringify({{
                         readyState: document.readyState,
                         bodyChildCount: document.body ? document.body.children.length : 0,
@@ -1563,17 +1822,18 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                         matchingSelector: document.querySelectorAll('{}').length,
                         url: window.location.href
                     }})
-                "#, req.selector.replace('"', "\\\""));
-                let diag = execute_script_in(&req.session, diag_script, state, 3000, frame).await
+                "#,
+                    req.selector.replace('"', "\\\"")
+                );
+                let diag = execute_script_in(&req.session, diag_script, state, 3000, frame)
+                    .await
                     .unwrap_or_else(|_| "diagnostic unavailable".to_string());
-                
+
                 tracing::warn!("[extract] 0 items extracted. Diagnostics: {}", diag);
-                
+
                 McpToolResponse::success_text(format!(
                     "Extracted 0 items (selector: '{}')\nDiagnostics: {}\nHint: The page may need more time to load dynamic content. Try using interact with wait{{condition:'element',value:'{}'}} before extract.",
-                    req.selector,
-                    diag,
-                    req.selector
+                    req.selector, diag, req.selector
                 ))
             } else {
                 // Check if all fields are null (selector mismatch diagnostic)
@@ -1582,9 +1842,7 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
                     let diag_pretty = serde_json::to_string_pretty(diag).unwrap_or_default();
                     McpToolResponse::success_text(format!(
                         "Extracted {} items but ALL fields are null — the field selectors don't match any child elements inside '{}'.\n\nDiagnostic (first container):\n{}\n\nHint: Check the child_structure and inner_html_sample above to find the correct CSS selectors for your fields.",
-                        count,
-                        req.selector,
-                        diag_pretty
+                        count, req.selector, diag_pretty
                     ))
                 } else {
                     McpToolResponse::success_text(format!(
@@ -1605,22 +1863,26 @@ async fn handle_extract(req: ExtractRequest, state: &V2AppState) -> McpToolRespo
 
 async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolResponse {
     let manager = get_session_manager_v2();
-    
+
     if req.list {
         match manager.list() {
             Ok(response) => {
-                let sessions: Vec<serde_json::Value> = response.sessions.iter()
-                    .map(|s| serde_json::json!({
-                        "name": s.name,
-                        "profile": s.profile,
-                        "status": format!("{:?}", s.auth_status),
-                        "last_accessed": s.last_accessed,
-                        "active": s.active,
-                        "acquired": s.acquired,
-                        "expired": s.expired,
-                        "ttl_hours": s.ttl_hours,
-                        "expires_at": s.expires_at
-                    }))
+                let sessions: Vec<serde_json::Value> = response
+                    .sessions
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "name": s.name,
+                            "profile": s.profile,
+                            "status": format!("{:?}", s.auth_status),
+                            "last_accessed": s.last_accessed,
+                            "active": s.active,
+                            "acquired": s.acquired,
+                            "expired": s.expired,
+                            "ttl_hours": s.ttl_hours,
+                            "expires_at": s.expires_at
+                        })
+                    })
                     .collect();
                 return McpToolResponse::success_json(serde_json::json!({
                     "sessions": sessions,
@@ -1630,7 +1892,7 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             Err(e) => return McpToolResponse::error("SESSION_LIST_FAILED", &e),
         }
     }
-    
+
     if let Some(name) = &req.acquire {
         // Build AcquireRequest from our simple parameters
         let acquire_request = crate::core::session_v2::AcquireRequest {
@@ -1640,30 +1902,33 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             create_if_missing: true,
             headless: req.headless,
             auth_check: None,
-            ttl_hours: req.ttl_hours,  // 168 = 1 week (default), 0 = no expiration
+            ttl_hours: req.ttl_hours, // 168 = 1 week (default), 0 = no expiration
             auto_extend: true,
             restore: req.restore,
         };
-        
+
         let create_fn = |options: crate::core::SessionOptions| -> Result<(String, crate::core::session_v2::SessionHandle), String> {
             (state.create_session_fn)(options)
         };
-        
+
         match manager.acquire(acquire_request, create_fn).await {
             Ok(response) => {
                 // Get the handle to wait for WebView ready
                 let handle = match manager.get_handle(&response.session) {
                     Some(h) => h,
                     None => {
-                        return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "Session created but handle not found");
+                        return McpToolResponse::error(
+                            "SESSION_ACQUIRE_FAILED",
+                            "Session created but handle not found",
+                        );
                     }
                 };
-                
+
                 // Wait for WebView to be ready (poll GetStatus)
                 let max_wait_ms = 10000u64; // 10 seconds max
                 let poll_interval_ms = 100u64;
                 let mut waited_ms = 0u64;
-                
+
                 loop {
                     // Send GetStatus command
                     let (tx, rx) = oneshot::channel();
@@ -1671,20 +1936,25 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                         id: handle.id.clone(),
                         resp_tx: tx,
                     };
-                    
+
                     if state.cmd_tx.send(cmd).is_err() {
-                        return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "Failed to send status check command");
+                        return McpToolResponse::error(
+                            "SESSION_ACQUIRE_FAILED",
+                            "Failed to send status check command",
+                        );
                     }
-                    
+
                     match tokio::time::timeout(Duration::from_millis(1000), rx).await {
                         Ok(Ok(Ok(status))) => {
                             // Check if Ready (status is a String like "Ready", "Initializing", etc)
                             if status.status == "Ready" {
                                 tracing::info!(
                                     "MCP session acquire: {} is_new={} ready after {}ms",
-                                    response.session, response.is_new, waited_ms
+                                    response.session,
+                                    response.is_new,
+                                    waited_ms
                                 );
-                                
+
                                 // If not headless, ensure window is visible
                                 if !req.headless {
                                     let (vis_tx, vis_rx) = oneshot::channel();
@@ -1694,13 +1964,17 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                         resp_tx: vis_tx,
                                     };
                                     if state.cmd_tx.send(vis_cmd).is_ok() {
-                                        let _ = tokio::time::timeout(Duration::from_millis(1000), vis_rx).await;
+                                        let _ = tokio::time::timeout(
+                                            Duration::from_millis(1000),
+                                            vis_rx,
+                                        )
+                                        .await;
                                     }
                                 }
-                                
+
                                 // Apply device simulation if requested
                                 let mut device_info: Option<String> = None;
-                                
+
                                 // Option 1: Device preset (e.g., "iPhone 14")
                                 if let Some(device_name) = &req.device {
                                     let (dev_tx, dev_rx) = oneshot::channel();
@@ -1710,7 +1984,12 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                         resp_tx: dev_tx,
                                     };
                                     if state.cmd_tx.send(dev_cmd).is_ok() {
-                                        match tokio::time::timeout(Duration::from_millis(2000), dev_rx).await {
+                                        match tokio::time::timeout(
+                                            Duration::from_millis(2000),
+                                            dev_rx,
+                                        )
+                                        .await
+                                        {
                                             Ok(Ok(Ok(msg))) => {
                                                 device_info = Some(msg);
                                             }
@@ -1722,7 +2001,9 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     }
                                 }
                                 // Option 2: Custom viewport dimensions
-                                else if let (Some(w), Some(h)) = (req.viewport_width, req.viewport_height) {
+                                else if let (Some(w), Some(h)) =
+                                    (req.viewport_width, req.viewport_height)
+                                {
                                     let (vp_tx, vp_rx) = oneshot::channel();
                                     let vp_cmd = crate::core::AppCommand::SetViewport {
                                         id: handle.id.clone(),
@@ -1731,15 +2012,21 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                         resp_tx: vp_tx,
                                     };
                                     if state.cmd_tx.send(vp_cmd).is_ok() {
-                                        match tokio::time::timeout(Duration::from_millis(2000), vp_rx).await {
+                                        match tokio::time::timeout(
+                                            Duration::from_millis(2000),
+                                            vp_rx,
+                                        )
+                                        .await
+                                        {
                                             Ok(Ok(Ok(_))) => {
-                                                device_info = Some(format!("Viewport set to {}x{}", w, h));
+                                                device_info =
+                                                    Some(format!("Viewport set to {}x{}", w, h));
                                             }
                                             _ => {}
                                         }
                                     }
                                 }
-                                
+
                                 // Option 3: Custom user agent
                                 if let Some(ua) = &req.user_agent {
                                     let (ua_tx, ua_rx) = oneshot::channel();
@@ -1749,13 +2036,19 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                         resp_tx: ua_tx,
                                     };
                                     if state.cmd_tx.send(ua_cmd).is_ok() {
-                                        let _ = tokio::time::timeout(Duration::from_millis(1000), ua_rx).await;
+                                        let _ = tokio::time::timeout(
+                                            Duration::from_millis(1000),
+                                            ua_rx,
+                                        )
+                                        .await;
                                     }
                                 }
-                                
+
                                 // Build contextual hints for AI agents
                                 let session_name = &response.session;
-                                let auto_login_configured = crate::core::config::load_session_auto_login(session_name).is_some();
+                                let auto_login_configured =
+                                    crate::core::config::load_session_auto_login(session_name)
+                                        .is_some();
                                 let logged_in = response.auth_status.as_ref().map(|a| a.logged_in);
                                 let mut hints: Vec<&str> = Vec::new();
                                 if auto_login_configured && logged_in != Some(true) {
@@ -1783,10 +2076,13 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                                     "hints": hints
                                 }));
                             }
-                            
+
                             // Check for error
                             if status.status == "Error" {
-                                return McpToolResponse::error("SESSION_ACQUIRE_FAILED", "WebView initialization failed");
+                                return McpToolResponse::error(
+                                    "SESSION_ACQUIRE_FAILED",
+                                    "WebView initialization failed",
+                                );
                             }
                         }
                         Ok(Ok(Err(e))) => {
@@ -1796,47 +2092,58 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                             // Timeout or channel error, continue waiting
                         }
                     }
-                    
+
                     waited_ms += poll_interval_ms;
                     if waited_ms >= max_wait_ms {
-                        return McpToolResponse::error("SESSION_ACQUIRE_TIMEOUT", "WebView did not become ready in time");
+                        return McpToolResponse::error(
+                            "SESSION_ACQUIRE_TIMEOUT",
+                            "WebView did not become ready in time",
+                        );
                     }
-                    
+
                     tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
                 }
             }
             Err(e) => return McpToolResponse::error("SESSION_ACQUIRE_FAILED", &e),
         }
     }
-    
+
     if let Some(name) = &req.release {
         match manager.release(name) {
-            Ok(_) => return McpToolResponse::success_json(serde_json::json!({
-                "session": name,
-                "status": "released"
-            })),
+            Ok(_) => {
+                return McpToolResponse::success_json(serde_json::json!({
+                    "session": name,
+                    "status": "released"
+                }));
+            }
             Err(e) => return McpToolResponse::error("SESSION_RELEASE_FAILED", &e),
         }
     }
 
     // Clone session (copy profile/cookies to a new session name)
     if let Some(new_name) = &req.clone_to {
-        let source = req.session.as_deref()
+        let source = req
+            .session
+            .as_deref()
             .or(req.acquire.as_deref())
             .unwrap_or("default");
         match manager.clone_session(source, new_name) {
-            Ok(()) => return McpToolResponse::success_json(serde_json::json!({
-                "source": source,
-                "new_session": new_name,
-                "status": "cloned",
-                "message": format!("Session '{}' cloned to '{}'. The new session has the same cookies and profile. Use acquire to start using it.", source, new_name)
-            })),
+            Ok(()) => {
+                return McpToolResponse::success_json(serde_json::json!({
+                    "source": source,
+                    "new_session": new_name,
+                    "status": "cloned",
+                    "message": format!("Session '{}' cloned to '{}'. The new session has the same cookies and profile. Use acquire to start using it.", source, new_name)
+                }));
+            }
             Err(e) => return McpToolResponse::error("SESSION_CLONE_FAILED", &e),
         }
     }
 
     if let Some(name) = &req.import {
-        use crate::core::cookie_import::{BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies};
+        use crate::core::cookie_import::{
+            BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies,
+        };
 
         // Determine browser type
         let browser_str = req.browser.as_deref().unwrap_or("firefox");
@@ -1844,39 +2151,71 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             "chrome" => BrowserType::Chrome,
             "edge" => BrowserType::Edge,
             "firefox" => BrowserType::Firefox,
-            _ => return McpToolResponse::error("INVALID_BROWSER", &format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)),
+            _ => {
+                return McpToolResponse::error(
+                    "INVALID_BROWSER",
+                    &format!(
+                        "Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'",
+                        browser_str
+                    ),
+                );
+            }
         };
 
         // Chrome/Edge cookies are DPAPI-encrypted — not supported yet
         if matches!(browser, BrowserType::Chrome | BrowserType::Edge) {
-            return McpToolResponse::error("UNSUPPORTED_BROWSER",
-                "Chrome/Edge cookie import requires DPAPI decryption (not yet implemented). Use browser='firefox' instead.");
+            return McpToolResponse::error(
+                "UNSUPPORTED_BROWSER",
+                "Chrome/Edge cookie import requires DPAPI decryption (not yet implemented). Use browser='firefox' instead.",
+            );
         }
 
         // Find cookie database
         let db_path = match get_cookie_db_path(browser, "Default") {
             Some(p) if p.exists() => p,
-            Some(p) => return McpToolResponse::error("COOKIE_DB_NOT_FOUND", &format!("Cookie database not found at: {}", p.display())),
-            None => return McpToolResponse::error("COOKIE_DB_NOT_FOUND", "Could not determine Firefox cookie database path"),
+            Some(p) => {
+                return McpToolResponse::error(
+                    "COOKIE_DB_NOT_FOUND",
+                    &format!("Cookie database not found at: {}", p.display()),
+                );
+            }
+            None => {
+                return McpToolResponse::error(
+                    "COOKIE_DB_NOT_FOUND",
+                    "Could not determine Firefox cookie database path",
+                );
+            }
         };
 
         // Read cookies
         let domains = req.domains.clone().unwrap_or_default();
         let cookies = match read_firefox_cookies(&db_path, &domains) {
             Ok(c) => c,
-            Err(e) => return McpToolResponse::error("COOKIE_READ_FAILED", &format!("Failed to read cookies: {}", e)),
+            Err(e) => {
+                return McpToolResponse::error(
+                    "COOKIE_READ_FAILED",
+                    &format!("Failed to read cookies: {}", e),
+                );
+            }
         };
 
         if cookies.is_empty() {
-            return McpToolResponse::error("NO_COOKIES_FOUND", &format!(
-                "No cookies found for domains: {:?}. Make sure Firefox has cookies for these domains.", domains
-            ));
+            return McpToolResponse::error(
+                "NO_COOKIES_FOUND",
+                &format!(
+                    "No cookies found for domains: {:?}. Make sure Firefox has cookies for these domains.",
+                    domains
+                ),
+            );
         }
 
         // Verify session exists
         let manager = get_session_manager_v2();
         if manager.get_handle(name).is_none() {
-            return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found. Acquire it first.", name));
+            return McpToolResponse::error(
+                "SESSION_NOT_FOUND",
+                &format!("Session '{}' not found. Acquire it first.", name),
+            );
         }
 
         // Convert and set cookies on the WebView session
@@ -1892,15 +2231,20 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                     "domain_counts": domain_counts,
                 }));
             }
-            Err(e) => return McpToolResponse::error("COOKIE_SET_FAILED", &format!("Cookies read OK but failed to set on session: {}", e)),
+            Err(e) => {
+                return McpToolResponse::error(
+                    "COOKIE_SET_FAILED",
+                    &format!("Cookies read OK but failed to set on session: {}", e),
+                );
+            }
         }
     }
-    
+
     // AI Status - show current AI configuration
     if req.ai_status {
         let config = crate::core::config::get_config();
         let ai_config = crate::core::ai::AiConfig::default();
-        
+
         return McpToolResponse::success_json(serde_json::json!({
             "provider": config.ai.provider,
             "model": config.ai.model,
@@ -1909,14 +2253,14 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             "has_api_key": config.ai.api_key.is_some(),
         }));
     }
-    
+
     // AI Models - list available models (Ollama only)
     if req.ai_models {
         let config = crate::core::config::get_config();
-        
+
         if config.ai.provider.to_lowercase() == "ollama" {
             let ollama = crate::core::ai::OllamaClient::new(&crate::core::ai::AiConfig::default());
-            
+
             match ollama.list_models() {
                 Ok(models) => {
                     return McpToolResponse::success_json(serde_json::json!({
@@ -1944,11 +2288,11 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             }));
         }
     }
-    
+
     // AI Config update
     if let Some(update) = &req.ai_config {
         let mut config = crate::core::config::get_config().clone();
-        
+
         if let Some(provider) = &update.provider {
             config.ai.provider = provider.clone();
         }
@@ -1961,7 +2305,7 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
         if let Some(enabled) = update.enabled {
             config.ai.enabled = enabled;
         }
-        
+
         // Save updated config
         match config.save() {
             Ok(_) => {
@@ -1977,21 +2321,23 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
             }
         }
     }
-    
+
     // Device switch on existing session (no acquire needed)
     // This allows switching devices on an already active session
     if req.device.is_some() || req.viewport_width.is_some() || req.user_agent.is_some() {
         // Get session name from 'session' or 'acquire' field, or default
-        let session_name = req.session.as_deref()
+        let session_name = req
+            .session
+            .as_deref()
             .or(req.acquire.as_deref())
             .unwrap_or("default");
-        
+
         // Check if session exists
         if let Some(handle) = manager.get_handle(session_name) {
             let mut device_result: Option<String> = None;
             let mut viewport_result: Option<String> = None;
             let mut ua_result: Option<String> = None;
-            
+
             // Apply device preset
             if let Some(device_name) = &req.device {
                 let (dev_tx, dev_rx) = oneshot::channel();
@@ -2009,7 +2355,10 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                             return McpToolResponse::error("DEVICE_SIMULATION_FAILED", &e);
                         }
                         _ => {
-                            return McpToolResponse::error("DEVICE_SIMULATION_TIMEOUT", "Device simulation timed out");
+                            return McpToolResponse::error(
+                                "DEVICE_SIMULATION_TIMEOUT",
+                                "Device simulation timed out",
+                            );
                         }
                     }
                 }
@@ -2032,7 +2381,7 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                     }
                 }
             }
-            
+
             // Apply custom user agent
             if let Some(ua) = &req.user_agent {
                 let (ua_tx, ua_rx) = oneshot::channel();
@@ -2042,12 +2391,15 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                     resp_tx: ua_tx,
                 };
                 if state.cmd_tx.send(ua_cmd).is_ok() {
-                    if tokio::time::timeout(Duration::from_millis(1000), ua_rx).await.is_ok() {
+                    if tokio::time::timeout(Duration::from_millis(1000), ua_rx)
+                        .await
+                        .is_ok()
+                    {
                         ua_result = Some("User agent updated".to_string());
                     }
                 }
             }
-            
+
             return McpToolResponse::success_json(serde_json::json!({
                 "session": session_name,
                 "status": "device_switched",
@@ -2056,11 +2408,20 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
                 "user_agent": ua_result
             }));
         } else {
-            return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found. Use acquire to create it first.", session_name));
+            return McpToolResponse::error(
+                "SESSION_NOT_FOUND",
+                &format!(
+                    "Session '{}' not found. Use acquire to create it first.",
+                    session_name
+                ),
+            );
         }
     }
-    
-    McpToolResponse::error("INVALID_SESSION_REQUEST", "No valid session action specified")
+
+    McpToolResponse::error(
+        "INVALID_SESSION_REQUEST",
+        "No valid session action specified",
+    )
 }
 
 // ============================================================================
@@ -2069,7 +2430,12 @@ async fn handle_session(req: SessionRequest, state: &V2AppState) -> McpToolRespo
 
 async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse {
     match req.action {
-        MediaAction::YoutubeDownload { url, quality, audio_only, output_dir } => {
+        MediaAction::YoutubeDownload {
+            url,
+            quality,
+            audio_only,
+            output_dir,
+        } => {
             // Generate output directory
             let output_path = output_dir.unwrap_or_else(|| {
                 crate::core::config::AppConfig::data_dir()
@@ -2077,12 +2443,12 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                     .to_string_lossy()
                     .to_string()
             });
-            
+
             // Create output directory
             if let Err(e) = std::fs::create_dir_all(&output_path) {
                 return McpToolResponse::error("DIR_CREATE_FAILED", &e.to_string());
             }
-            
+
             // Build yt-dlp command
             let quality_str = quality.as_deref().unwrap_or("best");
             let format_arg = match quality_str {
@@ -2091,26 +2457,29 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                 "sd" | "720p" => "bestvideo[height<=720]+bestaudio/best[height<=720]",
                 _ => "bestvideo+bestaudio/best",
             };
-            
+
             let mut args = vec![
                 url.clone(),
-                "-f".to_string(), if audio_only { "bestaudio".to_string() } else { format_arg.to_string() },
-                "-o".to_string(), format!("{}\\%(title)s.%(ext)s", output_path),
+                "-f".to_string(),
+                if audio_only {
+                    "bestaudio".to_string()
+                } else {
+                    format_arg.to_string()
+                },
+                "-o".to_string(),
+                format!("{}\\%(title)s.%(ext)s", output_path),
                 "--embed-metadata".to_string(),
                 "--no-playlist".to_string(),
             ];
-            
+
             if audio_only {
                 args.push("-x".to_string());
                 args.push("--audio-format".to_string());
                 args.push("mp3".to_string());
             }
-            
+
             // Execute yt-dlp
-            match std::process::Command::new("yt-dlp")
-                .args(&args)
-                .output()
-            {
+            match std::process::Command::new("yt-dlp").args(&args).output() {
                 Ok(output) => {
                     if output.status.success() {
                         McpToolResponse::success_json(serde_json::json!({
@@ -2121,46 +2490,64 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                             "message": String::from_utf8_lossy(&output.stdout).trim()
                         }))
                     } else {
-                        McpToolResponse::error("YTDLP_FAILED", &String::from_utf8_lossy(&output.stderr))
+                        McpToolResponse::error(
+                            "YTDLP_FAILED",
+                            &String::from_utf8_lossy(&output.stderr),
+                        )
                     }
                 }
-                Err(e) => McpToolResponse::error("YTDLP_NOT_FOUND", &format!("yt-dlp command failed: {}. Make sure yt-dlp is installed.", e))
+                Err(e) => McpToolResponse::error(
+                    "YTDLP_NOT_FOUND",
+                    &format!(
+                        "yt-dlp command failed: {}. Make sure yt-dlp is installed.",
+                        e
+                    ),
+                ),
             }
         }
-        MediaAction::YoutubeSubtitles { url, language, format } => {
+        MediaAction::YoutubeSubtitles {
+            url,
+            language,
+            format,
+        } => {
             let lang = language.as_deref().unwrap_or("ja,en");
             let fmt = format.as_deref().unwrap_or("json3");
-            
+
             // Create temp dir for subtitles
-            let output_path = crate::core::config::AppConfig::data_dir()
-                .join("subtitles");
+            let output_path = crate::core::config::AppConfig::data_dir().join("subtitles");
             let _ = std::fs::create_dir_all(&output_path);
-            
+
             // Build yt-dlp command for subtitle extraction
             let args = vec![
                 url.clone(),
                 "--write-sub".to_string(),
                 "--write-auto-sub".to_string(),
-                "--sub-lang".to_string(), lang.to_string(),
-                "--sub-format".to_string(), fmt.to_string(),
+                "--sub-lang".to_string(),
+                lang.to_string(),
+                "--sub-format".to_string(),
+                fmt.to_string(),
                 "--skip-download".to_string(),
-                "-o".to_string(), format!("{}\\%(title)s", output_path.to_string_lossy()),
-                "--print".to_string(), "%(title)s".to_string(),
+                "-o".to_string(),
+                format!("{}\\%(title)s", output_path.to_string_lossy()),
+                "--print".to_string(),
+                "%(title)s".to_string(),
             ];
-            
+
             // Execute yt-dlp
-            match std::process::Command::new("yt-dlp")
-                .args(&args)
-                .output()
-            {
+            match std::process::Command::new("yt-dlp").args(&args).output() {
                 Ok(output) => {
                     if output.status.success() {
                         let title = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        
+
                         // Try to read the subtitle file
-                        let subtitle_file = output_path.join(format!("{}.{}.{}", title, lang.split(',').next().unwrap_or("en"), fmt));
+                        let subtitle_file = output_path.join(format!(
+                            "{}.{}.{}",
+                            title,
+                            lang.split(',').next().unwrap_or("en"),
+                            fmt
+                        ));
                         let content = std::fs::read_to_string(&subtitle_file).ok();
-                        
+
                         McpToolResponse::success_json(serde_json::json!({
                             "success": true,
                             "url": url,
@@ -2171,37 +2558,54 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                             "content": content
                         }))
                     } else {
-                        McpToolResponse::error("YTDLP_SUBTITLES_FAILED", &String::from_utf8_lossy(&output.stderr))
+                        McpToolResponse::error(
+                            "YTDLP_SUBTITLES_FAILED",
+                            &String::from_utf8_lossy(&output.stderr),
+                        )
                     }
                 }
-                Err(e) => McpToolResponse::error("YTDLP_NOT_FOUND", &format!("yt-dlp command failed: {}. Make sure yt-dlp is installed.", e))
+                Err(e) => McpToolResponse::error(
+                    "YTDLP_NOT_FOUND",
+                    &format!(
+                        "yt-dlp command failed: {}. Make sure yt-dlp is installed.",
+                        e
+                    ),
+                ),
             }
         }
-        MediaAction::VideoAnalyze { url, keyframes, audio, max_frames } => {
+        MediaAction::VideoAnalyze {
+            url,
+            keyframes,
+            audio,
+            max_frames,
+        } => {
             // Create output directory
-            let output_path = crate::core::config::AppConfig::data_dir()
-                .join("analysis");
+            let output_path = crate::core::config::AppConfig::data_dir().join("analysis");
             let _ = std::fs::create_dir_all(&output_path);
-            
+
             let mut results = serde_json::json!({
                 "success": true,
                 "source": url,
             });
-            
+
             // Get video metadata using ffprobe
             match std::process::Command::new("ffprobe")
                 .args(&[
-                    "-v", "quiet",
-                    "-print_format", "json",
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
                     "-show_format",
                     "-show_streams",
-                    &url
+                    &url,
                 ])
                 .output()
             {
                 Ok(output) => {
                     if output.status.success() {
-                        if let Ok(metadata) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        if let Ok(metadata) =
+                            serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                        {
                             results["metadata"] = metadata;
                         }
                     }
@@ -2210,24 +2614,29 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                     results["metadata_error"] = serde_json::json!(e.to_string());
                 }
             }
-            
+
             // Extract keyframes if requested
             if keyframes {
                 let max = max_frames.unwrap_or(10);
                 let output_pattern = output_path.join("keyframe_%04d.jpg");
-                
+
                 let keyframe_result = std::process::Command::new("ffmpeg")
                     .args(&[
-                        "-i", &url,
-                        "-vf", &format!("select='eq(pict_type,I)',scale=320:-1"),
-                        "-vsync", "vfr",
-                        "-frames:v", &max.to_string(),
-                        "-q:v", "5",
+                        "-i",
+                        &url,
+                        "-vf",
+                        &format!("select='eq(pict_type,I)',scale=320:-1"),
+                        "-vsync",
+                        "vfr",
+                        "-frames:v",
+                        &max.to_string(),
+                        "-q:v",
+                        "5",
                         "-y",
-                        &output_pattern.to_string_lossy()
+                        &output_pattern.to_string_lossy(),
                     ])
                     .output();
-                
+
                 match keyframe_result {
                     Ok(output) => {
                         if output.status.success() {
@@ -2242,30 +2651,35 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                                 "files": frames
                             });
                         } else {
-                            results["keyframes_error"] = serde_json::json!(String::from_utf8_lossy(&output.stderr));
+                            results["keyframes_error"] =
+                                serde_json::json!(String::from_utf8_lossy(&output.stderr));
                         }
                     }
                     Err(e) => {
-                        results["keyframes_error"] = serde_json::json!(format!("ffmpeg not found: {}", e));
+                        results["keyframes_error"] =
+                            serde_json::json!(format!("ffmpeg not found: {}", e));
                     }
                 }
             }
-            
+
             // Extract audio if requested
             if audio {
                 let audio_output = output_path.join("audio.mp3");
-                
+
                 let audio_result = std::process::Command::new("ffmpeg")
                     .args(&[
-                        "-i", &url,
+                        "-i",
+                        &url,
                         "-vn",
-                        "-acodec", "libmp3lame",
-                        "-ab", "192k",
+                        "-acodec",
+                        "libmp3lame",
+                        "-ab",
+                        "192k",
                         "-y",
-                        &audio_output.to_string_lossy()
+                        &audio_output.to_string_lossy(),
                     ])
                     .output();
-                
+
                 match audio_result {
                     Ok(output) => {
                         if output.status.success() {
@@ -2275,57 +2689,85 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                                 "bitrate": "192k"
                             });
                         } else {
-                            results["audio_error"] = serde_json::json!(String::from_utf8_lossy(&output.stderr));
+                            results["audio_error"] =
+                                serde_json::json!(String::from_utf8_lossy(&output.stderr));
                         }
                     }
                     Err(e) => {
-                        results["audio_error"] = serde_json::json!(format!("ffmpeg not found: {}", e));
+                        results["audio_error"] =
+                            serde_json::json!(format!("ffmpeg not found: {}", e));
                     }
                 }
             }
-            
+
             McpToolResponse::success_json(results)
         }
-        MediaAction::CollectImages { selector, min_width, min_height, download: _, max_images } => {
+        MediaAction::CollectImages {
+            selector,
+            min_width,
+            min_height,
+            download: _,
+            max_images,
+        } => {
             let script = generate_collect_images_script(
                 selector.as_deref(),
                 min_width.unwrap_or(100),
                 min_height.unwrap_or(100),
-                max_images.unwrap_or(50)
+                max_images.unwrap_or(50),
             );
-            
+
             match execute_script(&req.session, script, state, 30000).await {
-                Ok(result) => {
-                    match serde_json::from_str::<serde_json::Value>(&result) {
-                        Ok(data) => McpToolResponse::success_json(data),
-                        Err(_) => McpToolResponse::success_text(result),
-                    }
-                }
+                Ok(result) => match serde_json::from_str::<serde_json::Value>(&result) {
+                    Ok(data) => McpToolResponse::success_json(data),
+                    Err(_) => McpToolResponse::success_text(result),
+                },
                 Err(e) => McpToolResponse::error("COLLECT_IMAGES_FAILED", &e),
             }
         }
-        MediaAction::Upload { data, filename, mime_type: _ } => {
-            use base64::{Engine as _, engine::general_purpose::STANDARD};
+        MediaAction::Upload {
+            data,
+            filename,
+            mime_type: _,
+        } => {
             use crate::core::upload;
+            use base64::{Engine as _, engine::general_purpose::STANDARD};
 
             let bytes = match STANDARD.decode(data.trim()) {
                 Ok(b) => b,
-                Err(e) => return McpToolResponse::error("UPLOAD_DECODE_ERROR", &format!("Base64 decode error: {e}")),
+                Err(e) => {
+                    return McpToolResponse::error(
+                        "UPLOAD_DECODE_ERROR",
+                        &format!("Base64 decode error: {e}"),
+                    );
+                }
             };
 
             if bytes.len() as u64 > upload::MAX_UPLOAD_SIZE {
-                return McpToolResponse::error("UPLOAD_TOO_LARGE", &format!("File too large: {} bytes (max {})", bytes.len(), upload::MAX_UPLOAD_SIZE));
+                return McpToolResponse::error(
+                    "UPLOAD_TOO_LARGE",
+                    &format!(
+                        "File too large: {} bytes (max {})",
+                        bytes.len(),
+                        upload::MAX_UPLOAD_SIZE
+                    ),
+                );
             }
 
             let dir = upload::uploads_dir(&req.session);
             if let Err(e) = std::fs::create_dir_all(&dir) {
-                return McpToolResponse::error("UPLOAD_DIR_ERROR", &format!("Failed to create upload dir: {e}"));
+                return McpToolResponse::error(
+                    "UPLOAD_DIR_ERROR",
+                    &format!("Failed to create upload dir: {e}"),
+                );
             }
 
             let stored = upload::sanitize_and_store_filename(&filename);
             let file_path = dir.join(&stored);
             if let Err(e) = std::fs::write(&file_path, &bytes) {
-                return McpToolResponse::error("UPLOAD_WRITE_ERROR", &format!("File write error: {e}"));
+                return McpToolResponse::error(
+                    "UPLOAD_WRITE_ERROR",
+                    &format!("File write error: {e}"),
+                );
             }
 
             let url = format!("/uploads/{}/{}", req.session, stored);
@@ -2338,16 +2780,26 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                 "file_path": file_path.to_string_lossy(),
             }))
         }
-        MediaAction::InjectFile { selector, file, frame } => {
+        MediaAction::InjectFile {
+            selector,
+            file,
+            frame,
+        } => {
             use crate::core::upload;
 
             // Resolve file path
             let file_path = if file.starts_with("/uploads/") {
-                let parts: Vec<&str> = file.trim_start_matches("/uploads/").splitn(2, '/').collect();
+                let parts: Vec<&str> = file
+                    .trim_start_matches("/uploads/")
+                    .splitn(2, '/')
+                    .collect();
                 if parts.len() != 2 {
                     return McpToolResponse::error("INVALID_FILE_URL", "Invalid upload URL format");
                 }
-                upload::uploads_dir(parts[0]).join(parts[1]).to_string_lossy().to_string()
+                upload::uploads_dir(parts[0])
+                    .join(parts[1])
+                    .to_string_lossy()
+                    .to_string()
             } else {
                 file.clone()
             };
@@ -2378,7 +2830,9 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
                 })),
                 Ok(Ok(Err(e))) => McpToolResponse::error("INJECT_FAILED", &e),
                 Ok(Err(_)) => McpToolResponse::error("INJECT_TIMEOUT", "Channel closed"),
-                Err(_) => McpToolResponse::error("INJECT_TIMEOUT", "Timed out waiting for file injection"),
+                Err(_) => {
+                    McpToolResponse::error("INJECT_TIMEOUT", "Timed out waiting for file injection")
+                }
             }
         }
         MediaAction::ListUploads => {
@@ -2419,26 +2873,40 @@ async fn handle_media(req: MediaRequest, state: &V2AppState) -> McpToolResponse 
 
 async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse {
     use crate::mcp_v3::types::AgentAction;
-    
+
     let manager = get_session_manager_v2();
     if manager.get_handle(&req.session).is_none() {
-        return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session));
+        return McpToolResponse::error(
+            "SESSION_NOT_FOUND",
+            &format!("Session '{}' not found", req.session),
+        );
     }
-    
+
     match req.action {
-        AgentAction::Start { goal, context, max_steps, system_prompt, human_mode, instant_type } => {
+        AgentAction::Start {
+            goal,
+            context,
+            max_steps,
+            system_prompt,
+            human_mode,
+            instant_type,
+        } => {
             let max_steps = max_steps.unwrap_or(5);
             let context_text = context.unwrap_or_default();
             let custom_prompt = system_prompt.unwrap_or_default();
-            
-            tracing::info!("[agent] Starting goal: {}, human_mode: {}, instant_type: {}", 
-                goal, human_mode, instant_type);
-            
+
+            tracing::info!(
+                "[agent] Starting goal: {}, human_mode: {}, instant_type: {}",
+                goal,
+                human_mode,
+                instant_type
+            );
+
             // Agent loop
             let mut steps = Vec::new();
             let mut completed = false;
             let mut final_result = String::new();
-            
+
             for step_num in 1..=max_steps {
                 // 1. Capture current page state
                 let capture_script = r#"
@@ -2458,22 +2926,25 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                             .filter(e => e.text || e.type === 'text')
                     });
                 "#;
-                
-                let page_state = match execute_script(&req.session, capture_script.to_string(), state, 5000).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        steps.push(serde_json::json!({
-                            "step": step_num,
-                            "action": "capture",
-                            "error": e
-                        }));
-                        break;
-                    }
-                };
-                
+
+                let page_state =
+                    match execute_script(&req.session, capture_script.to_string(), state, 5000)
+                        .await
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            steps.push(serde_json::json!({
+                                "step": step_num,
+                                "action": "capture",
+                                "error": e
+                            }));
+                            break;
+                        }
+                    };
+
                 let page_data: serde_json::Value = serde_json::from_str(&page_state)
                     .unwrap_or(serde_json::json!({"error": "parse failed"}));
-                
+
                 // 2. Ask AI for next action
                 let config = crate::core::config::get_config();
                 let ai_config = crate::core::ai::AiConfig {
@@ -2485,24 +2956,30 @@ async fn handle_agent(req: AgentRequest, state: &V2AppState) -> McpToolResponse 
                     daily_budget_usd: config.ai.daily_budget_usd,
                     daily_usage_usd: 0.0,
                 };
-                
+
                 // Build history of past actions for this session
                 let history_text = if steps.is_empty() {
                     "(first action)".to_string()
                 } else {
-                    steps.iter().map(|s| {
-                        let action = s["action"].as_str().unwrap_or("?");
-                        let result = s.get("result").map(|r| r.to_string()).unwrap_or_default();
-                        let success = result.contains("success");
-                        format!("Step {}: {} - {}", 
-                            s["step"].as_u64().unwrap_or(0),
-                            action,
-                            if success { "OK" } else { "FAIL" }
-                        )
-                    }).collect::<Vec<_>>().join("\n")
+                    steps
+                        .iter()
+                        .map(|s| {
+                            let action = s["action"].as_str().unwrap_or("?");
+                            let result = s.get("result").map(|r| r.to_string()).unwrap_or_default();
+                            let success = result.contains("success");
+                            format!(
+                                "Step {}: {} - {}",
+                                s["step"].as_u64().unwrap_or(0),
+                                action,
+                                if success { "OK" } else { "FAIL" }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 };
-                
-                let ai_prompt = format!(r#"You are a browser automation agent.
+
+                let ai_prompt = format!(
+                    r#"You are a browser automation agent.
 {}
 [GOAL]
 {}
@@ -2539,16 +3016,25 @@ Response formats:
 - Failed: {{"failed": true, "reason": "why"}}
 
 Output JSON only, no explanation."#,
-                    if custom_prompt.is_empty() { String::new() } else { format!("\n[CUSTOM INSTRUCTIONS]\n{}\n", custom_prompt) },
+                    if custom_prompt.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n[CUSTOM INSTRUCTIONS]\n{}\n", custom_prompt)
+                    },
                     goal,
                     context_text,
                     history_text,
                     page_data["url"].as_str().unwrap_or("unknown"),
                     page_data["title"].as_str().unwrap_or("unknown"),
-                    page_data["text"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),
+                    page_data["text"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(1000)
+                        .collect::<String>(),
                     serde_json::to_string_pretty(&page_data["elements"]).unwrap_or_default()
                 );
-                
+
                 let ai_response = if config.ai.provider.to_lowercase() == "ollama" {
                     let ollama = crate::core::ai::OllamaClient::new(&ai_config);
                     ollama.call(&ai_prompt, None)
@@ -2558,7 +3044,7 @@ Output JSON only, no explanation."#,
                         None => Err("AI not configured".to_string()),
                     }
                 };
-                
+
                 let ai_text = match ai_response {
                     Ok(t) => t,
                     Err(e) => {
@@ -2570,22 +3056,26 @@ Output JSON only, no explanation."#,
                         break;
                     }
                 };
-                
+
                 // Extract JSON from AI response
                 let ai_json: serde_json::Value = {
                     // Try to find JSON in the response
                     let json_start = ai_text.find('{');
                     let json_end = ai_text.rfind('}');
-                    
+
                     match (json_start, json_end) {
-                        (Some(start), Some(end)) if end > start => {
-                            serde_json::from_str(&ai_text[start..=end])
-                                .unwrap_or(serde_json::json!({"failed": true, "reason": "Invalid JSON from AI"}))
+                        (Some(start), Some(end)) if end > start => serde_json::from_str(
+                            &ai_text[start..=end],
+                        )
+                        .unwrap_or(
+                            serde_json::json!({"failed": true, "reason": "Invalid JSON from AI"}),
+                        ),
+                        _ => {
+                            serde_json::json!({"failed": true, "reason": "No JSON found in AI response"})
                         }
-                        _ => serde_json::json!({"failed": true, "reason": "No JSON found in AI response"})
                     }
                 };
-                
+
                 // 3. Execute the action
                 if ai_json.get("done").and_then(|v| v.as_bool()) == Some(true) {
                     completed = true;
@@ -2597,7 +3087,7 @@ Output JSON only, no explanation."#,
                     }));
                     break;
                 }
-                
+
                 if ai_json.get("failed").and_then(|v| v.as_bool()) == Some(true) {
                     final_result = ai_json["reason"].as_str().unwrap_or("失敗").to_string();
                     steps.push(serde_json::json!({
@@ -2607,20 +3097,28 @@ Output JSON only, no explanation."#,
                     }));
                     break;
                 }
-                
+
                 let action_name = ai_json["action"].as_str().unwrap_or("unknown");
                 match action_name {
                     "click" => {
                         let selector = ai_json["selector"].as_str().unwrap_or("").to_string();
                         tracing::info!("[agent] Executing click on: {}", selector);
-                        
-                        let click_action = Action::Click { 
-                            target: selector.clone(), 
-                            wait_after_ms: Some(500) 
+
+                        let click_action = Action::Click {
+                            target: selector.clone(),
+                            wait_after_ms: Some(500),
                         };
-                        
-                        let result = execute_action(&req.session, &click_action, 10000, state, human_mode, None).await;
-                        
+
+                        let result = execute_action(
+                            &req.session,
+                            &click_action,
+                            10000,
+                            state,
+                            human_mode,
+                            None,
+                        )
+                        .await;
+
                         steps.push(serde_json::json!({
                             "step": step_num,
                             "action": "click",
@@ -2630,11 +3128,11 @@ Output JSON only, no explanation."#,
                             "result": result.as_ref().map(|_| "success").unwrap_or("failed"),
                             "error": result.as_ref().err()
                         }));
-                        
+
                         if result.is_err() {
                             tracing::warn!("[agent] Click failed: {:?}", result.err());
                         }
-                        
+
                         // Wait for page update
                         tokio::time::sleep(Duration::from_millis(1000)).await;
                     }
@@ -2642,7 +3140,7 @@ Output JSON only, no explanation."#,
                         let selector = ai_json["selector"].as_str().unwrap_or("").to_string();
                         let value = ai_json["value"].as_str().unwrap_or("").to_string();
                         let should_submit = ai_json["submit"].as_bool().unwrap_or(false);
-                        
+
                         // Calculate timeout based on mode and text length
                         let type_timeout = if instant_type {
                             10000_u64
@@ -2652,23 +3150,38 @@ Output JSON only, no explanation."#,
                         } else {
                             10000_u64.max(5000 + (value.len() as u64 * 20))
                         };
-                        
-                        tracing::info!("[agent] Executing type on: {}, value: {}, submit: {}, instant: {}, timeout: {}ms", 
-                            selector, value, should_submit, instant_type, type_timeout);
-                        
+
+                        tracing::info!(
+                            "[agent] Executing type on: {}, value: {}, submit: {}, instant: {}, timeout: {}ms",
+                            selector,
+                            value,
+                            should_submit,
+                            instant_type,
+                            type_timeout
+                        );
+
                         // Use execute_action with instant mode for autocomplete-heavy sites
-                        let type_action = Action::Type { 
-                            target: selector.clone(), 
+                        let type_action = Action::Type {
+                            target: selector.clone(),
                             value: value.clone(),
                             clear: true,
                             instant: instant_type,
                         };
-                        
-                        let result = execute_action(&req.session, &type_action, type_timeout, state, human_mode, None).await;
-                        
+
+                        let result = execute_action(
+                            &req.session,
+                            &type_action,
+                            type_timeout,
+                            state,
+                            human_mode,
+                            None,
+                        )
+                        .await;
+
                         // If submit requested, press Enter
                         let submit_result = if should_submit && result.is_ok() {
-                            let enter_script = format!(r#"
+                            let enter_script = format!(
+                                r#"
                                 (function() {{
                                     const el = document.querySelector('{}');
                                     if (el) {{
@@ -2678,12 +3191,16 @@ Output JSON only, no explanation."#,
                                     }}
                                     return JSON.stringify({{success: false}});
                                 }})();
-                            "#, selector.replace('\'', "\\'"));
-                            execute_script(&req.session, enter_script, state, 3000).await.ok()
+                            "#,
+                                selector.replace('\'', "\\'")
+                            );
+                            execute_script(&req.session, enter_script, state, 3000)
+                                .await
+                                .ok()
                         } else {
                             None
                         };
-                        
+
                         steps.push(serde_json::json!({
                             "step": step_num,
                             "action": "type",
@@ -2697,11 +3214,11 @@ Output JSON only, no explanation."#,
                             "submit_result": submit_result,
                             "error": result.as_ref().err()
                         }));
-                        
+
                         if result.is_err() {
                             tracing::warn!("[agent] Type failed: {:?}", result.err());
                         }
-                        
+
                         // Wait for response if submitted
                         if should_submit {
                             tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -2709,9 +3226,11 @@ Output JSON only, no explanation."#,
                     }
                     "navigate" => {
                         let url = ai_json["url"].as_str().unwrap_or("");
-                        let nav_script = format!("window.location.href = '{}'; JSON.stringify({{success: true}});", 
-                            url.replace('\'', "\\'"));
-                        
+                        let nav_script = format!(
+                            "window.location.href = '{}'; JSON.stringify({{success: true}});",
+                            url.replace('\'', "\\'")
+                        );
+
                         let result = execute_script(&req.session, nav_script, state, 5000).await;
                         steps.push(serde_json::json!({
                             "step": step_num,
@@ -2720,7 +3239,7 @@ Output JSON only, no explanation."#,
                             "reason": ai_json["reason"],
                             "result": result.unwrap_or_else(|e| e)
                         }));
-                        
+
                         // Wait for navigation
                         tokio::time::sleep(Duration::from_millis(2000)).await;
                     }
@@ -2733,7 +3252,7 @@ Output JSON only, no explanation."#,
                     }
                 }
             }
-            
+
             McpToolResponse::success_json(serde_json::json!({
                 "goal": goal,
                 "completed": completed,
@@ -2758,12 +3277,18 @@ Output JSON only, no explanation."#,
     }
 }
 
-fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_height: u32, max_images: usize) -> String {
+fn generate_collect_images_script(
+    selector: Option<&str>,
+    min_width: u32,
+    min_height: u32,
+    max_images: usize,
+) -> String {
     let selector_code = selector
         .map(|s| format!("document.querySelectorAll('{}')", s.replace('\'', "\\'")))
         .unwrap_or_else(|| "document.querySelectorAll('img')".to_string());
-    
-    format!(r#"
+
+    format!(
+        r#"
 (function() {{
     const minWidth = {};
     const minHeight = {};
@@ -2803,7 +3328,9 @@ fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_he
         images: images
     }});
 }})();
-"#, min_width, min_height, max_images, selector_code)
+"#,
+        min_width, min_height, max_images, selector_code
+    )
 }
 
 // ============================================================================
@@ -2811,9 +3338,8 @@ fn generate_collect_images_script(selector: Option<&str>, min_width: u32, min_he
 // ============================================================================
 
 async fn handle_snapshot(req: SnapshotRequest, state: &V2AppState) -> McpToolResponse {
-    let scope_selector_json = serde_json::to_string(
-        req.within.as_deref().unwrap_or("body")
-    ).unwrap_or_else(|_| "\"body\"".to_string());
+    let scope_selector_json = serde_json::to_string(req.within.as_deref().unwrap_or("body"))
+        .unwrap_or_else(|_| "\"body\"".to_string());
 
     let element_selectors = if req.all {
         r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"]),h1,h2,h3,h4,h5,h6,p,li,img,table,th,td,label,span[class],div[class]'"#
@@ -2856,9 +3382,10 @@ async fn handle_snapshot(req: SnapshotRequest, state: &V2AppState) -> McpToolRes
 
     match execute_script_in(&req.session, script, state, 15000, req.frame.as_deref()).await {
         Ok(result) => {
-            let snap: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or(serde_json::Value::String(result));
-            let elem_count = snap.get("elements")
+            let snap: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result));
+            let elem_count = snap
+                .get("elements")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
@@ -2891,7 +3418,15 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
             req.script.clone()
         }
     };
-    match execute_script_in(&req.session, script, state, req.timeout_ms, req.frame.as_deref()).await {
+    match execute_script_in(
+        &req.session,
+        script,
+        state,
+        req.timeout_ms,
+        req.frame.as_deref(),
+    )
+    .await
+    {
         Ok(result) => {
             // Parse to proper JSON type for structured response
             let typed = serde_json::from_str::<serde_json::Value>(&result)
@@ -2919,15 +3454,22 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
 
 async fn handle_network(req: NetworkRequest, state: &V2AppState) -> McpToolResponse {
     use crate::mcp_v3::types::NetworkRequestAction;
-    
+
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&req.session) {
         Some(h) => h,
-        None => return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session)),
+        None => {
+            return McpToolResponse::error(
+                "SESSION_NOT_FOUND",
+                &format!("Session '{}' not found", req.session),
+            );
+        }
     };
 
     let action = match req.action {
-        NetworkRequestAction::Enable { max_logs } => crate::core::NetworkAction::Enable { max_logs },
+        NetworkRequestAction::Enable { max_logs } => {
+            crate::core::NetworkAction::Enable { max_logs }
+        }
         NetworkRequestAction::Disable => crate::core::NetworkAction::Disable,
         NetworkRequestAction::GetLogs { filter } => crate::core::NetworkAction::GetLogs { filter },
         NetworkRequestAction::ClearLogs => crate::core::NetworkAction::ClearLogs,
@@ -2945,7 +3487,7 @@ async fn handle_network(req: NetworkRequest, state: &V2AppState) -> McpToolRespo
     }
 
     match tokio::time::timeout(Duration::from_secs(10), rx).await {
-        Ok(Ok(Ok(result))) => McpToolResponse::success_text(result), 
+        Ok(Ok(Ok(result))) => McpToolResponse::success_text(result),
         Ok(Ok(Err(e))) => McpToolResponse::error("NETWORK_ERROR", &e),
         Ok(Err(_)) => McpToolResponse::error("CHANNEL_CLOSED", "Network channel closed"),
         Err(_) => McpToolResponse::error("TIMEOUT", "Network command timed out"),

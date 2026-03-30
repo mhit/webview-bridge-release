@@ -3,22 +3,20 @@
 //! REST API endpoints for WebView Bridge Protocol v2
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, Request, State},
     http::StatusCode,
     middleware::Next,
     response::{Html, IntoResponse},
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use crate::core::session_v2::{
-    AcquireRequest, SessionManagerV2, SessionHandle,
-};
 use crate::core::SessionOptions;
+use crate::core::session_v2::{AcquireRequest, SessionHandle, SessionManagerV2};
 
 // ============================================================================
 // Global SessionManagerV2 Instance
@@ -54,7 +52,9 @@ pub fn set_core_session_manager(manager: Arc<crate::core::SessionManager>) {
 
 /// Get the v2 session manager
 pub fn get_session_manager_v2() -> &'static SessionManagerV2 {
-    SESSION_MANAGER_V2.get().expect("SessionManagerV2 not initialized")
+    SESSION_MANAGER_V2
+        .get()
+        .expect("SessionManagerV2 not initialized")
 }
 
 /// Get the core session manager (internal)
@@ -75,12 +75,12 @@ pub fn get_core_session_manager_pub() -> Option<&'static Arc<crate::core::Sessio
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub enum Wbp2Error {
-    SessionNotFound,      // WBP2_001
-    SessionBusy,          // WBP2_002
-    SessionClosed,        // WBP2_003
-    InvalidRequest,       // WBP2_090
-    MissingParameter,     // WBP2_091
-    InternalError,        // WBP2_099
+    SessionNotFound,  // WBP2_001
+    SessionBusy,      // WBP2_002
+    SessionClosed,    // WBP2_003
+    InvalidRequest,   // WBP2_090
+    MissingParameter, // WBP2_091
+    InternalError,    // WBP2_099
 }
 
 impl Wbp2Error {
@@ -94,7 +94,7 @@ impl Wbp2Error {
             Wbp2Error::InternalError => "WBP2_099",
         }
     }
-    
+
     fn name(&self) -> &'static str {
         match self {
             Wbp2Error::SessionNotFound => "SESSION_NOT_FOUND",
@@ -105,7 +105,7 @@ impl Wbp2Error {
             Wbp2Error::InternalError => "INTERNAL_ERROR",
         }
     }
-    
+
     fn status_code(&self) -> StatusCode {
         match self {
             Wbp2Error::SessionNotFound => StatusCode::NOT_FOUND,
@@ -130,21 +130,23 @@ fn error_response(error: Wbp2Error, message: &str) -> axum::response::Response {
                 "message": message
             }
         })),
-    ).into_response()
+    )
+        .into_response()
 }
 
 // ============================================================================
 // V2 Router
 // ============================================================================
 
-use tokio::sync::{mpsc, oneshot};
 use crate::core::AppCommand;
+use tokio::sync::{mpsc, oneshot};
 
 /// App state for v2 API (session creation callback)
 #[derive(Clone)]
 pub struct V2AppState {
     /// Callback to create a new session using the v1 session manager
-    pub create_session_fn: Arc<dyn Fn(SessionOptions) -> Result<(String, SessionHandle), String> + Send + Sync>,
+    pub create_session_fn:
+        Arc<dyn Fn(SessionOptions) -> Result<(String, SessionHandle), String> + Send + Sync>,
     /// Command sender to communicate with session threads (same as v1)
     pub cmd_tx: mpsc::UnboundedSender<AppCommand>,
 }
@@ -228,8 +230,14 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/session/auto-login", post(session_auto_login))
         .route("/session/auto-login", get(session_auto_login_status))
         .route("/session/auto-login/list", get(session_auto_login_list))
-        .route("/session/auto-login/config", get(session_auto_login_config_get))
-        .route("/session/auto-login/config", put(session_auto_login_config_set))
+        .route(
+            "/session/auto-login/config",
+            get(session_auto_login_config_get),
+        )
+        .route(
+            "/session/auto-login/config",
+            put(session_auto_login_config_set),
+        )
         // Navigation (synchronous, waits for load)
         .route("/navigate", post(navigate_v2))
         // Snapshot — DOM element extraction (prefer over screenshot for AI navigation)
@@ -259,7 +267,10 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/media/analyze", post(media_analyze))
         .route("/media/files/:ref", get(media_files_list))
         .route("/media/screenshots", get(media_screenshots_list))
-        .route("/media/screenshots/:session/:filename", get(media_screenshots_get))
+        .route(
+            "/media/screenshots/:session/:filename",
+            get(media_screenshots_get),
+        )
         .route("/media/persist", post(media_persist))
         .route("/media/extend", post(media_extend_ttl))
         // AI API
@@ -323,7 +334,10 @@ async fn root_handler() -> Html<String> {
 async fn favicon_handler() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [("content-type", "image/x-icon"), ("cache-control", "public, max-age=86400")],
+        [
+            ("content-type", "image/x-icon"),
+            ("cache-control", "public, max-age=86400"),
+        ],
         include_bytes!("../docs/img/icon.ico").as_slice(),
     )
 }
@@ -332,12 +346,13 @@ async fn favicon_handler() -> impl IntoResponse {
 async fn icon_png_handler() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [("content-type", "image/png"), ("cache-control", "public, max-age=86400")],
+        [
+            ("content-type", "image/png"),
+            ("cache-control", "public, max-age=86400"),
+        ],
         include_bytes!("../docs/img/icon-128.png").as_slice(),
     )
 }
-
-
 
 /// GET /health - Health check
 async fn health_check() -> impl IntoResponse {
@@ -388,11 +403,9 @@ async fn get_config() -> impl IntoResponse {
 }
 
 /// POST /v2/config - Update configuration (partial update)
-async fn update_config(
-    Json(updates): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn update_config(Json(updates): Json<serde_json::Value>) -> impl IntoResponse {
     use crate::core::config::update_config;
-    
+
     let result = update_config(|config| {
         // Update AI settings
         if let Some(ai) = updates.get("ai") {
@@ -415,12 +428,13 @@ async fn update_config(
                 config.ai.daily_budget_usd = budget.as_f64().map(|f| f as f32);
             }
             if let Some(host) = ai.get("ollama_host") {
-                config.ai.ollama_host = host.as_str()
+                config.ai.ollama_host = host
+                    .as_str()
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
             }
         }
-        
+
         // Update server settings
         if let Some(server) = updates.get("server") {
             if let Some(bind) = server.get("bind").and_then(|v| v.as_str()) {
@@ -436,7 +450,7 @@ async fn update_config(
                 config.server.no_auth = no_auth;
             }
         }
-        
+
         // Update session settings
         if let Some(session) = updates.get("session") {
             if let Some(headless) = session.get("default_headless").and_then(|v| v.as_bool()) {
@@ -449,7 +463,7 @@ async fn update_config(
                 config.session.default_height = height as u32;
             }
         }
-        
+
         // Update media settings
         if let Some(media) = updates.get("media") {
             if let Some(dir) = media.get("download_dir") {
@@ -466,22 +480,31 @@ async fn update_config(
             }
         }
     });
-    
+
     match result {
-        Ok(()) => (StatusCode::OK, Json(json!({
-            "success": true,
-            "message": "Configuration saved"
-        }))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": e
-        })))
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "message": "Configuration saved"
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": e
+            })),
+        ),
     }
 }
 
 /// Resolve Ollama host: request param > config > env > default
 /// Normalizes the result to a proper http(s) URL (OLLAMA_HOST may be just a bind address like "0.0.0.0")
-fn resolve_ollama_host(override_host: Option<&str>, config: &crate::core::config::AppConfig) -> String {
+fn resolve_ollama_host(
+    override_host: Option<&str>,
+    config: &crate::core::config::AppConfig,
+) -> String {
     let raw = override_host
         .filter(|h| !h.is_empty())
         .map(String::from)
@@ -498,16 +521,18 @@ fn normalize_ollama_url(raw: &str) -> String {
 
 /// POST /v2/ai/test - Test AI connection (supports both Gemini and Ollama)
 /// Accepts optional JSON body: { "provider": "ollama", "host": "...", "model": "..." }
-async fn test_ai_connection(
-    body: Option<Json<serde_json::Value>>,
-) -> impl IntoResponse {
+async fn test_ai_connection(body: Option<Json<serde_json::Value>>) -> impl IntoResponse {
     let config = crate::core::config::get_config();
     let body = body.map(|b| b.0).unwrap_or(json!({}));
 
     // Use body values if provided, otherwise fall back to saved config
-    let provider = body.get("provider").and_then(|v| v.as_str())
+    let provider = body
+        .get("provider")
+        .and_then(|v| v.as_str())
         .unwrap_or(&config.ai.provider);
-    let model = body.get("model").and_then(|v| v.as_str())
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
         .unwrap_or(&config.ai.model);
     let host_override = body.get("host").and_then(|v| v.as_str());
 
@@ -585,16 +610,14 @@ async fn ai_models_list(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let config = crate::core::config::get_config();
-    let provider = params.get("provider")
+    let provider = params
+        .get("provider")
         .map(|s| s.as_str())
         .unwrap_or(&config.ai.provider);
 
     match provider {
         "ollama" => {
-            let host = resolve_ollama_host(
-                params.get("host").map(|s| s.as_str()),
-                &config,
-            );
+            let host = resolve_ollama_host(params.get("host").map(|s| s.as_str()), &config);
             let ollama = crate::core::ai::OllamaClient {
                 base_url: host,
                 model: config.ai.model.clone(),
@@ -615,27 +638,23 @@ async fn ai_models_list(
                 })),
             }
         }
-        "gemini" => {
-            Json(json!({
-                "provider": "gemini",
-                "available": config.get_api_key().is_some(),
-                "models": [
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                    "gemini-1.5-pro",
-                    "gemini-pro-vision"
-                ],
-                "current_model": config.ai.model
-            }))
-        }
-        _ => {
-            Json(json!({
-                "provider": provider,
-                "available": false,
-                "models": [],
-                "error": format!("Unknown provider: {}. Supported: gemini, ollama", provider)
-            }))
-        }
+        "gemini" => Json(json!({
+            "provider": "gemini",
+            "available": config.get_api_key().is_some(),
+            "models": [
+                "gemini-2.0-flash",
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+                "gemini-pro-vision"
+            ],
+            "current_model": config.ai.model
+        })),
+        _ => Json(json!({
+            "provider": provider,
+            "available": false,
+            "models": [],
+            "error": format!("Unknown provider: {}. Supported: gemini, ollama", provider)
+        })),
     }
 }
 
@@ -674,10 +693,8 @@ async fn session_acquire(
                         });
                         if nav_result.is_ok() {
                             // Wait up to 15s for restore navigation
-                            let _ = tokio::time::timeout(
-                                std::time::Duration::from_secs(15),
-                                rx
-                            ).await;
+                            let _ =
+                                tokio::time::timeout(std::time::Duration::from_secs(15), rx).await;
                             restored_url = Some(url);
                         }
                     }
@@ -690,9 +707,9 @@ async fn session_acquire(
             let current_url = manager.get_last_url(&session_name);
 
             // Build contextual hints for AI agents
-            let auto_login_configured = crate::core::config::load_session_auto_login(&session_name).is_some();
-            let logged_in = response.auth_status.as_ref()
-                .map(|a| a.logged_in);
+            let auto_login_configured =
+                crate::core::config::load_session_auto_login(&session_name).is_some();
+            let logged_in = response.auth_status.as_ref().map(|a| a.logged_in);
             let mut hints: Vec<&str> = Vec::new();
 
             if auto_login_configured && logged_in != Some(true) {
@@ -704,7 +721,9 @@ async fn session_acquire(
                 hints.push("New session created. Sessions are persistent: cookies and login state survive server restarts.");
                 hints.push("Use POST /navigate to open a URL, or POST /session/auto-login if credentials are configured.");
             } else {
-                hints.push("Session resumed. Cookies and login state are intact from the previous run.");
+                hints.push(
+                    "Session resumed. Cookies and login state are intact from the previous run.",
+                );
                 hints.push("Use POST /snapshot {\"session\":\"<session>\"} to see the current page without taking a screenshot.");
             }
 
@@ -721,7 +740,7 @@ async fn session_acquire(
                     "hints": hints
                 })),
             )
-        },
+        }
         Err(e) => {
             let error = if e.contains("not found") {
                 Wbp2Error::SessionNotFound
@@ -730,14 +749,17 @@ async fn session_acquire(
             } else {
                 Wbp2Error::InternalError
             };
-            (error.status_code(), Json(json!({
-                "success": false,
-                "error": {
-                    "code": error.code(),
-                    "name": error.name(),
-                    "message": e
-                }
-            })))
+            (
+                error.status_code(),
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": error.code(),
+                        "name": error.name(),
+                        "message": e
+                    }
+                })),
+            )
         }
     }
 }
@@ -775,7 +797,9 @@ async fn auto_login_debug_screenshot(
     label: &str,
     enabled: bool,
 ) -> Option<String> {
-    if !enabled { return None; }
+    if !enabled {
+        return None;
+    }
     let screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(session);
     let _ = std::fs::create_dir_all(&screenshot_dir);
     let filename = format!("autologin_{}.png", label);
@@ -792,7 +816,10 @@ async fn auto_login_debug_screenshot(
     match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(bytes))) => {
             if std::fs::write(&save_path, &bytes).is_ok() {
-                tracing::debug!("[AutoLogin/debug] screenshot saved: {}", save_path.display());
+                tracing::debug!(
+                    "[AutoLogin/debug] screenshot saved: {}",
+                    save_path.display()
+                );
                 return Some(format!("/media/screenshots/{}/{}", session, filename));
             }
             None
@@ -804,7 +831,8 @@ async fn auto_login_debug_screenshot(
 fn js_fill_input(selector: &str, value: &str) -> String {
     let sel_json = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".to_string());
     let val_json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
-    format!(r#"(function(){{
+    format!(
+        r#"(function(){{
         var sel={sel};var val={val};
         var el=document.querySelector(sel);
         if(!el)return JSON.stringify({{error:"Element not found: "+sel}});
@@ -812,9 +840,11 @@ fn js_fill_input(selector: &str, value: &str) -> String {
         el.dispatchEvent(new Event('input',{{bubbles:true}}));
         el.dispatchEvent(new Event('change',{{bubbles:true}}));
         return JSON.stringify({{ok:true}});
-    }})()"#, sel=sel_json, val=val_json)
+    }})()"#,
+        sel = sel_json,
+        val = val_json
+    )
 }
-
 
 /// POST /session/auto-login
 ///
@@ -892,7 +922,8 @@ async fn session_auto_login(
                 }))).into_response(),
             }
         } else {
-            manager.get_auto_login_op_item_id(&request.name)
+            manager
+                .get_auto_login_op_item_id(&request.name)
                 .or_else(|| auto_login_cfg.op_item.clone())
                 .unwrap_or_else(|| request.name.clone())
         };
@@ -901,27 +932,48 @@ async fn session_auto_login(
         let op_item_clone = op_item.clone();
         let op_vault_clone = auto_login_cfg.op_vault.clone();
         match tokio::task::spawn_blocking(move || {
-            crate::auto_login::fetch_credentials(&op_path_clone, &op_item_clone, op_vault_clone.as_deref())
-        }).await {
+            crate::auto_login::fetch_credentials(
+                &op_path_clone,
+                &op_item_clone,
+                op_vault_clone.as_deref(),
+            )
+        })
+        .await
+        {
             Ok(Ok(c)) => c,
-            Ok(Err(e)) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                "success": false,
-                "error": {
-                    "code": "CREDENTIALS_FETCH_FAILED",
-                    "message": format!("Failed to get credentials from 1Password: {}", e)
-                }
-            }))).into_response(),
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                "success": false,
-                "error": {
-                    "code": "TASK_PANIC",
-                    "message": format!("Credential fetch task panicked: {}", e)
-                }
-            }))).into_response(),
+            Ok(Err(e)) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "CREDENTIALS_FETCH_FAILED",
+                            "message": format!("Failed to get credentials from 1Password: {}", e)
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "TASK_PANIC",
+                            "message": format!("Credential fetch task panicked: {}", e)
+                        }
+                    })),
+                )
+                    .into_response();
+            }
         }
     } else if has_plaintext {
         // --- Plaintext fallback ---
-        tracing::warn!("[AutoLogin] Session '{}': using plaintext credentials (no 1Password). Consider using op_item for security.", request.name);
+        tracing::warn!(
+            "[AutoLogin] Session '{}': using plaintext credentials (no 1Password). Consider using op_item for security.",
+            request.name
+        );
         crate::auto_login::Credentials {
             op_item_id: String::new(),
             username: auto_login_cfg.username.clone().unwrap(),
@@ -936,10 +988,14 @@ async fn session_auto_login(
         } else {
             "No credentials configured. Set op_item (recommended) or username+password in auto_login.toml."
         };
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": { "code": "NO_CREDENTIALS", "message": msg }
-        }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": { "code": "NO_CREDENTIALS", "message": msg }
+            })),
+        )
+            .into_response();
     };
 
     // Keep op_path for OTP use later (may be None if plaintext path was taken)
@@ -948,16 +1004,22 @@ async fn session_auto_login(
     // --- 5. Get session handle ---
     let handle = match manager.get_handle(&request.name) {
         Some(h) => h,
-        None => return (StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": {
-                "code": "SESSION_NOT_ACTIVE",
-                "message": format!(
-                    "Session '{}' is not active. Call POST /session/acquire first.",
-                    request.name
-                )
-            }
-        }))).into_response(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "SESSION_NOT_ACTIVE",
+                        "message": format!(
+                            "Session '{}' is not active. Call POST /session/acquire first.",
+                            request.name
+                        )
+                    }
+                })),
+            )
+                .into_response();
+        }
     };
 
     // --- 6. Check if already logged in (skip if logged_in_selector found) ---
@@ -972,12 +1034,16 @@ async fn session_auto_login(
         });
         if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(3), rx).await {
             let _ = manager.record_auto_login_skipped(&request.name);
-            return (StatusCode::OK, Json(json!({
-                "success": true,
-                "logged_in": true,
-                "already_logged_in": true,
-                "username": creds.username,
-            }))).into_response();
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "logged_in": true,
+                    "already_logged_in": true,
+                    "username": creds.username,
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -1031,7 +1097,9 @@ async fn session_auto_login(
             tracing::debug!("[AutoLogin] fill username result: {}", result);
         }
     }
-    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await {
+    if let Some(url) =
+        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await
+    {
         debug_screenshots.push(json!({"step": "username_filled", "url": url}));
     }
 
@@ -1060,7 +1128,9 @@ async fn session_auto_login(
             tracing::debug!("[AutoLogin] fill password: {:?}", r);
         }
     }
-    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_password_filled", debug).await {
+    if let Some(url) =
+        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_password_filled", debug).await
+    {
         debug_screenshots.push(json!({"step": "password_filled", "url": url}));
     }
 
@@ -1077,7 +1147,9 @@ async fn session_auto_login(
             tracing::info!("[AutoLogin] submit click: {:?}", r);
         }
     }
-    if let Some(url) = auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_after_submit", debug).await {
+    if let Some(url) =
+        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_after_submit", debug).await
+    {
         debug_screenshots.push(json!({"step": "after_submit", "url": url}));
     }
 
@@ -1100,7 +1172,8 @@ async fn session_auto_login(
             let op_path_otp = op_path.clone();
             let totp_code = tokio::task::spawn_blocking(move || {
                 crate::auto_login::read_secret(&op_path_otp, &otp_ref)
-            }).await;
+            })
+            .await;
 
             if let Ok(Ok(code)) = totp_code {
                 // Click OTP field
@@ -1159,7 +1232,10 @@ async fn session_auto_login(
     if !login_success {
         let err = "Login form submitted but logged_in_selector was not found within 15s.";
         let _ = manager.record_auto_login_failure(&request.name, err);
-        tracing::warn!("[AutoLogin] Session '{}' login failed. Cache cleared.", request.name);
+        tracing::warn!(
+            "[AutoLogin] Session '{}' login failed. Cache cleared.",
+            request.name
+        );
         return (StatusCode::OK, Json(json!({
             "success": false,
             "logged_in": false,
@@ -1174,7 +1250,11 @@ async fn session_auto_login(
     // --- 14. Process extra_steps (multi-stage auth, e.g. RMS → Rakuten SSO) ---
     let mut steps_completed: usize = 0;
     for (step_idx, step) in auto_login_cfg.extra_steps.iter().enumerate() {
-        tracing::info!("[AutoLogin] Session '{}' — extra step {}", request.name, step_idx + 1);
+        tracing::info!(
+            "[AutoLogin] Session '{}' — extra step {}",
+            request.name,
+            step_idx + 1
+        );
 
         // Wait for URL to contain the expected pattern
         if let Some(ref url_fragment) = step.wait_url_contains {
@@ -1189,7 +1269,8 @@ async fn session_auto_login(
                     script: "location.href".to_string(),
                     resp_tx: tx,
                 });
-                if let Ok(Ok(Ok(url_str))) = tokio::time::timeout(Duration::from_secs(2), rx).await {
+                if let Ok(Ok(Ok(url_str))) = tokio::time::timeout(Duration::from_secs(2), rx).await
+                {
                     let url_clean = url_str.trim_matches('"').to_string();
                     if url_clean.contains(frag.as_str()) {
                         found = true;
@@ -1201,11 +1282,16 @@ async fn session_auto_login(
             if !found {
                 tracing::warn!(
                     "[AutoLogin] Step {}: URL pattern '{}' not reached within 15s. Skipping remaining steps.",
-                    step_idx + 1, url_fragment
+                    step_idx + 1,
+                    url_fragment
                 );
                 break;
             }
-            tracing::info!("[AutoLogin] Step {}: URL pattern '{}' matched.", step_idx + 1, url_fragment);
+            tracing::info!(
+                "[AutoLogin] Step {}: URL pattern '{}' matched.",
+                step_idx + 1,
+                url_fragment
+            );
         }
 
         // Fetch credentials for this step
@@ -1213,13 +1299,23 @@ async fn session_auto_login(
         let step_creds = if let Some(ref item) = step.op_item {
             let op_path_s = op_path.clone();
             let item_s = item.clone();
-            let vault_s = step.op_vault.clone().or_else(|| auto_login_cfg.op_vault.clone());
+            let vault_s = step
+                .op_vault
+                .clone()
+                .or_else(|| auto_login_cfg.op_vault.clone());
             match tokio::task::spawn_blocking(move || {
                 crate::auto_login::fetch_credentials(&op_path_s, &item_s, vault_s.as_deref())
-            }).await {
+            })
+            .await
+            {
                 Ok(Ok(c)) => Some(c),
                 Ok(Err(e)) => {
-                    tracing::warn!("[AutoLogin] Step {}: Failed to fetch 1Password item '{}': {}", step_idx + 1, item, e);
+                    tracing::warn!(
+                        "[AutoLogin] Step {}: Failed to fetch 1Password item '{}': {}",
+                        step_idx + 1,
+                        item,
+                        e
+                    );
                     None
                 }
                 Err(_) => None,
@@ -1267,9 +1363,16 @@ async fn session_auto_login(
                 }
             }
             if let Some(url) = auto_login_debug_screenshot(
-                &state.cmd_tx, &handle.id,
-                &format!("s{}_username_filled", step_idx + 1), debug).await {
-                debug_screenshots.push(json!({"step": format!("extra_{}_username_filled", step_idx+1), "url": url}));
+                &state.cmd_tx,
+                &handle.id,
+                &format!("s{}_username_filled", step_idx + 1),
+                debug,
+            )
+            .await
+            {
+                debug_screenshots.push(
+                    json!({"step": format!("extra_{}_username_filled", step_idx+1), "url": url}),
+                );
             }
 
             // Click "Next" button — use CDP physical click (get_element_center picks visible element)
@@ -1285,9 +1388,16 @@ async fn session_auto_login(
                     tracing::info!("[AutoLogin] step {} next click: {:?}", step_idx + 1, r);
                 }
                 if let Some(url) = auto_login_debug_screenshot(
-                    &state.cmd_tx, &handle.id,
-                    &format!("s{}_next_clicked", step_idx + 1), debug).await {
-                    debug_screenshots.push(json!({"step": format!("extra_{}_next_clicked", step_idx+1), "url": url}));
+                    &state.cmd_tx,
+                    &handle.id,
+                    &format!("s{}_next_clicked", step_idx + 1),
+                    debug,
+                )
+                .await
+                {
+                    debug_screenshots.push(
+                        json!({"step": format!("extra_{}_next_clicked", step_idx+1), "url": url}),
+                    );
                 }
 
                 // Wait for the password field to appear
@@ -1342,16 +1452,22 @@ async fn session_auto_login(
             }
         }
         if let Some(url) = auto_login_debug_screenshot(
-            &state.cmd_tx, &handle.id,
-            &format!("s{}_password_filled", step_idx + 1), debug).await {
-            debug_screenshots.push(json!({"step": format!("extra_{}_password_filled", step_idx+1), "url": url}));
+            &state.cmd_tx,
+            &handle.id,
+            &format!("s{}_password_filled", step_idx + 1),
+            debug,
+        )
+        .await
+        {
+            debug_screenshots
+                .push(json!({"step": format!("extra_{}_password_filled", step_idx+1), "url": url}));
         }
 
         // --- Pre-submit: wait for async bot-detection challenges (PoW etc.) ---
         // 1. If challenge_done_js is set, poll until it returns truthy.
         if let Some(ref challenge_js) = step.challenge_done_js {
-            let deadline = tokio::time::Instant::now()
-                + Duration::from_millis(step.challenge_timeout_ms);
+            let deadline =
+                tokio::time::Instant::now() + Duration::from_millis(step.challenge_timeout_ms);
             let mut challenge_ready = false;
             while tokio::time::Instant::now() < deadline {
                 let (tx, rx) = oneshot::channel();
@@ -1371,7 +1487,10 @@ async fn session_auto_login(
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
             if !challenge_ready {
-                tracing::warn!("[AutoLogin] step {} challenge_done_js timed out — submitting anyway.", step_idx + 1);
+                tracing::warn!(
+                    "[AutoLogin] step {} challenge_done_js timed out — submitting anyway.",
+                    step_idx + 1
+                );
             }
         }
         // 2. Fixed pre-submit wait (catches timing issues even without challenge_done_js).
@@ -1405,9 +1524,16 @@ async fn session_auto_login(
             // Small delay to let navigation start before snapping
             tokio::time::sleep(Duration::from_millis(500)).await;
             if let Some(url) = auto_login_debug_screenshot(
-                &state.cmd_tx, &handle.id,
-                &format!("s{}_after_submit", step_idx + 1), debug).await {
-                debug_screenshots.push(json!({"step": format!("extra_{}_after_submit", step_idx+1), "url": url}));
+                &state.cmd_tx,
+                &handle.id,
+                &format!("s{}_after_submit", step_idx + 1),
+                debug,
+            )
+            .await
+            {
+                debug_screenshots.push(
+                    json!({"step": format!("extra_{}_after_submit", step_idx+1), "url": url}),
+                );
             }
         }
 
@@ -1427,7 +1553,9 @@ async fn session_auto_login(
                 let op_path_otp = op_path.clone();
                 if let Ok(Ok(code)) = tokio::task::spawn_blocking(move || {
                     crate::auto_login::read_secret(&op_path_otp, &otp_ref)
-                }).await {
+                })
+                .await
+                {
                     let (tx, rx) = oneshot::channel();
                     let script = js_fill_input(&otp_sel, &code);
                     let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
@@ -1462,14 +1590,24 @@ async fn session_auto_login(
                 Ok(Ok(Ok(_)))
             );
             if step_ok {
-                tracing::info!("[AutoLogin] Step {} completed (done_selector found).", step_idx + 1);
+                tracing::info!(
+                    "[AutoLogin] Step {} completed (done_selector found).",
+                    step_idx + 1
+                );
             } else {
-                tracing::warn!("[AutoLogin] Step {}: done_selector '{}' not found after submit.", step_idx + 1, done_sel);
+                tracing::warn!(
+                    "[AutoLogin] Step {}: done_selector '{}' not found after submit.",
+                    step_idx + 1,
+                    done_sel
+                );
             }
         } else {
             // No done_selector — wait briefly for navigation
             tokio::time::sleep(Duration::from_secs(2)).await;
-            tracing::info!("[AutoLogin] Step {} done (no done_selector, waited 2s).", step_idx + 1);
+            tracing::info!(
+                "[AutoLogin] Step {} done (no done_selector, waited 2s).",
+                step_idx + 1
+            );
         }
         steps_completed += 1;
     }
@@ -1478,7 +1616,10 @@ async fn session_auto_login(
     let _ = manager.record_auto_login_success(&request.name, &creds.op_item_id, &creds.username);
     tracing::info!(
         "[AutoLogin] Session '{}' logged in (item_id='{}', user='{}'), {} extra steps",
-        request.name, creds.op_item_id, creds.username, steps_completed
+        request.name,
+        creds.op_item_id,
+        creds.username,
+        steps_completed
     );
     let mut resp = json!({
         "success": true,
@@ -1518,7 +1659,9 @@ async fn session_auto_login_status(
 
     // Check if session exists
     let session_exists = manager.get_handle(name).is_some() || {
-        manager.list().ok()
+        manager
+            .list()
+            .ok()
             .map(|r| r.sessions.into_iter().any(|s| s.name == *name))
             .unwrap_or(false)
     };
@@ -1579,11 +1722,15 @@ async fn session_auto_login_list() -> impl IntoResponse {
         }));
     }
 
-    (StatusCode::OK, Json(json!({
-        "success": true,
-        "count": items.len(),
-        "sessions": items,
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "count": items.len(),
+            "sessions": items,
+        })),
+    )
+        .into_response()
 }
 
 /// Build a human+AI readable `next_action` hint based on current state
@@ -1599,7 +1746,10 @@ fn build_next_action(
         );
     }
     match state.as_ref().and_then(|s| s.last_result.as_deref()) {
-        None => format!("No login attempt yet. Call POST /session/auto-login {{\"name\": \"{}\"}}", name),
+        None => format!(
+            "No login attempt yet. Call POST /session/auto-login {{\"name\": \"{}\"}}",
+            name
+        ),
         Some("success") | Some("already_logged_in") => format!(
             "Last login succeeded. If session expired, call POST /session/auto-login {{\"name\": \"{}\", \"force\": true}}",
             name
@@ -1637,9 +1787,7 @@ struct AutoLoginConfigQuery {
 ///
 /// Returns the auto-login configuration for a session as JSON.
 /// Returns 404 if not configured.
-async fn session_auto_login_config_get(
-    Query(q): Query<AutoLoginConfigQuery>,
-) -> impl IntoResponse {
+async fn session_auto_login_config_get(Query(q): Query<AutoLoginConfigQuery>) -> impl IntoResponse {
     let path = crate::core::config::AppConfig::session_auto_login_path(&q.name);
     match crate::core::config::load_session_auto_login(&q.name) {
         Some(cfg) => Json(json!({
@@ -1647,15 +1795,20 @@ async fn session_auto_login_config_get(
             "session": q.name,
             "config": cfg,
             "path": path.to_string_lossy(),
-        })).into_response(),
-        None => (StatusCode::NOT_FOUND, Json(json!({
-            "success": false,
-            "error": {
-                "code": "AUTO_LOGIN_NOT_CONFIGURED",
-                "message": format!("No auto_login config for session '{}'.", q.name),
-                "path": path.to_string_lossy(),
-            }
-        }))).into_response(),
+        }))
+        .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "success": false,
+                "error": {
+                    "code": "AUTO_LOGIN_NOT_CONFIGURED",
+                    "message": format!("No auto_login config for session '{}'.", q.name),
+                    "path": path.to_string_lossy(),
+                }
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1681,27 +1834,41 @@ async fn session_auto_login_config_set(
     // Ensure profile directory exists
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                "success": false,
-                "error": { "code": "DIR_CREATE_FAILED", "message": format!("{}", e) }
-            }))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "DIR_CREATE_FAILED", "message": format!("{}", e) }
+                })),
+            )
+                .into_response();
         }
     }
 
     // Serialize config to TOML
     let toml_str = match toml::to_string_pretty(&request.config) {
         Ok(s) => s,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": { "code": "SERIALIZE_FAILED", "message": format!("{}", e) }
-        }))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "SERIALIZE_FAILED", "message": format!("{}", e) }
+                })),
+            )
+                .into_response();
+        }
     };
 
     if let Err(e) = std::fs::write(&path, &toml_str) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": { "code": "WRITE_FAILED", "message": format!("{}", e) }
-        }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": { "code": "WRITE_FAILED", "message": format!("{}", e) }
+            })),
+        )
+            .into_response();
     }
 
     Json(json!({
@@ -1709,7 +1876,8 @@ async fn session_auto_login_config_set(
         "session": request.name,
         "path": path.to_string_lossy(),
         "config": request.config,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Request body for release
@@ -1722,11 +1890,9 @@ struct ReleaseRequest {
 }
 
 /// POST /v2/session/release
-async fn session_release(
-    Json(request): Json<ReleaseRequest>,
-) -> impl IntoResponse {
+async fn session_release(Json(request): Json<ReleaseRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     if request.close_window {
         // Close WebView window + release session
         match manager.close_session(&request.name) {
@@ -1745,7 +1911,7 @@ async fn session_release(
                         "closed": true
                     })),
                 )
-            },
+            }
             Err(e) => {
                 let (code, name) = if e.contains("not found") {
                     ("WBP2_001", "SESSION_NOT_FOUND")
@@ -1827,7 +1993,10 @@ async fn session_destroy(
                 if let Some(core_mgr) = get_core_session_manager() {
                     let _ = core_mgr.remove_session(id).await;
                 }
-                eprintln!("[session_destroy] Destroyed session '{}' (webview id: {})", name, id);
+                eprintln!(
+                    "[session_destroy] Destroyed session '{}' (webview id: {})",
+                    name, id
+                );
             }
             (
                 StatusCode::OK,
@@ -1836,12 +2005,16 @@ async fn session_destroy(
                     "message": format!("Session '{}' destroyed", name)
                 })),
             )
-        },
+        }
         Err(e) => {
             let (status, code, name_str) = if e.contains("not found") {
                 (StatusCode::NOT_FOUND, "WBP2_001", "SESSION_NOT_FOUND")
             } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, "WBP2_099", "INTERNAL_ERROR")
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "WBP2_099",
+                    "INTERNAL_ERROR",
+                )
             };
             (
                 status,
@@ -1859,59 +2032,66 @@ async fn session_destroy(
 }
 
 /// POST /v2/session/visibility - Set window visibility (pseudo-headless toggle)
-async fn session_visibility(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_visibility(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     let name = match request.get("name").and_then(|s| s.as_str()) {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_001",
-                    "name": "INVALID_REQUEST",
-                    "message": "Missing 'name' field"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "INVALID_REQUEST",
+                        "message": "Missing 'name' field"
+                    }
+                })),
+            );
+        }
     };
-    
-    let visible = request.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
-    
+
+    let visible = request
+        .get("visible")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
     // Get session ID from SessionManagerV2
     let manager_v2 = get_session_manager_v2();
     let session_id = match manager_v2.get_handle(name) {
         Some(h) => h.id.clone(),
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_010",
-                    "name": "SESSION_NOT_FOUND",
-                    "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_010",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
+                    }
+                })),
+            );
+        }
     };
-    
+
     // Use core SessionManager
     let core_manager = match get_core_session_manager() {
         Some(m) => m,
-        None => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_099",
-                    "name": "MANAGER_NOT_INITIALIZED",
-                    "message": "Core session manager not initialized"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "MANAGER_NOT_INITIALIZED",
+                        "message": "Core session manager not initialized"
+                    }
+                })),
+            );
+        }
     };
-    
+
     match core_manager.set_visibility(&session_id, visible).await {
         Ok(is_visible) => (
             StatusCode::OK,
@@ -1937,57 +2117,61 @@ async fn session_visibility(
 }
 
 /// POST /v2/session/focus - Bring window to front for user interaction
-async fn session_focus(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_focus(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     let name = match request.get("name").and_then(|s| s.as_str()) {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_001",
-                    "name": "INVALID_REQUEST",
-                    "message": "Missing 'name' field"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "INVALID_REQUEST",
+                        "message": "Missing 'name' field"
+                    }
+                })),
+            );
+        }
     };
-    
+
     // Get session ID from SessionManagerV2
     let manager_v2 = get_session_manager_v2();
     let session_id = match manager_v2.get_handle(name) {
         Some(h) => h.id.clone(),
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_010",
-                    "name": "SESSION_NOT_FOUND",
-                    "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_010",
+                        "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found. Run 'wb session acquire {}' or POST /session/acquire to create/activate it.", name, name)
+                    }
+                })),
+            );
+        }
     };
-    
+
     // Use core SessionManager
     let core_manager = match get_core_session_manager() {
         Some(m) => m,
-        None => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_099",
-                    "name": "MANAGER_NOT_INITIALIZED",
-                    "message": "Core session manager not initialized"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_099",
+                        "name": "MANAGER_NOT_INITIALIZED",
+                        "message": "Core session manager not initialized"
+                    }
+                })),
+            );
+        }
     };
-    
+
     match core_manager.bring_to_front(&session_id).await {
         Ok(()) => (
             StatusCode::OK,
@@ -2012,33 +2196,35 @@ async fn session_focus(
 }
 
 /// POST /session/state/url - Update session's last URL (for restore feature)
-async fn session_state_url(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_state_url(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     let name = match request.get("name").and_then(|s| s.as_str()) {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "Missing 'name' field"
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Missing 'name' field"
+                })),
+            );
+        }
     };
-    
+
     let url = match request.get("url").and_then(|s| s.as_str()) {
         Some(u) => u,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "Missing 'url' field"
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Missing 'url' field"
+                })),
+            );
+        }
     };
-    
+
     let manager = get_session_manager_v2();
-    
+
     match manager.update_last_url(name, url) {
         Ok(()) => (
             StatusCode::OK,
@@ -2064,19 +2250,21 @@ async fn session_state_history(
 ) -> impl IntoResponse {
     let name = match params.get("name") {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "Missing 'name' parameter"
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Missing 'name' parameter"
+                })),
+            );
+        }
     };
-    
+
     let manager = get_session_manager_v2();
     let history = manager.get_navigation_history(name);
     let last_url = manager.get_last_url(name);
-    
+
     (
         StatusCode::OK,
         Json(json!({
@@ -2093,24 +2281,30 @@ async fn session_state_history(
 async fn session_import_profiles(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    use crate::core::cookie_import::{BrowserType, list_browser_profiles, get_cookie_db_path};
-    
-    let browser_str = params.get("browser").map(|s| s.as_str()).unwrap_or("chrome");
+    use crate::core::cookie_import::{BrowserType, get_cookie_db_path, list_browser_profiles};
+
+    let browser_str = params
+        .get("browser")
+        .map(|s| s.as_str())
+        .unwrap_or("chrome");
     let browser = match browser_str.to_lowercase().as_str() {
         "chrome" => BrowserType::Chrome,
         "edge" => BrowserType::Edge,
         "firefox" => BrowserType::Firefox,
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)
-            })),
-        ),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)
+                })),
+            );
+        }
     };
-    
+
     let profiles = list_browser_profiles(browser);
-    let profiles_with_paths: Vec<_> = profiles.iter()
+    let profiles_with_paths: Vec<_> = profiles
+        .iter()
         .filter_map(|p| {
             let path = get_cookie_db_path(browser, p)?;
             Some(json!({
@@ -2119,7 +2313,7 @@ async fn session_import_profiles(
             }))
         })
         .collect();
-    
+
     (
         StatusCode::OK,
         Json(json!({
@@ -2131,30 +2325,36 @@ async fn session_import_profiles(
 }
 
 /// GET /session/:name/cookies - Get all cookies from a WebView session
-async fn session_get_cookies(
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn session_get_cookies(Path(name): Path<String>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&name) {
         Some(h) => h,
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
-        ),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
+            );
+        }
     };
 
     let core_manager = match get_core_session_manager() {
         Some(m) => m,
-        None => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "success": false, "error": "Core session manager not initialized" })),
-        ),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "error": "Core session manager not initialized" })),
+            );
+        }
     };
 
     match core_manager.get_cookies(&handle.id).await {
         Ok(cookies_json) => {
-            let cookies: serde_json::Value = serde_json::from_str(&cookies_json).unwrap_or(json!([]));
-            (StatusCode::OK, Json(json!({ "success": true, "session": name, "cookies": cookies })))
+            let cookies: serde_json::Value =
+                serde_json::from_str(&cookies_json).unwrap_or(json!([]));
+            (
+                StatusCode::OK,
+                Json(json!({ "success": true, "session": name, "cookies": cookies })),
+            )
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2172,26 +2372,34 @@ async fn session_set_cookies(
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&name) {
         Some(h) => h,
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
-        ),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "success": false, "error": format!("Session '{}' not found", name) })),
+            );
+        }
     };
 
     let cookies = match body.get("cookies") {
         Some(c) if c.is_array() => c,
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "Missing or invalid 'cookies' array in request body" })),
-        ),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "success": false, "error": "Missing or invalid 'cookies' array in request body" }),
+                ),
+            );
+        }
     };
 
     let core_manager = match get_core_session_manager() {
         Some(m) => m,
-        None => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "success": false, "error": "Core session manager not initialized" })),
-        ),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "error": "Core session manager not initialized" })),
+            );
+        }
     };
 
     let cookies_json = serde_json::to_string(cookies).unwrap_or_else(|_| "[]".to_string());
@@ -2210,78 +2418,96 @@ async fn session_set_cookies(
 }
 
 /// POST /session/import - Import cookies from browser to session
-async fn session_import_cookies(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_import_cookies(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     use crate::core::cookie_import::{
-        BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies
+        BrowserType, get_cookie_db_path, read_firefox_cookies, summarize_cookies,
     };
-    
+
     // Parse request
     let session = match request.get("session").and_then(|s| s.as_str()) {
         Some(s) => s.to_string(),
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "Missing 'session' field"
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Missing 'session' field"
+                })),
+            );
+        }
     };
-    
-    let browser_str = request.get("browser").and_then(|s| s.as_str()).unwrap_or("chrome");
+
+    let browser_str = request
+        .get("browser")
+        .and_then(|s| s.as_str())
+        .unwrap_or("chrome");
     let browser = match browser_str.to_lowercase().as_str() {
         "chrome" => BrowserType::Chrome,
         "edge" => BrowserType::Edge,
         "firefox" => BrowserType::Firefox,
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)
-            })),
-        ),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Unknown browser: {}. Use 'chrome', 'edge', or 'firefox'", browser_str)
+                })),
+            );
+        }
     };
-    
-    let profile = request.get("profile").and_then(|s| s.as_str()).unwrap_or("Default").to_string();
-    let domains: Vec<String> = request.get("domains")
+
+    let profile = request
+        .get("profile")
+        .and_then(|s| s.as_str())
+        .unwrap_or("Default")
+        .to_string();
+    let domains: Vec<String> = request
+        .get("domains")
         .and_then(|d| d.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    
+
     // Get cookie database path
     let db_path = match get_cookie_db_path(browser, &profile) {
         Some(p) if p.exists() => p,
-        Some(p) => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "success": false,
-                "error": format!("Cookie database not found at: {}", p.display())
-            })),
-        ),
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "success": false,
-                "error": format!("Could not determine cookie database path for {} profile '{}'", browser_str, profile)
-            })),
-        ),
+        Some(p) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Cookie database not found at: {}", p.display())
+                })),
+            );
+        }
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Could not determine cookie database path for {} profile '{}'", browser_str, profile)
+                })),
+            );
+        }
     };
-    
+
     // Read cookies based on browser type
     let cookies = match browser {
-        BrowserType::Firefox => {
-            match read_firefox_cookies(&db_path, &domains) {
-                Ok(c) => c,
-                Err(e) => return (
+        BrowserType::Firefox => match read_firefox_cookies(&db_path, &domains) {
+            Ok(c) => c,
+            Err(e) => {
+                return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({
                         "success": false,
                         "error": format!("Failed to read Firefox cookies: {}", e)
                     })),
-                ),
+                );
             }
-        }
+        },
         BrowserType::Chrome | BrowserType::Edge => {
             // Chromium cookies are encrypted with DPAPI
             // For now, return info about what would be imported
@@ -2298,7 +2524,7 @@ async fn session_import_cookies(
             );
         }
     };
-    
+
     // Summarize what was found
     let domain_counts = summarize_cookies(&cookies);
     let domains_found: Vec<_> = domain_counts.keys().cloned().collect();
@@ -2319,40 +2545,47 @@ async fn session_import_cookies(
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&session) {
         Some(h) => h,
-        None => return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "success": false,
-                "error": format!("Session '{}' not found. Acquire it first.", session)
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Session '{}' not found. Acquire it first.", session)
+                })),
+            );
+        }
     };
 
-    let cdp_cookies: Vec<serde_json::Value> = cookies.iter().map(|c| {
-        let mut obj = serde_json::json!({
-            "name": c.name,
-            "value": c.value,
-            "domain": c.domain,
-            "path": c.path,
-            "secure": c.secure,
-            "http_only": c.http_only,
-        });
-        if let Some(exp) = c.expires {
-            obj["expires"] = serde_json::json!(exp as f64);
-        }
-        obj
-    }).collect();
+    let cdp_cookies: Vec<serde_json::Value> = cookies
+        .iter()
+        .map(|c| {
+            let mut obj = serde_json::json!({
+                "name": c.name,
+                "value": c.value,
+                "domain": c.domain,
+                "path": c.path,
+                "secure": c.secure,
+                "http_only": c.http_only,
+            });
+            if let Some(exp) = c.expires {
+                obj["expires"] = serde_json::json!(exp as f64);
+            }
+            obj
+        })
+        .collect();
     let cdp_json = serde_json::to_string(&cdp_cookies).unwrap_or_else(|_| "[]".to_string());
 
     let core_manager = match get_core_session_manager() {
         Some(m) => m,
-        None => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "success": false,
-                "error": "Core session manager not initialized"
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": "Core session manager not initialized"
+                })),
+            );
+        }
     };
 
     match core_manager.set_cookies(&handle.id, cdp_json).await {
@@ -2379,41 +2612,43 @@ async fn session_import_cookies(
 }
 
 /// POST /v2/session/clone - Clone a session (copy profile and data)
-async fn session_clone(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_clone(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     let source = match request.get("source").and_then(|s| s.as_str()) {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_001",
-                    "name": "INVALID_REQUEST",
-                    "message": "Missing 'source' field"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "INVALID_REQUEST",
+                        "message": "Missing 'source' field"
+                    }
+                })),
+            );
+        }
     };
-    
+
     let new_name = match request.get("new_name").and_then(|s| s.as_str()) {
         Some(s) => s,
-        None => return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": {
-                    "code": "WBP2_001",
-                    "name": "INVALID_REQUEST",
-                    "message": "Missing 'new_name' field"
-                }
-            })),
-        ),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "WBP2_001",
+                        "name": "INVALID_REQUEST",
+                        "message": "Missing 'new_name' field"
+                    }
+                })),
+            );
+        }
     };
-    
+
     let manager = get_session_manager_v2();
-    
+
     match manager.clone_session(source, new_name) {
         Ok(()) => (
             StatusCode::OK,
@@ -2439,19 +2674,19 @@ async fn session_clone(
 }
 
 /// POST /v2/session/cleanup - Cleanup inactive or old sessions
-async fn session_cleanup(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn session_cleanup(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
-    let mode = request.get("mode")
+
+    let mode = request
+        .get("mode")
         .and_then(|m| m.as_str())
         .unwrap_or("inactive");
-    
-    let max_age_hours = request.get("max_age_hours")
+
+    let max_age_hours = request
+        .get("max_age_hours")
         .and_then(|h| h.as_u64())
         .unwrap_or(24);
-    
+
     let result = match mode {
         "inactive" => manager.cleanup_inactive(),
         "old" => manager.cleanup_old(max_age_hours),
@@ -2466,10 +2701,10 @@ async fn session_cleanup(
                 _count += ids.len();
             }
             Ok(Vec::new()) // Return empty, count is in message
-        },
+        }
         _ => Err(format!("Unknown cleanup mode: {}", mode)),
     };
-    
+
     match result {
         Ok(session_ids) => {
             let count = session_ids.len();
@@ -2481,7 +2716,7 @@ async fn session_cleanup(
                     "cleaned_count": count
                 })),
             )
-        },
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -2495,7 +2730,7 @@ async fn session_cleanup(
 /// GET /v2/session/list
 async fn session_list() -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     match manager.list() {
         Ok(response) => (
             StatusCode::OK,
@@ -2520,11 +2755,9 @@ async fn session_list() -> impl IntoResponse {
 }
 
 /// GET /v2/session/:name
-async fn session_get(
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn session_get(Path(name): Path<String>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     match manager.get(&name) {
         Some(session) => (
             StatusCode::OK,
@@ -2559,7 +2792,7 @@ async fn session_get(
 async fn session_stats() -> impl IntoResponse {
     let manager = get_session_manager_v2();
     let stats = manager.stats();
-    
+
     (
         StatusCode::OK,
         Json(json!({
@@ -2580,7 +2813,7 @@ struct NavigateRequest {
     url: String,
     #[allow(dead_code)]
     #[serde(default = "default_wait_until")]
-    wait_until: String,  // "load" | "domready" | "none"
+    wait_until: String, // "load" | "domready" | "none"
     #[serde(default = "default_nav_timeout")]
     timeout_ms: u64,
     /// Extra wait after page load completes (ms). Useful for JS-heavy pages that render
@@ -2593,9 +2826,15 @@ struct NavigateRequest {
     snapshot: bool,
 }
 
-fn default_wait_until() -> String { "load".to_string() }
-fn default_nav_timeout() -> u64 { 30000 }
-fn default_snapshot_after_nav() -> bool { true }
+fn default_wait_until() -> String {
+    "load".to_string()
+}
+fn default_nav_timeout() -> u64 {
+    30000
+}
+fn default_snapshot_after_nav() -> bool {
+    true
+}
 
 /// Build contextual hints for navigate response.
 /// Detects login-page redirects and surfaces auto-login availability.
@@ -2609,7 +2848,9 @@ pub fn build_navigate_hints(session: &str, requested_url: &str, final_url: &str)
         && !final_url.starts_with(requested_url);
 
     // Detect login page by URL keywords
-    let login_keywords = ["login", "signin", "sign-in", "auth", "sso", "glogin", "r-login"];
+    let login_keywords = [
+        "login", "signin", "sign-in", "auth", "sso", "glogin", "r-login",
+    ];
     let final_lower = final_url.to_lowercase();
     let looks_like_login = login_keywords.iter().any(|kw| final_lower.contains(kw));
 
@@ -2702,15 +2943,20 @@ async fn navigate_v2(
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
     let manager = get_session_manager_v2();
-    
+
     // Get session handle
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
     };
-    
+
     let session_id = handle.id.clone();
-    
+
     // Send navigate command
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::Navigate {
@@ -2718,22 +2964,20 @@ async fn navigate_v2(
         url: request.url.clone(),
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return error_response(Wbp2Error::InternalError, "Failed to send command");
     }
-    
+
     // Wait for navigation to complete
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(request.timeout_ms),
-        rx
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx).await {
         Ok(Ok(Ok(()))) => {
             // Auto-save last URL for restore-on-acquire
             let _ = manager.update_last_url(&request.session, &request.url);
             // Optional post-load idle wait for JS-heavy pages (charts, realtime dashboards)
             if request.post_load_wait_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(request.post_load_wait_ms)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(request.post_load_wait_ms))
+                    .await;
             }
             // Include snapshot of interactive elements unless caller opted out
             let snapshot = if request.snapshot {
@@ -2741,12 +2985,14 @@ async fn navigate_v2(
             } else {
                 None
             };
-            let elem_count = snapshot.as_ref()
+            let elem_count = snapshot
+                .as_ref()
                 .and_then(|s| s.get("elements"))
                 .and_then(|e| e.as_array())
                 .map(|a| a.len());
             // Detect login-page redirect and surface auto-login hint
-            let final_url = snapshot.as_ref()
+            let final_url = snapshot
+                .as_ref()
                 .and_then(|s| s.get("url"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(&request.url);
@@ -2768,10 +3014,16 @@ async fn navigate_v2(
                 }
             }
             (StatusCode::OK, Json(resp)).into_response()
-        },
+        }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
-        Err(_) => error_response(Wbp2Error::InternalError, "Navigation timed out. The page may be slow or unresponsive. Try: increase timeout_ms or check the URL."),
+        Ok(Err(_)) => error_response(
+            Wbp2Error::InternalError,
+            "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'.",
+        ),
+        Err(_) => error_response(
+            Wbp2Error::InternalError,
+            "Navigation timed out. The page may be slow or unresponsive. Try: increase timeout_ms or check the URL.",
+        ),
     }
 }
 
@@ -2792,12 +3044,17 @@ async fn click_v2(
     Json(request): Json<ClickRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
     };
-    
+
     // Execute click via JavaScript
     let script = format!(
         r#"(function(){{ 
@@ -2806,7 +3063,10 @@ async fn click_v2(
             el.click(); 
             return JSON.stringify({{clicked:true}}); 
         }})()"#,
-        request.selector.replace('\\', r#"\\"#).replace('"', r#"\""#)
+        request
+            .selector
+            .replace('\\', r#"\\"#)
+            .replace('"', r#"\""#)
     );
 
     let (tx, rx) = oneshot::channel();
@@ -2835,22 +3095,32 @@ async fn click_v2(
             if let Some(wait_ms) = request.wait_after_ms {
                 tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
             }
-            
+
             // Parse result
             if result.contains("error") {
                 error_response(Wbp2Error::InvalidRequest, &result)
             } else {
-                (StatusCode::OK, Json(json!({
-                    "success": true,
-                    "session": request.session,
-                    "selector": request.selector,
-                    "clicked": true
-                }))).into_response()
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "session": request.session,
+                        "selector": request.selector,
+                        "clicked": true
+                    })),
+                )
+                    .into_response()
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
-        Err(_) => error_response(Wbp2Error::InternalError, "Click timed out. The element may be missing or hidden. Try: check selector, wait for page load, or increase timeout."),
+        Ok(Err(_)) => error_response(
+            Wbp2Error::InternalError,
+            "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'.",
+        ),
+        Err(_) => error_response(
+            Wbp2Error::InternalError,
+            "Click timed out. The element may be missing or hidden. Try: check selector, wait for page load, or increase timeout.",
+        ),
     }
 }
 
@@ -2872,13 +3142,22 @@ async fn type_v2(
     Json(request): Json<TypeRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
     };
-    
-    let clear_code = if request.clear_first { "el.value = '';" } else { "" };
+
+    let clear_code = if request.clear_first {
+        "el.value = '';"
+    } else {
+        ""
+    };
     let script = format!(
         r#"(function(){{ 
             var el = document.querySelector("{}"); 
@@ -2888,11 +3167,18 @@ async fn type_v2(
             el.dispatchEvent(new Event('input', {{bubbles:true}})); 
             return JSON.stringify({{typed:true}}); 
         }})()"#,
-        request.selector.replace('\\', r#"\\"#).replace('"', r#"\""#),
+        request
+            .selector
+            .replace('\\', r#"\\"#)
+            .replace('"', r#"\""#),
         clear_code,
-        request.text.replace('\\', r#"\\"#).replace('"', r#"\""#).replace('\n', r#"\n"#)
+        request
+            .text
+            .replace('\\', r#"\\"#)
+            .replace('"', r#"\""#)
+            .replace('\n', r#"\n"#)
     );
-    
+
     let (tx, rx) = oneshot::channel();
     let cmd = if let Some(ref frame) = request.frame {
         AppCommand::ExecuteInFrame {
@@ -2918,17 +3204,27 @@ async fn type_v2(
             if result.contains("error") {
                 error_response(Wbp2Error::InvalidRequest, &result)
             } else {
-                (StatusCode::OK, Json(json!({
-                    "success": true,
-                    "session": request.session,
-                    "selector": request.selector,
-                    "text_length": request.text.len()
-                }))).into_response()
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "success": true,
+                        "session": request.session,
+                        "selector": request.selector,
+                        "text_length": request.text.len()
+                    })),
+                )
+                    .into_response()
             }
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
-        Err(_) => error_response(Wbp2Error::InternalError, "Type timed out. The input element may not be focused or visible. Try: click the element first, then type."),
+        Ok(Err(_)) => error_response(
+            Wbp2Error::InternalError,
+            "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'.",
+        ),
+        Err(_) => error_response(
+            Wbp2Error::InternalError,
+            "Type timed out. The input element may not be focused or visible. Try: click the element first, then type.",
+        ),
     }
 }
 
@@ -2945,7 +3241,9 @@ struct ExecuteRequest {
     frame: Option<String>,
 }
 
-fn default_execute_timeout() -> u64 { 30000 }
+fn default_execute_timeout() -> u64 {
+    30000
+}
 
 /// POST /v2/execute - Execute JavaScript and return result
 async fn execute_v2(
@@ -2954,12 +3252,17 @@ async fn execute_v2(
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
     let manager = get_session_manager_v2();
-    
+
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
     };
-    
+
     // Auto-wrap in IIFE when the script uses top-level `return` or `await`.
     //
     // Rules:
@@ -3009,10 +3312,7 @@ async fn execute_v2(
         return error_response(Wbp2Error::InternalError, "Failed to send command");
     }
 
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(request.timeout_ms),
-        rx
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx).await {
         Ok(Ok(Ok(result))) => {
             // Parse result back to proper JSON type (number, bool, null, object, array)
             // Falls back to string if not valid JSON (e.g. plain text from document.title)
@@ -3026,11 +3326,18 @@ async fn execute_v2(
                     "result": typed_result,
                     "elapsed_ms": start.elapsed().as_millis() as u64
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
-        Err(_) => error_response(Wbp2Error::InternalError, "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms."),
+        Ok(Err(_)) => error_response(
+            Wbp2Error::InternalError,
+            "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'.",
+        ),
+        Err(_) => error_response(
+            Wbp2Error::InternalError,
+            "JavaScript execution timed out. The script may have an infinite loop or be waiting for a resource. Try: simplify the script or increase timeout_ms.",
+        ),
     }
 }
 
@@ -3057,7 +3364,9 @@ struct SnapshotRequest {
     frame: Option<String>,
 }
 
-fn default_snapshot_limit() -> usize { 200 }
+fn default_snapshot_limit() -> usize {
+    200
+}
 
 /// POST /snapshot
 ///
@@ -3078,13 +3387,17 @@ async fn snapshot_v2(
 
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", request.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
     };
 
     // Build the same snapshot JS used by the wb CLI
-    let scope_selector_json = serde_json::to_string(
-        request.within.as_deref().unwrap_or("body")
-    ).unwrap_or_else(|_| "\"body\"".to_string());
+    let scope_selector_json = serde_json::to_string(request.within.as_deref().unwrap_or("body"))
+        .unwrap_or_else(|_| "\"body\"".to_string());
 
     let element_selectors = if request.all {
         r#"'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="radio"],[onclick],[tabindex]:not([tabindex="-1"]),h1,h2,h3,h4,h5,h6,p,li,img,table,th,td,label,span[class],div[class]'"#
@@ -3148,19 +3461,24 @@ async fn snapshot_v2(
     match tokio::time::timeout(std::time::Duration::from_secs(15), rx).await {
         Ok(Ok(Ok(result))) => {
             // Result is a JSON string from JS — parse it
-            let snap: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or(serde_json::Value::String(result));
-            let elem_count = snap.get("elements")
+            let snap: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result));
+            let elem_count = snap
+                .get("elements")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
-            (StatusCode::OK, Json(json!({
-                "success": true,
-                "session": request.session,
-                "snapshot": snap,
-                "element_count": elem_count,
-                "elapsed_ms": start.elapsed().as_millis() as u64
-            }))).into_response()
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "session": request.session,
+                    "snapshot": snap,
+                    "element_count": elem_count,
+                    "elapsed_ms": start.elapsed().as_millis() as u64
+                })),
+            )
+                .into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost."),
@@ -3183,7 +3501,12 @@ async fn frames_list(
 
     let handle = match manager.get_handle(&query.session) {
         Some(h) => h,
-        None => return error_response(Wbp2Error::SessionNotFound, &format!("Session '{}' not found", query.session)),
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", query.session),
+            );
+        }
     };
 
     let (tx, rx) = oneshot::channel();
@@ -3203,8 +3526,14 @@ async fn frames_list(
             (StatusCode::OK, Json(parsed)).into_response()
         }
         Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
-        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'."),
-        Err(_) => error_response(Wbp2Error::InternalError, "Frame enumeration timed out. The page may still be loading. Try: wait for page load first."),
+        Ok(Err(_)) => error_response(
+            Wbp2Error::InternalError,
+            "Session communication lost. The session may have crashed. Try: POST /session/acquire to re-acquire, or 'wb session acquire <name>'.",
+        ),
+        Err(_) => error_response(
+            Wbp2Error::InternalError,
+            "Frame enumeration timed out. The page may still be loading. Try: wait for page load first.",
+        ),
     }
 }
 
@@ -3220,7 +3549,7 @@ async fn wait_v2(
     Json(request): Json<WaitRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     // Get session handle (contains v1 session ID)
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
@@ -3238,9 +3567,9 @@ async fn wait_v2(
             );
         }
     };
-    
+
     let session_id = handle.id.clone();
-    
+
     // Use WaitForSelector command
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::WaitForSelector {
@@ -3250,7 +3579,7 @@ async fn wait_v2(
         frame: request.frame.clone(),
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3264,11 +3593,13 @@ async fn wait_v2(
             })),
         );
     }
-    
+
     match tokio::time::timeout(
         std::time::Duration::from_millis(request.timeout_ms + 1000),
-        rx
-    ).await {
+        rx,
+    )
+    .await
+    {
         Ok(Ok(Ok(found))) => (
             StatusCode::OK,
             Json(json!({
@@ -3321,7 +3652,7 @@ async fn wait_v2(
 // ============================================================================
 
 use crate::core::screenshot_v2::{
-    ScreenshotRequest, CaptureMode, get_device_presets, find_device_preset,
+    CaptureMode, ScreenshotRequest, find_device_preset, get_device_presets,
 };
 
 /// POST /v2/screenshot - Advanced screenshot with modes and device emulation
@@ -3330,14 +3661,14 @@ async fn screenshot_v2(
     Json(request): Json<ScreenshotRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     // Build response based on capture mode
     let mode_info = match request.mode {
         CaptureMode::Viewport => "viewport",
         CaptureMode::FullPage => "full_page",
         CaptureMode::Element => "element",
     };
-    
+
     // Device emulation info
     let device_info = if let Some(ref device_name) = request.device {
         if let Some(preset) = find_device_preset(device_name) {
@@ -3365,7 +3696,7 @@ async fn screenshot_v2(
     } else {
         None
     };
-    
+
     // Get session handle (contains v1 session ID)
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
@@ -3383,7 +3714,7 @@ async fn screenshot_v2(
             );
         }
     };
-    
+
     let session_id = handle.id.clone();
 
     // Prepare file save path (auto-save all screenshots)
@@ -3401,11 +3732,14 @@ async fn screenshot_v2(
             id: session_id,
             full_page: false,
             format: format!("{:?}", request.format).to_lowercase(),
-            quality: match request.format { crate::core::screenshot_v2::ImageFormat::Png => None, _ => Some(request.quality as u32) },
+            quality: match request.format {
+                crate::core::screenshot_v2::ImageFormat::Png => None,
+                _ => Some(request.quality as u32),
+            },
             frame: request.frame.clone(),
             resp_tx: tx,
         };
-        
+
         if state.cmd_tx.send(cmd).is_err() {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -3419,11 +3753,10 @@ async fn screenshot_v2(
                 })),
             );
         }
-        
-        return match tokio::time::timeout(
-            std::time::Duration::from_millis(request.timeout_ms),
-            rx
-        ).await {
+
+        return match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+            .await
+        {
             Ok(Ok(Ok(bytes))) => {
                 use base64::Engine;
                 let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -3478,14 +3811,14 @@ async fn screenshot_v2(
             ),
         };
     }
-    
+
     // Use Screenshot command (main frame)
     let (tx, rx) = oneshot::channel();
     let cmd = AppCommand::Screenshot {
         id: session_id,
         resp_tx: tx,
     };
-    
+
     if state.cmd_tx.send(cmd).is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3499,15 +3832,13 @@ async fn screenshot_v2(
             })),
         );
     }
-    
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(request.timeout_ms),
-        rx
-    ).await {
+
+    match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx).await {
         Ok(Ok(Ok(base64_data))) => {
             // Auto-save to file (decode base64 → write)
             use base64::Engine;
-            let saved = base64::engine::general_purpose::STANDARD.decode(&base64_data)
+            let saved = base64::engine::general_purpose::STANDARD
+                .decode(&base64_data)
                 .ok()
                 .and_then(|bytes| std::fs::write(&save_path, &bytes).ok())
                 .is_some();
@@ -3525,7 +3856,7 @@ async fn screenshot_v2(
                     "filename": save_filename,
                 })),
             )
-        },
+        }
         Ok(Ok(Err(e))) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -3565,20 +3896,23 @@ async fn screenshot_v2(
 /// GET /v2/screenshot/devices - List available device presets
 async fn screenshot_devices() -> impl IntoResponse {
     let presets = get_device_presets();
-    
-    let devices: Vec<serde_json::Value> = presets.iter().map(|p| {
-        json!({
-            "name": p.name,
-            "viewport": {
-                "width": p.viewport.width,
-                "height": p.viewport.height,
-                "device_scale_factor": p.viewport.device_scale_factor
-            },
-            "is_mobile": p.viewport.is_mobile,
-            "has_touch": p.viewport.has_touch
+
+    let devices: Vec<serde_json::Value> = presets
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "viewport": {
+                    "width": p.viewport.width,
+                    "height": p.viewport.height,
+                    "device_scale_factor": p.viewport.device_scale_factor
+                },
+                "is_mobile": p.viewport.is_mobile,
+                "has_touch": p.viewport.has_touch
+            })
         })
-    }).collect();
-    
+        .collect();
+
     (
         StatusCode::OK,
         Json(json!({
@@ -3593,9 +3927,7 @@ async fn screenshot_devices() -> impl IntoResponse {
 // Goal API Endpoints
 // ============================================================================
 
-use crate::core::goal::{
-    GoalRequest, GoalType, get_preset_flows, generate_goal_script,
-};
+use crate::core::goal::{GoalRequest, GoalType, generate_goal_script, get_preset_flows};
 
 /// POST /v2/goal - Execute a declarative goal
 async fn goal_execute(
@@ -3603,7 +3935,7 @@ async fn goal_execute(
     Json(request): Json<GoalRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     // Get session handle (contains the v1 session ID)
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
@@ -3621,13 +3953,13 @@ async fn goal_execute(
             );
         }
     };
-    
+
     // The handle.id is the v1 session ID
     let session_id = handle.id.clone();
-    
+
     // Generate script for the goal
     let script = generate_goal_script(&request);
-    
+
     // Get goal type as string
     let goal_type_str = match request.goal_type {
         GoalType::Navigate => "navigate",
@@ -3642,7 +3974,7 @@ async fn goal_execute(
         GoalType::Screenshot => "screenshot",
         GoalType::Custom => "custom",
     };
-    
+
     // Execute based on goal type
     match request.goal_type {
         GoalType::Navigate => {
@@ -3653,7 +3985,7 @@ async fn goal_execute(
                 url: request.target.clone(),
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -3667,11 +3999,10 @@ async fn goal_execute(
                     })),
                 );
             }
-            
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(request.timeout_ms),
-                rx
-            ).await {
+
+            match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+                .await
+            {
                 Ok(Ok(Ok(()))) => (
                     StatusCode::OK,
                     Json(json!({
@@ -3716,7 +4047,7 @@ async fn goal_execute(
                 ),
             }
         }
-        
+
         GoalType::Click | GoalType::Fill | GoalType::Submit | GoalType::Scroll => {
             // Execute script via ExecuteScript command
             let (tx, rx) = oneshot::channel();
@@ -3725,7 +4056,7 @@ async fn goal_execute(
                 script: script.clone(),
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -3739,11 +4070,10 @@ async fn goal_execute(
                     })),
                 );
             }
-            
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(request.timeout_ms),
-                rx
-            ).await {
+
+            match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+                .await
+            {
                 Ok(Ok(Ok(result))) => (
                     StatusCode::OK,
                     Json(json!({
@@ -3789,25 +4119,28 @@ async fn goal_execute(
                 ),
             }
         }
-        
+
         GoalType::Extract => {
             // Use ExecuteScript for extraction
-            let extract_script = format!(r#"
+            let extract_script = format!(
+                r#"
                 (function() {{
                     var els = document.querySelectorAll("{}");
                     var results = [];
                     els.forEach(function(el) {{ results.push(el.textContent.trim()); }});
                     return JSON.stringify(results);
                 }})()
-            "#, request.target.replace('\\', r#"\\"#).replace('"', r#"\""#));
-            
+            "#,
+                request.target.replace('\\', r#"\\"#).replace('"', r#"\""#)
+            );
+
             let (tx, rx) = oneshot::channel();
             let cmd = AppCommand::ExecuteScript {
                 id: session_id.clone(),
                 script: extract_script,
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -3821,11 +4154,10 @@ async fn goal_execute(
                     })),
                 );
             }
-            
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(request.timeout_ms),
-                rx
-            ).await {
+
+            match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+                .await
+            {
                 Ok(Ok(Ok(result))) => (
                     StatusCode::OK,
                     Json(json!({
@@ -3871,11 +4203,15 @@ async fn goal_execute(
                 ),
             }
         }
-        
+
         GoalType::Wait => {
             // Use WaitForSelector command
             let (tx, rx) = oneshot::channel();
-            let frame = request.params.get("frame").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let frame = request
+                .params
+                .get("frame")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let cmd = AppCommand::WaitForSelector {
                 id: session_id.clone(),
                 selector: request.target.clone(),
@@ -3883,7 +4219,7 @@ async fn goal_execute(
                 frame,
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -3897,11 +4233,13 @@ async fn goal_execute(
                     })),
                 );
             }
-            
+
             match tokio::time::timeout(
                 std::time::Duration::from_millis(request.timeout_ms + 1000), // Extra buffer
-                rx
-            ).await {
+                rx,
+            )
+            .await
+            {
                 Ok(Ok(Ok(found))) => (
                     StatusCode::OK,
                     Json(json!({
@@ -3947,12 +4285,17 @@ async fn goal_execute(
                 ),
             }
         }
-        
+
         GoalType::Screenshot => {
-            let frame = request.params.get("frame").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let frame = request
+                .params
+                .get("frame")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             // Prepare file save path (auto-save)
-            let goal_screenshot_dir = crate::core::config::AppConfig::profile_screenshots_dir(&request.session);
+            let goal_screenshot_dir =
+                crate::core::config::AppConfig::profile_screenshots_dir(&request.session);
             let _ = std::fs::create_dir_all(&goal_screenshot_dir);
             let goal_timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
             let goal_save_filename = format!("cap_{}.png", goal_timestamp);
@@ -3969,7 +4312,7 @@ async fn goal_execute(
                     frame,
                     resp_tx: tx,
                 };
-                
+
                 if state.cmd_tx.send(cmd).is_err() {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -3983,11 +4326,13 @@ async fn goal_execute(
                         })),
                     );
                 }
-                
+
                 return match tokio::time::timeout(
                     std::time::Duration::from_millis(request.timeout_ms),
-                    rx
-                ).await {
+                    rx,
+                )
+                .await
+                {
                     Ok(Ok(Ok(bytes))) => {
                         use base64::Engine;
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -4027,14 +4372,14 @@ async fn goal_execute(
                     ),
                 };
             }
-            
+
             // Use Screenshot command (main frame)
             let (tx, rx) = oneshot::channel();
             let cmd = AppCommand::Screenshot {
                 id: session_id.clone(),
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -4048,15 +4393,15 @@ async fn goal_execute(
                     })),
                 );
             }
-            
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(request.timeout_ms),
-                rx
-            ).await {
+
+            match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+                .await
+            {
                 Ok(Ok(Ok(base64_data))) => {
                     // Auto-save to file
                     use base64::Engine;
-                    let _ = base64::engine::general_purpose::STANDARD.decode(&base64_data)
+                    let _ = base64::engine::general_purpose::STANDARD
+                        .decode(&base64_data)
                         .ok()
                         .and_then(|bytes| std::fs::write(&goal_save_path, &bytes).ok());
                     (
@@ -4069,7 +4414,7 @@ async fn goal_execute(
                             "filename": goal_save_filename,
                         })),
                     )
-                },
+                }
                 Ok(Ok(Err(e))) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({
@@ -4105,7 +4450,7 @@ async fn goal_execute(
                 ),
             }
         }
-        
+
         // For other goal types, use script execution
         _ => {
             let (tx, rx) = oneshot::channel();
@@ -4114,7 +4459,7 @@ async fn goal_execute(
                 script: script.clone(),
                 resp_tx: tx,
             };
-            
+
             if state.cmd_tx.send(cmd).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -4128,11 +4473,10 @@ async fn goal_execute(
                     })),
                 );
             }
-            
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(request.timeout_ms),
-                rx
-            ).await {
+
+            match tokio::time::timeout(std::time::Duration::from_millis(request.timeout_ms), rx)
+                .await
+            {
                 Ok(Ok(Ok(result))) => (
                     StatusCode::OK,
                     Json(json!({
@@ -4184,15 +4528,18 @@ async fn goal_execute(
 /// GET /v2/goal/flows - List available preset flows
 async fn goal_list_flows() -> impl IntoResponse {
     let presets = get_preset_flows();
-    
-    let flows: Vec<serde_json::Value> = presets.iter().map(|f| {
-        json!({
-            "name": f.name,
-            "description": f.description,
-            "steps_count": f.steps.len()
+
+    let flows: Vec<serde_json::Value> = presets
+        .iter()
+        .map(|f| {
+            json!({
+                "name": f.name,
+                "description": f.description,
+                "steps_count": f.steps.len()
+            })
         })
-    }).collect();
-    
+        .collect();
+
     (
         StatusCode::OK,
         Json(json!({
@@ -4208,8 +4555,8 @@ async fn goal_list_flows() -> impl IntoResponse {
 // ============================================================================
 
 use crate::core::macro_engine::{
-    MacroExecuteRequest, MacroRegisterRequest, get_preset_macros, 
-    generate_macro_script, generate_spa_detection_script,
+    MacroExecuteRequest, MacroRegisterRequest, generate_macro_script,
+    generate_spa_detection_script, get_preset_macros,
 };
 
 /// Simple session request for SPA detection
@@ -4224,7 +4571,7 @@ async fn macro_execute(
     Json(request): Json<MacroExecuteRequest>,
 ) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     // Get session handle
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
@@ -4242,7 +4589,7 @@ async fn macro_execute(
             );
         }
     };
-    
+
     // Find macro
     let macro_def = match crate::core::macro_engine::find_preset_macro(&request.name) {
         Some(m) => m,
@@ -4260,10 +4607,10 @@ async fn macro_execute(
             );
         }
     };
-    
+
     // Generate executable script
     let script = generate_macro_script(&macro_def, &request.params);
-    
+
     // TODO: Execute script through session handle
     (
         StatusCode::OK,
@@ -4282,18 +4629,21 @@ async fn macro_execute(
 /// GET /v2/macro/list - List available macros
 async fn macro_list() -> impl IntoResponse {
     let macros = get_preset_macros();
-    
-    let list: Vec<serde_json::Value> = macros.iter().map(|m| {
-        json!({
-            "name": m.name,
-            "description": m.description,
-            "required_params": m.required_params,
-            "optional_params": m.optional_params.keys().collect::<Vec<_>>(),
-            "timeout_ms": m.timeout_ms,
-            "builtin": m.builtin
+
+    let list: Vec<serde_json::Value> = macros
+        .iter()
+        .map(|m| {
+            json!({
+                "name": m.name,
+                "description": m.description,
+                "required_params": m.required_params,
+                "optional_params": m.optional_params.keys().collect::<Vec<_>>(),
+                "timeout_ms": m.timeout_ms,
+                "builtin": m.builtin
+            })
         })
-    }).collect();
-    
+        .collect();
+
     (
         StatusCode::OK,
         Json(json!({
@@ -4305,9 +4655,7 @@ async fn macro_list() -> impl IntoResponse {
 }
 
 /// POST /v2/macro/register - Register a custom macro
-async fn macro_register(
-    Json(request): Json<MacroRegisterRequest>,
-) -> impl IntoResponse {
+async fn macro_register(Json(request): Json<MacroRegisterRequest>) -> impl IntoResponse {
     // Validate
     if request.macro_def.name.is_empty() {
         return (
@@ -4322,7 +4670,7 @@ async fn macro_register(
             })),
         );
     }
-    
+
     // TODO: Actually register to persistent storage
     (
         StatusCode::OK,
@@ -4336,11 +4684,9 @@ async fn macro_register(
 }
 
 /// POST /v2/macro/detect-spa - Detect SPA framework
-async fn macro_detect_spa(
-    Json(request): Json<SpaDetectRequest>,
-) -> impl IntoResponse {
+async fn macro_detect_spa(Json(request): Json<SpaDetectRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     // Get session handle
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
@@ -4358,9 +4704,9 @@ async fn macro_detect_spa(
             );
         }
     };
-    
+
     let script = generate_spa_detection_script();
-    
+
     // TODO: Execute script through session handle
     (
         StatusCode::OK,
@@ -4379,16 +4725,14 @@ async fn macro_detect_spa(
 // ============================================================================
 
 use crate::core::media::{
-    ImageCollectRequest, SubtitleRequest, VideoDownloadRequest, 
-    VideoAnalyzeRequest, generate_image_extract_script,
+    ImageCollectRequest, SubtitleRequest, VideoAnalyzeRequest, VideoDownloadRequest,
+    generate_image_extract_script,
 };
 
 /// POST /v2/media/images - Collect images from page
-async fn media_images(
-    Json(request): Json<ImageCollectRequest>,
-) -> impl IntoResponse {
+async fn media_images(Json(request): Json<ImageCollectRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
@@ -4405,9 +4749,9 @@ async fn media_images(
             );
         }
     };
-    
+
     let script = generate_image_extract_script(&request);
-    
+
     // TODO: Execute script and collect images
     (
         StatusCode::OK,
@@ -4423,18 +4767,16 @@ async fn media_images(
 }
 
 /// POST /v2/media/youtube/subtitles - Extract YouTube subtitles
-async fn media_youtube_subtitles(
-    Json(request): Json<SubtitleRequest>,
-) -> impl IntoResponse {
+async fn media_youtube_subtitles(Json(request): Json<SubtitleRequest>) -> impl IntoResponse {
     // Extract video ID from URL
     let video_id = extract_youtube_id(&request.url);
-    
+
     let languages = if request.languages.is_empty() {
         vec!["en".to_string(), "ja".to_string()]
     } else {
         request.languages.clone()
     };
-    
+
     // TODO: Execute yt-dlp for subtitle extraction
     (
         StatusCode::OK,
@@ -4451,12 +4793,10 @@ async fn media_youtube_subtitles(
 }
 
 /// POST /v2/media/youtube/download - Download YouTube video
-async fn media_youtube_download(
-    Json(request): Json<VideoDownloadRequest>,
-) -> impl IntoResponse {
+async fn media_youtube_download(Json(request): Json<VideoDownloadRequest>) -> impl IntoResponse {
     let video_id = extract_youtube_id(&request.url);
     let reference = uuid::Uuid::new_v4().to_string();
-    
+
     // TODO: Execute yt-dlp for video download
     (
         StatusCode::OK,
@@ -4474,11 +4814,9 @@ async fn media_youtube_download(
 }
 
 /// POST /v2/media/analyze - Analyze video with FFmpeg
-async fn media_analyze(
-    Json(request): Json<VideoAnalyzeRequest>,
-) -> impl IntoResponse {
+async fn media_analyze(Json(request): Json<VideoAnalyzeRequest>) -> impl IntoResponse {
     let reference = uuid::Uuid::new_v4().to_string();
-    
+
     // TODO: Execute FFmpeg analysis
     (
         StatusCode::OK,
@@ -4494,9 +4832,7 @@ async fn media_analyze(
 }
 
 /// GET /v2/media/files/:ref - List files in reference
-async fn media_files_list(
-    Path(reference): Path<String>,
-) -> impl IntoResponse {
+async fn media_files_list(Path(reference): Path<String>) -> impl IntoResponse {
     // TODO: Lookup reference in media cache
     (
         StatusCode::OK,
@@ -4515,12 +4851,18 @@ fn extract_youtube_id(url: &str) -> String {
     // Handle various YouTube URL formats
     if let Some(pos) = url.find("v=") {
         let start = pos + 2;
-        let end = url[start..].find('&').map(|p| start + p).unwrap_or(url.len());
+        let end = url[start..]
+            .find('&')
+            .map(|p| start + p)
+            .unwrap_or(url.len());
         return url[start..end].to_string();
     }
     if let Some(pos) = url.find("youtu.be/") {
         let start = pos + 9;
-        let end = url[start..].find('?').map(|p| start + p).unwrap_or(url.len());
+        let end = url[start..]
+            .find('?')
+            .map(|p| start + p)
+            .unwrap_or(url.len());
         return url[start..end].to_string();
     }
     // Assume it's already a video ID
@@ -4532,13 +4874,13 @@ fn extract_youtube_id(url: &str) -> String {
 // ============================================================================
 
 use crate::core::ai::{
-    AiConfig, AiLoginRequest, AiImageAnalyzeRequest, AiExtractRequest,
-    AiUsageTracker,
+    AiConfig, AiExtractRequest, AiImageAnalyzeRequest, AiLoginRequest, AiUsageTracker,
 };
 
 /// Global AI config
 static AI_CONFIG: std::sync::OnceLock<std::sync::RwLock<AiConfig>> = std::sync::OnceLock::new();
-static AI_USAGE: std::sync::OnceLock<std::sync::RwLock<AiUsageTracker>> = std::sync::OnceLock::new();
+static AI_USAGE: std::sync::OnceLock<std::sync::RwLock<AiUsageTracker>> =
+    std::sync::OnceLock::new();
 
 fn get_ai_config() -> &'static std::sync::RwLock<AiConfig> {
     AI_CONFIG.get_or_init(|| std::sync::RwLock::new(AiConfig::default()))
@@ -4549,11 +4891,9 @@ fn get_ai_usage() -> &'static std::sync::RwLock<AiUsageTracker> {
 }
 
 /// POST /v2/ai/config - Update AI configuration
-async fn ai_config_update(
-    Json(config): Json<AiConfig>,
-) -> impl IntoResponse {
+async fn ai_config_update(Json(config): Json<AiConfig>) -> impl IntoResponse {
     let ai_config = get_ai_config();
-    
+
     if let Ok(mut cfg) = ai_config.write() {
         *cfg = config.clone();
         (
@@ -4585,7 +4925,7 @@ async fn ai_config_update(
 /// GET /v2/ai/config - Get AI configuration
 async fn ai_config_get() -> impl IntoResponse {
     let ai_config = get_ai_config();
-    
+
     if let Ok(cfg) = ai_config.read() {
         (
             StatusCode::OK,
@@ -4616,11 +4956,9 @@ async fn ai_config_get() -> impl IntoResponse {
 }
 
 /// POST /v2/ai/login - AI-assisted login
-async fn ai_login(
-    Json(request): Json<AiLoginRequest>,
-) -> impl IntoResponse {
+async fn ai_login(Json(request): Json<AiLoginRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
@@ -4637,11 +4975,11 @@ async fn ai_login(
             );
         }
     };
-    
+
     // Check AI availability
     let ai_config = get_ai_config();
     let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
-    
+
     if !is_available {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -4655,7 +4993,7 @@ async fn ai_login(
             })),
         );
     }
-    
+
     // TODO: Implement actual AI login flow
     // 1. Take screenshot
     // 2. Send to Gemini for form detection
@@ -4675,13 +5013,11 @@ async fn ai_login(
 }
 
 /// POST /v2/ai/images/analyze - AI image analysis
-async fn ai_images_analyze(
-    Json(request): Json<AiImageAnalyzeRequest>,
-) -> impl IntoResponse {
+async fn ai_images_analyze(Json(request): Json<AiImageAnalyzeRequest>) -> impl IntoResponse {
     // Check AI availability
     let ai_config = get_ai_config();
     let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
-    
+
     if !is_available {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -4695,7 +5031,7 @@ async fn ai_images_analyze(
             })),
         );
     }
-    
+
     // TODO: Implement Gemini image analysis
     (
         StatusCode::OK,
@@ -4710,11 +5046,9 @@ async fn ai_images_analyze(
 }
 
 /// POST /v2/ai/extract - AI-assisted data extraction
-async fn ai_extract(
-    Json(request): Json<AiExtractRequest>,
-) -> impl IntoResponse {
+async fn ai_extract(Json(request): Json<AiExtractRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
@@ -4731,11 +5065,11 @@ async fn ai_extract(
             );
         }
     };
-    
+
     // Check AI availability
     let ai_config = get_ai_config();
     let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
-    
+
     if !is_available {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -4749,7 +5083,7 @@ async fn ai_extract(
             })),
         );
     }
-    
+
     // TODO: Implement AI extraction
     (
         StatusCode::OK,
@@ -4767,7 +5101,7 @@ async fn ai_extract(
 /// GET /v2/ai/usage - Get AI usage statistics
 async fn ai_usage_stats() -> impl IntoResponse {
     let usage = get_ai_usage();
-    
+
     if let Ok(tracker) = usage.read() {
         (
             StatusCode::OK,
@@ -4797,14 +5131,15 @@ async fn ai_usage_stats() -> impl IntoResponse {
 // ============================================================================
 
 use crate::core::download::{
-    DownloadTriggerRequest, BatchDownloadRequest, CleanupRequest,
-    StorageConfig, DownloadManager, StorageManager,
-    PersistRequest, ExtendTtlRequest,
+    BatchDownloadRequest, CleanupRequest, DownloadManager, DownloadTriggerRequest,
+    ExtendTtlRequest, PersistRequest, StorageConfig, StorageManager,
 };
 
 /// Global download manager
-static DOWNLOAD_MANAGER: std::sync::OnceLock<std::sync::RwLock<DownloadManager>> = std::sync::OnceLock::new();
-static STORAGE_MANAGER: std::sync::OnceLock<std::sync::RwLock<StorageManager>> = std::sync::OnceLock::new();
+static DOWNLOAD_MANAGER: std::sync::OnceLock<std::sync::RwLock<DownloadManager>> =
+    std::sync::OnceLock::new();
+static STORAGE_MANAGER: std::sync::OnceLock<std::sync::RwLock<StorageManager>> =
+    std::sync::OnceLock::new();
 
 fn get_download_manager() -> &'static std::sync::RwLock<DownloadManager> {
     DOWNLOAD_MANAGER.get_or_init(|| std::sync::RwLock::new(DownloadManager::new()))
@@ -4815,11 +5150,9 @@ fn get_storage_manager() -> &'static std::sync::RwLock<StorageManager> {
 }
 
 /// POST /v2/download/trigger - Trigger a download
-async fn download_trigger(
-    Json(request): Json<DownloadTriggerRequest>,
-) -> impl IntoResponse {
+async fn download_trigger(Json(request): Json<DownloadTriggerRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
@@ -4836,12 +5169,13 @@ async fn download_trigger(
             );
         }
     };
-    
+
     let download_manager = get_download_manager();
-    let download_id = download_manager.write()
+    let download_id = download_manager
+        .write()
         .map(|mut mgr| mgr.start_download(&request.url, request.filename.clone()))
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
-    
+
     // TODO: Trigger actual WebView2 download
     (
         StatusCode::OK,
@@ -4857,11 +5191,9 @@ async fn download_trigger(
 }
 
 /// GET /v2/download/status/:id - Get download status
-async fn download_status(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn download_status(Path(id): Path<String>) -> impl IntoResponse {
     let download_manager = get_download_manager();
-    
+
     if let Ok(mgr) = download_manager.read() {
         if let Some(progress) = mgr.get_progress(&id) {
             return (
@@ -4879,7 +5211,7 @@ async fn download_status(
             );
         }
     }
-    
+
     (
         StatusCode::NOT_FOUND,
         Json(json!({
@@ -4894,11 +5226,9 @@ async fn download_status(
 }
 
 /// POST /v2/download/batch - Start batch download
-async fn download_batch(
-    Json(request): Json<BatchDownloadRequest>,
-) -> impl IntoResponse {
+async fn download_batch(Json(request): Json<BatchDownloadRequest>) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-    
+
     let _handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
@@ -4915,12 +5245,13 @@ async fn download_batch(
             );
         }
     };
-    
+
     let download_manager = get_download_manager();
-    let (batch_id, download_ids) = download_manager.write()
+    let (batch_id, download_ids) = download_manager
+        .write()
         .map(|mut mgr| mgr.create_batch(&request.urls))
         .unwrap_or_else(|_| (uuid::Uuid::new_v4().to_string(), Vec::new()));
-    
+
     (
         StatusCode::OK,
         Json(json!({
@@ -4937,7 +5268,7 @@ async fn download_batch(
 /// GET /v2/storage/status - Get storage status
 async fn storage_status() -> impl IntoResponse {
     let storage_manager = get_storage_manager();
-    
+
     if let Ok(mgr) = storage_manager.read() {
         let status = mgr.get_status();
         return (
@@ -4952,7 +5283,7 @@ async fn storage_status() -> impl IntoResponse {
             })),
         );
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -4967,11 +5298,9 @@ async fn storage_status() -> impl IntoResponse {
 }
 
 /// POST /v2/storage/cleanup - Cleanup expired files
-async fn storage_cleanup(
-    Json(request): Json<CleanupRequest>,
-) -> impl IntoResponse {
+async fn storage_cleanup(Json(request): Json<CleanupRequest>) -> impl IntoResponse {
     let storage_manager = get_storage_manager();
-    
+
     if let Ok(mut mgr) = storage_manager.write() {
         let result = mgr.cleanup_expired(request.dry_run);
         return (
@@ -4985,7 +5314,7 @@ async fn storage_cleanup(
             })),
         );
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -5000,11 +5329,9 @@ async fn storage_cleanup(
 }
 
 /// POST /v2/config/storage - Update storage configuration
-async fn config_storage(
-    Json(config): Json<StorageConfig>,
-) -> impl IntoResponse {
+async fn config_storage(Json(config): Json<StorageConfig>) -> impl IntoResponse {
     let storage_manager = get_storage_manager();
-    
+
     if let Ok(mut mgr) = storage_manager.write() {
         mgr.config = config.clone();
         return (
@@ -5018,7 +5345,7 @@ async fn config_storage(
             })),
         );
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -5049,8 +5376,12 @@ async fn media_screenshots_list() -> impl IntoResponse {
                             if let Ok(file_meta) = entry.metadata() {
                                 if file_meta.is_file() {
                                     if let Some(name) = entry.file_name().to_str() {
-                                        let modified_ms = file_meta.modified().ok()
-                                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                        let modified_ms = file_meta
+                                            .modified()
+                                            .ok()
+                                            .and_then(|t| {
+                                                t.duration_since(std::time::UNIX_EPOCH).ok()
+                                            })
                                             .map(|d| d.as_millis() as u64)
                                             .unwrap_or(0);
                                         files.push((modified_ms, serde_json::json!({
@@ -5090,21 +5421,27 @@ async fn media_screenshots_get(
 ) -> impl IntoResponse {
     use axum::body::Body;
     use axum::http::header;
-    
+
     // Security: prevent path traversal
-    if filename.contains("..") || filename.contains('/') || filename.contains('\\') 
-        || session.contains("..") || session.contains('/') || session.contains('\\') {
+    if filename.contains("..")
+        || filename.contains('/')
+        || filename.contains('\\')
+        || session.contains("..")
+        || session.contains('/')
+        || session.contains('\\')
+    {
         return (
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "application/json")],
             Body::from(r#"{"error": "Invalid path"}"#),
-        ).into_response();
+        )
+            .into_response();
     }
-    
+
     let screenshots_dir = crate::core::config::AppConfig::profile_screenshots_dir(&session);
-    
+
     let filepath = screenshots_dir.join(&filename);
-    
+
     match std::fs::read(&filepath) {
         Ok(data) => {
             let content_type = if filename.ends_with(".webp") {
@@ -5118,24 +5455,22 @@ async fn media_screenshots_get(
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, content_type)],
                 Body::from(data),
-            ).into_response()
+            )
+                .into_response()
         }
-        Err(e) => {
-            (
-                StatusCode::NOT_FOUND,
-                [(header::CONTENT_TYPE, "application/json")],
-                Body::from(format!(r#"{{"error": "Screenshot not found: {}"}}"#, e)),
-            ).into_response()
-        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            Body::from(format!(r#"{{"error": "Screenshot not found: {}"}}"#, e)),
+        )
+            .into_response(),
     }
 }
 
 /// POST /v2/media/persist - Persist a file reference
-async fn media_persist(
-    Json(request): Json<PersistRequest>,
-) -> impl IntoResponse {
+async fn media_persist(Json(request): Json<PersistRequest>) -> impl IntoResponse {
     let storage_manager = get_storage_manager();
-    
+
     if let Ok(mut mgr) = storage_manager.write() {
         match mgr.persist(&request.file_ref) {
             Ok(()) => {
@@ -5164,7 +5499,7 @@ async fn media_persist(
             }
         }
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -5179,11 +5514,9 @@ async fn media_persist(
 }
 
 /// POST /v2/media/extend - Extend TTL of a file reference
-async fn media_extend_ttl(
-    Json(request): Json<ExtendTtlRequest>,
-) -> impl IntoResponse {
+async fn media_extend_ttl(Json(request): Json<ExtendTtlRequest>) -> impl IntoResponse {
     let storage_manager = get_storage_manager();
-    
+
     if let Ok(mut mgr) = storage_manager.write() {
         match mgr.extend_ttl(&request.file_ref, request.additional_seconds) {
             Ok(new_expires) => {
@@ -5212,7 +5545,7 @@ async fn media_extend_ttl(
             }
         }
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -5230,9 +5563,7 @@ async fn media_extend_ttl(
 // Job Management & Batch API Endpoints
 // ============================================================================
 
-use crate::core::comm::{
-    JobManager, JobStatus, JobType, BatchRequest, BatchOperationResult,
-};
+use crate::core::comm::{BatchOperationResult, BatchRequest, JobManager, JobStatus, JobType};
 
 /// Global job manager
 static JOB_MANAGER: std::sync::OnceLock<std::sync::RwLock<JobManager>> = std::sync::OnceLock::new();
@@ -5242,11 +5573,9 @@ fn get_job_manager() -> &'static std::sync::RwLock<JobManager> {
 }
 
 /// GET /v2/jobs/:id - Get job status
-async fn job_get(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn job_get(Path(id): Path<String>) -> impl IntoResponse {
     let job_manager = get_job_manager();
-    
+
     if let Ok(mgr) = job_manager.read() {
         if let Some(job) = mgr.get_job(&id) {
             return (
@@ -5269,7 +5598,7 @@ async fn job_get(
             );
         }
     }
-    
+
     (
         StatusCode::NOT_FOUND,
         Json(json!({
@@ -5284,11 +5613,9 @@ async fn job_get(
 }
 
 /// DELETE /v2/jobs/:id - Cancel a job
-async fn job_cancel(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn job_cancel(Path(id): Path<String>) -> impl IntoResponse {
     let job_manager = get_job_manager();
-    
+
     if let Ok(mut mgr) = job_manager.write() {
         if mgr.cancel_job(&id) {
             return (
@@ -5300,7 +5627,7 @@ async fn job_cancel(
                 })),
             );
         }
-        
+
         // Check if job exists but cannot be cancelled
         if mgr.get_job(&id).is_some() {
             return (
@@ -5316,7 +5643,7 @@ async fn job_cancel(
             );
         }
     }
-    
+
     (
         StatusCode::NOT_FOUND,
         Json(json!({
@@ -5342,7 +5669,7 @@ async fn job_list(
     axum::extract::Query(query): axum::extract::Query<JobListQuery>,
 ) -> impl IntoResponse {
     let job_manager = get_job_manager();
-    
+
     if let Ok(mgr) = job_manager.read() {
         let status_filter = query.status.as_ref().and_then(|s| match s.as_str() {
             "pending" => Some(JobStatus::Pending),
@@ -5352,18 +5679,21 @@ async fn job_list(
             "cancelled" => Some(JobStatus::Cancelled),
             _ => None,
         });
-        
-        let jobs: Vec<_> = mgr.list_jobs(status_filter)
+
+        let jobs: Vec<_> = mgr
+            .list_jobs(status_filter)
             .iter()
-            .map(|job| json!({
-                "id": job.id,
-                "type": format!("{:?}", job.job_type),
-                "status": format!("{:?}", job.status),
-                "created_at": job.created_at,
-                "percent": job.percent
-            }))
+            .map(|job| {
+                json!({
+                    "id": job.id,
+                    "type": format!("{:?}", job.job_type),
+                    "status": format!("{:?}", job.status),
+                    "created_at": job.created_at,
+                    "percent": job.percent
+                })
+            })
             .collect();
-        
+
         return (
             StatusCode::OK,
             Json(json!({
@@ -5373,7 +5703,7 @@ async fn job_list(
             })),
         );
     }
-    
+
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({
@@ -5388,18 +5718,19 @@ async fn job_list(
 }
 
 /// POST /v2/batch - Execute batch operations
-async fn batch_execute(
-    Json(request): Json<BatchRequest>,
-) -> impl IntoResponse {
+async fn batch_execute(Json(request): Json<BatchRequest>) -> impl IntoResponse {
     let job_manager = get_job_manager();
-    
+
     // Create a batch job
-    let job_id = job_manager.write()
+    let job_id = job_manager
+        .write()
         .map(|mut mgr| mgr.create_job(JobType::Batch, request.webhook.clone()))
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
-    
+
     // TODO: Implement actual batch execution with dependency resolution
-    let results: Vec<BatchOperationResult> = request.operations.iter()
+    let results: Vec<BatchOperationResult> = request
+        .operations
+        .iter()
         .map(|op| BatchOperationResult {
             id: op.id.clone(),
             success: true,
@@ -5412,10 +5743,10 @@ async fn batch_execute(
             error: None,
         })
         .collect();
-    
+
     let completed = results.iter().filter(|r| r.success).count();
     let failed = results.len() - completed;
-    
+
     (
         StatusCode::OK,
         Json(json!({
@@ -5474,9 +5805,9 @@ async fn mcp_v3_handler(
     Json(request): Json<McpV3Request>,
 ) -> Json<McpResponse> {
     let id = request.id.clone().unwrap_or(serde_json::Value::Null);
-    
+
     tracing::info!("MCP v3 request: {}", request.method);
-    
+
     let response = match request.method.as_str() {
         "initialize" => McpResponse {
             jsonrpc: "2.0".to_string(),
@@ -5494,14 +5825,14 @@ async fn mcp_v3_handler(
             })),
             error: None,
         },
-        
+
         "initialized" | "notifications/initialized" => McpResponse {
             jsonrpc: "2.0".to_string(),
             id,
             result: Some(serde_json::json!({})),
             error: None,
         },
-        
+
         "tools/list" => McpResponse {
             jsonrpc: "2.0".to_string(),
             id,
@@ -5510,7 +5841,7 @@ async fn mcp_v3_handler(
             })),
             error: None,
         },
-        
+
         "tools/call" => {
             let params = request.params.as_ref();
             let tool_name = params
@@ -5521,12 +5852,12 @@ async fn mcp_v3_handler(
                 .and_then(|p| p.get("arguments"))
                 .cloned()
                 .unwrap_or(serde_json::json!({}));
-            
+
             tracing::info!("MCP v3 tool call: {} with args: {}", tool_name, arguments);
-            
+
             // Route to MCP v3 tools
             let result = crate::mcp_v3::tools::route_tool(tool_name, arguments, &state).await;
-            
+
             if result.success {
                 let content: Vec<serde_json::Value> = result.content
                     .unwrap_or_default()
@@ -5540,7 +5871,7 @@ async fn mcp_v3_handler(
                         }
                     })
                     .collect();
-                
+
                 McpResponse {
                     jsonrpc: "2.0".to_string(),
                     id,
@@ -5556,7 +5887,7 @@ async fn mcp_v3_handler(
                     message: "Unknown error".to_string(),
                     details: None,
                 });
-                
+
                 McpResponse {
                     jsonrpc: "2.0".to_string(),
                     id,
@@ -5571,7 +5902,7 @@ async fn mcp_v3_handler(
                 }
             }
         }
-        
+
         "resources/list" => {
             // Dynamically list screenshots as MCP resources
             let profiles_dir = crate::core::config::AppConfig::profiles_dir();
@@ -5579,13 +5910,20 @@ async fn mcp_v3_handler(
             let mut resources = Vec::new();
             if let Ok(sessions) = std::fs::read_dir(&profiles_dir) {
                 for session_entry in sessions.flatten() {
-                    if session_entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+                    if session_entry
+                        .metadata()
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false)
+                    {
                         let session_name = session_entry.file_name().to_string_lossy().to_string();
                         let screenshots_dir = session_entry.path().join("screenshots");
                         if let Ok(entries) = std::fs::read_dir(&screenshots_dir) {
                             for entry in entries.flatten() {
                                 if let Some(name) = entry.file_name().to_str() {
-                                    if name.ends_with(".png") || name.ends_with(".webp") || name.ends_with(".jpg") {
+                                    if name.ends_with(".png")
+                                        || name.ends_with(".webp")
+                                        || name.ends_with(".jpg")
+                                    {
                                         let cfg = crate::core::config::get_config();
                                         let port = cfg.server.port;
                                         resources.push(serde_json::json!({
@@ -5601,7 +5939,7 @@ async fn mcp_v3_handler(
                     }
                 }
             }
-            
+
             McpResponse {
                 jsonrpc: "2.0".to_string(),
                 id,
@@ -5610,15 +5948,15 @@ async fn mcp_v3_handler(
                 })),
                 error: None,
             }
-        },
-        
+        }
+
         "ping" => McpResponse {
             jsonrpc: "2.0".to_string(),
             id,
             result: Some(serde_json::json!({})),
             error: None,
         },
-        
+
         _ => McpResponse {
             jsonrpc: "2.0".to_string(),
             id,
@@ -5629,7 +5967,7 @@ async fn mcp_v3_handler(
             }),
         },
     };
-    
+
     Json(response)
 }
 
@@ -5643,9 +5981,7 @@ async fn mcp_v3_tools_list() -> impl IntoResponse {
 // ============================================================================
 
 /// POST /upload - Multipart file upload
-async fn upload_file(
-    mut multipart: axum::extract::Multipart,
-) -> impl IntoResponse {
+async fn upload_file(mut multipart: axum::extract::Multipart) -> impl IntoResponse {
     use crate::core::upload;
 
     let mut session = String::new();
@@ -5655,16 +5991,25 @@ async fn upload_file(
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
-            "session" => { session = field.text().await.unwrap_or_default(); }
-            "filename" => { filename_override = Some(field.text().await.unwrap_or_default()); }
+            "session" => {
+                session = field.text().await.unwrap_or_default();
+            }
+            "filename" => {
+                filename_override = Some(field.text().await.unwrap_or_default());
+            }
             "file" => {
                 let fname = field.file_name().unwrap_or("upload").to_string();
                 match field.bytes().await {
-                    Ok(bytes) => { file_data = Some((fname, bytes.to_vec())); }
+                    Ok(bytes) => {
+                        file_data = Some((fname, bytes.to_vec()));
+                    }
                     Err(e) => {
-                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                            "success": false, "error": format!("Failed to read file: {e}")
-                        })));
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "success": false, "error": format!("Failed to read file: {e}")
+                            })),
+                        );
                     }
                 }
             }
@@ -5674,27 +6019,39 @@ async fn upload_file(
 
     // Validate
     if session.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": "Missing 'session' field"
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": "Missing 'session' field"
+            })),
+        );
     }
     if let Err(e) = upload::validate_session_name(&session) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "error": e })),
+        );
     }
 
     let (original_name, data) = match file_data {
         Some(d) => d,
         None => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "success": false, "error": "Missing 'file' field"
-            })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "error": "Missing 'file' field"
+                })),
+            );
         }
     };
 
     if data.len() as u64 > upload::MAX_UPLOAD_SIZE {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
+            })),
+        );
     }
 
     let filename = filename_override.as_deref().unwrap_or(&original_name);
@@ -5702,95 +6059,137 @@ async fn upload_file(
 }
 
 /// POST /upload/base64 - Base64 JSON upload (for CLI/MCP)
-async fn upload_base64(
-    Json(request): Json<serde_json::Value>,
-) -> impl IntoResponse {
+async fn upload_base64(Json(request): Json<serde_json::Value>) -> impl IntoResponse {
     use crate::core::upload;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-    let session = request.get("session").and_then(|v| v.as_str()).unwrap_or("");
-    let filename = request.get("filename").and_then(|v| v.as_str()).unwrap_or("upload");
+    let session = request
+        .get("session")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let filename = request
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .unwrap_or("upload");
     let data_b64 = request.get("data").and_then(|v| v.as_str()).unwrap_or("");
 
     if session.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": "Missing 'session' field"
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": "Missing 'session' field"
+            })),
+        );
     }
     if let Err(e) = upload::validate_session_name(session) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "error": e })),
+        );
     }
     if data_b64.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": "Missing 'data' field (base64-encoded)"
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": "Missing 'data' field (base64-encoded)"
+            })),
+        );
     }
 
     let data = match STANDARD.decode(data_b64.trim()) {
         Ok(d) => d,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "success": false, "error": format!("Base64 decode error: {e}")
-            })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "error": format!("Base64 decode error: {e}")
+                })),
+            );
         }
     };
 
     if data.len() as u64 > upload::MAX_UPLOAD_SIZE {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": format!("File too large: {} bytes (max {})", data.len(), upload::MAX_UPLOAD_SIZE)
+            })),
+        );
     }
 
     save_upload_and_respond(session, filename, &data)
 }
 
 /// Common upload save logic
-fn save_upload_and_respond(session: &str, filename: &str, data: &[u8]) -> (StatusCode, Json<serde_json::Value>) {
+fn save_upload_and_respond(
+    session: &str,
+    filename: &str,
+    data: &[u8],
+) -> (StatusCode, Json<serde_json::Value>) {
     use crate::core::upload;
 
     let dir = upload::uploads_dir(session);
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": format!("Failed to create upload dir: {e}")
-        })));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false, "error": format!("Failed to create upload dir: {e}")
+            })),
+        );
     }
 
     let stored_filename = upload::sanitize_and_store_filename(filename);
     let file_path = dir.join(&stored_filename);
     let mime_type = upload::detect_mime_type(filename);
-    let upload_id = stored_filename.split('_').next().unwrap_or("unknown").to_string();
+    let upload_id = stored_filename
+        .split('_')
+        .next()
+        .unwrap_or("unknown")
+        .to_string();
 
     if let Err(e) = std::fs::write(&file_path, data) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": format!("File write error: {e}")
-        })));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false, "error": format!("File write error: {e}")
+            })),
+        );
     }
 
     let url = format!("/uploads/{}/{}", session, stored_filename);
 
-    tracing::info!("[upload] Saved {} ({} bytes) → {}", stored_filename, data.len(), file_path.display());
+    tracing::info!(
+        "[upload] Saved {} ({} bytes) → {}",
+        stored_filename,
+        data.len(),
+        file_path.display()
+    );
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "success": true,
-        "upload_id": upload_id,
-        "filename": filename,
-        "stored_filename": stored_filename,
-        "size": data.len(),
-        "mime_type": mime_type,
-        "session": session,
-        "url": url,
-        "file_path": file_path.to_string_lossy(),
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "upload_id": upload_id,
+            "filename": filename,
+            "stored_filename": stored_filename,
+            "size": data.len(),
+            "mime_type": mime_type,
+            "session": session,
+            "url": url,
+            "file_path": file_path.to_string_lossy(),
+        })),
+    )
 }
 
 /// GET /uploads/:session - List uploaded files for a session
-async fn upload_list(
-    Path(session): Path<String>,
-) -> impl IntoResponse {
+async fn upload_list(Path(session): Path<String>) -> impl IntoResponse {
     use crate::core::upload;
 
     if let Err(e) = upload::validate_session_name(&session) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "error": e })),
+        );
     }
 
     let dir = upload::uploads_dir(&session);
@@ -5802,11 +6201,15 @@ async fn upload_list(
                 if let Ok(meta) = entry.metadata() {
                     if meta.is_file() {
                         let fname = entry.file_name().to_string_lossy().to_string();
-                        let uploaded_at = meta.modified().ok()
+                        let uploaded_at = meta
+                            .modified()
+                            .ok()
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                                .unwrap_or_default())
+                            .map(|d| {
+                                chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                            })
                             .unwrap_or_default();
 
                         files.push(serde_json::json!({
@@ -5829,30 +6232,39 @@ async fn upload_list(
         at_b.cmp(at_a)
     });
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "success": true,
-        "session": session,
-        "files": files,
-        "count": files.len(),
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "session": session,
+            "files": files,
+            "count": files.len(),
+        })),
+    )
 }
 
 /// GET /uploads/:session/:filename - Serve an uploaded file
-async fn upload_serve(
-    Path((session, filename)): Path<(String, String)>,
-) -> impl IntoResponse {
+async fn upload_serve(Path((session, filename)): Path<(String, String)>) -> impl IntoResponse {
+    use crate::core::upload;
     use axum::body::Body;
     use axum::http::header;
-    use crate::core::upload;
 
     // Security: prevent path traversal
     if let Err(_) = upload::validate_session_name(&session) {
-        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "application/json")],
-            Body::from(r#"{"error": "Invalid session"}"#)).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            Body::from(r#"{"error": "Invalid session"}"#),
+        )
+            .into_response();
     }
     if let Err(_) = upload::validate_filename(&filename) {
-        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "application/json")],
-            Body::from(r#"{"error": "Invalid filename"}"#)).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            Body::from(r#"{"error": "Invalid filename"}"#),
+        )
+            .into_response();
     }
 
     let filepath = upload::uploads_dir(&session).join(&filename);
@@ -5860,49 +6272,66 @@ async fn upload_serve(
     match std::fs::read(&filepath) {
         Ok(data) => {
             let content_type = upload::detect_mime_type(&filename);
-            (StatusCode::OK, [(header::CONTENT_TYPE, content_type.as_str())],
-                Body::from(data)).into_response()
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, content_type.as_str())],
+                Body::from(data),
+            )
+                .into_response()
         }
-        Err(e) => {
-            (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "application/json")],
-                Body::from(format!(r#"{{"error": "File not found: {e}"}}"#))).into_response()
-        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            Body::from(format!(r#"{{"error": "File not found: {e}"}}"#)),
+        )
+            .into_response(),
     }
 }
 
 /// DELETE /uploads/:session/:filename - Delete an uploaded file
-async fn upload_delete(
-    Path((session, filename)): Path<(String, String)>,
-) -> impl IntoResponse {
+async fn upload_delete(Path((session, filename)): Path<(String, String)>) -> impl IntoResponse {
     use crate::core::upload;
 
     if let Err(e) = upload::validate_session_name(&session) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "error": e })),
+        );
     }
     if let Err(e) = upload::validate_filename(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "success": false, "error": e })),
+        );
     }
 
     let filepath = upload::uploads_dir(&session).join(&filename);
 
     if !filepath.exists() {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "success": false, "error": "File not found"
-        })));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "success": false, "error": "File not found"
+            })),
+        );
     }
 
     match std::fs::remove_file(&filepath) {
         Ok(()) => {
             tracing::info!("[upload] Deleted: {}", filepath.display());
-            (StatusCode::OK, Json(serde_json::json!({
-                "success": true, "deleted": filename
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true, "deleted": filename
+                })),
+            )
         }
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
                 "success": false, "error": format!("Delete failed: {e}")
-            })))
-        }
+            })),
+        ),
     }
 }
 
@@ -5917,47 +6346,74 @@ async fn form_inject_file(
 ) -> impl IntoResponse {
     use crate::core::upload;
 
-    let session = request.get("session").and_then(|v| v.as_str()).unwrap_or("default");
-    let selector = request.get("selector").and_then(|v| v.as_str()).unwrap_or("input[type=file]");
+    let session = request
+        .get("session")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let selector = request
+        .get("selector")
+        .and_then(|v| v.as_str())
+        .unwrap_or("input[type=file]");
     let file_ref = request.get("file").and_then(|v| v.as_str()).unwrap_or("");
     let frame = request.get("frame").and_then(|v| v.as_str());
 
     if file_ref.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false, "error": "Missing 'file' field (upload URL or absolute path)"
-        })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false, "error": "Missing 'file' field (upload URL or absolute path)"
+            })),
+        );
     }
 
     // Resolve file path: if starts with /uploads/, resolve to filesystem path
     let file_path = if file_ref.starts_with("/uploads/") {
-        let parts: Vec<&str> = file_ref.trim_start_matches("/uploads/").splitn(2, '/').collect();
+        let parts: Vec<&str> = file_ref
+            .trim_start_matches("/uploads/")
+            .splitn(2, '/')
+            .collect();
         if parts.len() != 2 {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "success": false, "error": "Invalid upload URL format"
-            })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false, "error": "Invalid upload URL format"
+                })),
+            );
         }
         let upload_session = parts[0];
         let upload_filename = parts[1];
         if let Err(e) = upload::validate_session_name(upload_session) {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "success": false, "error": e })),
+            );
         }
         if let Err(e) = upload::validate_filename(upload_filename) {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "success": false, "error": e })),
+            );
         }
         let path = upload::uploads_dir(upload_session).join(upload_filename);
         if !path.exists() {
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({
-                "success": false, "error": "Uploaded file not found"
-            })));
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "success": false, "error": "Uploaded file not found"
+                })),
+            );
         }
         path.to_string_lossy().to_string()
     } else {
         // Assume absolute filesystem path
         let path = std::path::PathBuf::from(file_ref);
         if !path.exists() {
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({
-                "success": false, "error": "File not found at specified path"
-            })));
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "success": false, "error": "File not found at specified path"
+                })),
+            );
         }
         file_ref.to_string()
     };
@@ -5976,38 +6432,44 @@ async fn form_inject_file(
     };
 
     if state.cmd_tx.send(cmd).is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": "Failed to send command to session"
-        })));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false, "error": "Failed to send command to session"
+            })),
+        );
     }
 
     match resp_rx.await {
-        Ok(Ok(result)) => {
-            (StatusCode::OK, Json(serde_json::json!({
+        Ok(Ok(result)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
                 "success": true,
                 "selector": selector,
                 "file": file_path,
                 "method": "cdp_dom_set_file_input_files",
                 "result": result,
-            })))
-        }
-        Ok(Err(e)) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            })),
+        ),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
                 "success": false, "error": e,
-            })))
-        }
-        Err(_) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
                 "success": false, "error": "Session command channel closed",
-            })))
-        }
+            })),
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_error_codes() {
         assert_eq!(Wbp2Error::SessionNotFound.code(), "WBP2_001");

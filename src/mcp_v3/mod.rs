@@ -10,7 +10,7 @@
 //! - execute: JavaScript execution
 //! - agent: Agentic mode (future)
 
-pub mod types;
-pub mod tools;
 pub mod robustness;
+pub mod tools;
+pub mod types;
 pub mod visual_interactivity;

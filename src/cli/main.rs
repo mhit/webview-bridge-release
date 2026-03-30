@@ -8,7 +8,11 @@ mod refs;
 mod updater;
 
 #[derive(Parser)]
-#[command(name = "wb", version, about = "WebView Bridge CLI - Token-efficient browser automation", after_help = "\
+#[command(
+    name = "wb",
+    version,
+    about = "WebView Bridge CLI - Token-efficient browser automation",
+    after_help = "\
 QUICK START:
   wb auth save <TOKEN>       Save server token (shown at server startup)
   wb session acquire mysite  Create/activate a browser session (sessions are PERSISTENT)
@@ -47,10 +51,16 @@ ENVIRONMENT VARIABLES:
   WB_HOST              Server address (default: http://127.0.0.1:9400)
   WB_TOKEN             Bearer token for authentication
   WB_NO_UPDATE_CHECK   Set to 1 to disable update checks
-  WEBVIEW_BRIDGE_DATA_PATH  Override data directory (default: %APPDATA%/webview-bridge)")]
+  WEBVIEW_BRIDGE_DATA_PATH  Override data directory (default: %APPDATA%/webview-bridge)"
+)]
 struct Cli {
     /// Server address [env: WB_HOST]
-    #[arg(long, default_value = "http://127.0.0.1:9400", global = true, env = "WB_HOST")]
+    #[arg(
+        long,
+        default_value = "http://127.0.0.1:9400",
+        global = true,
+        env = "WB_HOST"
+    )]
     host: String,
 
     /// Bearer token for authentication [env: WB_TOKEN]
@@ -527,48 +537,147 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Status => commands::status::run(&client, &opts),
-        Command::Frames { session } => {
-            commands::frames::run(&client, &opts, &session)
-        }
+        Command::Frames { session } => commands::frames::run(&client, &opts, &session),
         Command::Session { action } => match action {
-            SessionAction::Acquire { name } => {
-                commands::session::acquire(&client, &opts, &name)
-            }
-            SessionAction::Release { name } => {
-                commands::session::release(&client, &opts, &name)
-            }
+            SessionAction::Acquire { name } => commands::session::acquire(&client, &opts, &name),
+            SessionAction::Release { name } => commands::session::release(&client, &opts, &name),
             SessionAction::List => commands::session::list(&client, &opts),
         },
         Command::Open { url, session, wait } => {
             commands::open::run(&client, &opts, &session, &url, wait)
         }
-        Command::Snapshot { session, all, within, limit, output, frame } => {
-            commands::snapshot::run(&client, &opts, &session, all, within.as_deref(), limit, output.as_deref(), frame.as_deref())
-        }
-        Command::Click { target, session, frame } => {
-            commands::click::run(&client, &opts, &session, &target, frame.as_deref())
-        }
-        Command::Type { target, text, session, clear, frame } => {
-            commands::type_cmd::run(&client, &opts, &session, &target, &text, clear, frame.as_deref())
-        }
-        Command::Screenshot { session, device, output, frame } => {
-            commands::screenshot::run(&client, &opts, &session, device.as_deref(), output.as_deref(), frame.as_deref())
-        }
-        Command::Execute { script, session, file, timeout, output, frame } => {
-            commands::execute::run(&client, &opts, &session, script.as_deref(), file.as_deref(), timeout, output.as_deref(), frame.as_deref())
-        }
-        Command::Scroll { direction, session, amount, target, frame } => {
-            commands::scroll::run(&client, &opts, &session, &direction, amount, target.as_deref(), frame.as_deref())
-        }
-        Command::Wait { selector, session, condition, timeout, text, frame } => {
-            commands::wait::run(&client, &opts, &session, &selector, &condition, timeout, text.as_deref(), frame.as_deref())
-        }
-        Command::Select { target, value, session, frame } => {
-            commands::select::run(&client, &opts, &session, &target, &value, frame.as_deref())
-        }
-        Command::Extract { selector, session, fields, limit, output, frame, scroll, scroll_max, scroll_dedup, scroll_delay, scroll_amount } => {
-            commands::extract::run(&client, &opts, &session, &selector, fields.as_deref(), limit, output.as_deref(), frame.as_deref(), scroll, scroll_max, scroll_dedup.as_deref(), scroll_delay, scroll_amount)
-        }
+        Command::Snapshot {
+            session,
+            all,
+            within,
+            limit,
+            output,
+            frame,
+        } => commands::snapshot::run(
+            &client,
+            &opts,
+            &session,
+            all,
+            within.as_deref(),
+            limit,
+            output.as_deref(),
+            frame.as_deref(),
+        ),
+        Command::Click {
+            target,
+            session,
+            frame,
+        } => commands::click::run(&client, &opts, &session, &target, frame.as_deref()),
+        Command::Type {
+            target,
+            text,
+            session,
+            clear,
+            frame,
+        } => commands::type_cmd::run(
+            &client,
+            &opts,
+            &session,
+            &target,
+            &text,
+            clear,
+            frame.as_deref(),
+        ),
+        Command::Screenshot {
+            session,
+            device,
+            output,
+            frame,
+        } => commands::screenshot::run(
+            &client,
+            &opts,
+            &session,
+            device.as_deref(),
+            output.as_deref(),
+            frame.as_deref(),
+        ),
+        Command::Execute {
+            script,
+            session,
+            file,
+            timeout,
+            output,
+            frame,
+        } => commands::execute::run(
+            &client,
+            &opts,
+            &session,
+            script.as_deref(),
+            file.as_deref(),
+            timeout,
+            output.as_deref(),
+            frame.as_deref(),
+        ),
+        Command::Scroll {
+            direction,
+            session,
+            amount,
+            target,
+            frame,
+        } => commands::scroll::run(
+            &client,
+            &opts,
+            &session,
+            &direction,
+            amount,
+            target.as_deref(),
+            frame.as_deref(),
+        ),
+        Command::Wait {
+            selector,
+            session,
+            condition,
+            timeout,
+            text,
+            frame,
+        } => commands::wait::run(
+            &client,
+            &opts,
+            &session,
+            &selector,
+            &condition,
+            timeout,
+            text.as_deref(),
+            frame.as_deref(),
+        ),
+        Command::Select {
+            target,
+            value,
+            session,
+            frame,
+        } => commands::select::run(&client, &opts, &session, &target, &value, frame.as_deref()),
+        Command::Extract {
+            selector,
+            session,
+            fields,
+            limit,
+            output,
+            frame,
+            scroll,
+            scroll_max,
+            scroll_dedup,
+            scroll_delay,
+            scroll_amount,
+        } => commands::extract::run(
+            &client,
+            &opts,
+            &session,
+            &selector,
+            fields.as_deref(),
+            limit,
+            output.as_deref(),
+            frame.as_deref(),
+            scroll,
+            scroll_max,
+            scroll_dedup.as_deref(),
+            scroll_delay,
+            scroll_amount,
+        ),
         Command::Cookies { action } => match action {
             CookieAction::Get { session, output } => {
                 commands::cookies::get(&client, &opts, &session, output.as_deref())
@@ -576,35 +685,46 @@ fn main() -> ExitCode {
             CookieAction::Set { file, session } => {
                 commands::cookies::set(&client, &opts, &session, &file)
             }
-            CookieAction::Import { session, browser, profile, domains } => {
-                commands::cookies::import(&client, &opts, &session, &browser, &profile, &domains)
-            }
+            CookieAction::Import {
+                session,
+                browser,
+                profile,
+                domains,
+            } => commands::cookies::import(&client, &opts, &session, &browser, &profile, &domains),
         },
         Command::Auth { action } => match action {
             AuthAction::Save { token } => commands::auth::save(&opts, &token),
             AuthAction::Show => commands::auth::show(&opts),
             AuthAction::Clear => commands::auth::clear(&opts),
         },
-        Command::Upload { file, session, filename } => {
-            commands::upload::run(&client, &opts, &session, &file, filename.as_deref())
-        }
-        Command::InjectFile { file_url, selector, session, frame } => {
-            commands::inject_file::run(&client, &opts, &session, &file_url, &selector, frame.as_deref())
-        }
+        Command::Upload {
+            file,
+            session,
+            filename,
+        } => commands::upload::run(&client, &opts, &session, &file, filename.as_deref()),
+        Command::InjectFile {
+            file_url,
+            selector,
+            session,
+            frame,
+        } => commands::inject_file::run(
+            &client,
+            &opts,
+            &session,
+            &file_url,
+            &selector,
+            frame.as_deref(),
+        ),
         Command::Update { check } => commands::update::run(check),
         Command::Login { action } => match action {
-            LoginAction::Run { name, force, op_item } => {
-                commands::login::run(&client, &opts, &name, force, op_item.as_deref())
-            }
-            LoginAction::Status { name } => {
-                commands::login::status(&client, &opts, &name)
-            }
-            LoginAction::List => {
-                commands::login::list(&client, &opts)
-            }
-            LoginAction::ConfigGet { name } => {
-                commands::login::config_get(&client, &opts, &name)
-            }
+            LoginAction::Run {
+                name,
+                force,
+                op_item,
+            } => commands::login::run(&client, &opts, &name, force, op_item.as_deref()),
+            LoginAction::Status { name } => commands::login::status(&client, &opts, &name),
+            LoginAction::List => commands::login::list(&client, &opts),
+            LoginAction::ConfigGet { name } => commands::login::config_get(&client, &opts, &name),
             LoginAction::ConfigSet { name, file } => {
                 commands::login::config_set(&client, &opts, &name, &file)
             }

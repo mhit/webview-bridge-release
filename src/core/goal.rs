@@ -43,26 +43,26 @@ pub enum GoalType {
 pub struct GoalRequest {
     /// Session name
     pub session: String,
-    
+
     /// Goal type
     #[serde(rename = "type")]
     pub goal_type: GoalType,
-    
+
     /// Goal target (selector, URL, text, etc.)
     pub target: String,
-    
+
     /// Additional parameters
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
-    
+
     /// Retry configuration
     #[serde(default)]
     pub retry: RetryConfig,
-    
+
     /// Timeout in ms
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
-    
+
     /// Chain of goals to execute in sequence
     #[serde(default)]
     pub chain: Option<Vec<GoalRequest>>,
@@ -163,42 +163,47 @@ pub enum ErrorCategory {
 /// Classify an error for retry decision
 pub fn classify_error(error: &str) -> ErrorCategory {
     let error_lower = error.to_lowercase();
-    
+
     // Permanent errors - don't retry
-    if error_lower.contains("invalid selector") ||
-       error_lower.contains("syntax error") ||
-       error_lower.contains("unauthorized") ||
-       error_lower.contains("forbidden") ||
-       error_lower.contains("not found") && error_lower.contains("page") ||
-       error_lower.contains("session closed") {
+    if error_lower.contains("invalid selector")
+        || error_lower.contains("syntax error")
+        || error_lower.contains("unauthorized")
+        || error_lower.contains("forbidden")
+        || error_lower.contains("not found") && error_lower.contains("page")
+        || error_lower.contains("session closed")
+    {
         return ErrorCategory::Permanent;
     }
-    
+
     // Transient errors - retry
-    if error_lower.contains("timeout") ||
-       error_lower.contains("element not found") ||
-       error_lower.contains("not visible") ||
-       error_lower.contains("network") ||
-       error_lower.contains("connection") ||
-       error_lower.contains("loading") ||
-       error_lower.contains("stale") {
+    if error_lower.contains("timeout")
+        || error_lower.contains("element not found")
+        || error_lower.contains("not visible")
+        || error_lower.contains("network")
+        || error_lower.contains("connection")
+        || error_lower.contains("loading")
+        || error_lower.contains("stale")
+    {
         return ErrorCategory::Transient;
     }
-    
+
     ErrorCategory::Unknown
 }
 
 /// Check if error should be retried based on config
 pub fn should_retry(error: &str, config: &RetryConfig) -> bool {
     let category = classify_error(error);
-    
+
     match category {
         ErrorCategory::Permanent => false,
         ErrorCategory::Transient => true,
         ErrorCategory::Unknown => {
             // Check if error matches retry_on list
             let error_lower = error.to_lowercase();
-            config.retry_on.iter().any(|r| error_lower.contains(&r.to_lowercase()))
+            config
+                .retry_on
+                .iter()
+                .any(|r| error_lower.contains(&r.to_lowercase()))
         }
     }
 }
@@ -347,26 +352,37 @@ pub fn find_preset_flow(name: &str) -> Option<PresetFlow> {
 pub fn generate_goal_script(request: &GoalRequest) -> String {
     match request.goal_type {
         GoalType::Navigate => {
-            format!(r#"
+            format!(
+                r#"
 window.location.href = "{}";
 JSON.stringify({{ navigated: true, url: window.location.href }});
-"#, request.target.replace('"', "\\\""))
+"#,
+                request.target.replace('"', "\\\"")
+            )
         }
         GoalType::Click => {
-            format!(r#"
+            format!(
+                r#"
 (function() {{
     const el = document.querySelector("{}");
     if (!el) return JSON.stringify({{ error: "element_not_found", selector: "{}" }});
     el.click();
     return JSON.stringify({{ clicked: true, selector: "{}" }});
 }})();
-"#, request.target.replace('"', "\\\""), request.target.replace('"', "\\\""), request.target.replace('"', "\\\""))
+"#,
+                request.target.replace('"', "\\\""),
+                request.target.replace('"', "\\\""),
+                request.target.replace('"', "\\\"")
+            )
         }
         GoalType::Fill => {
-            let value = request.params.get("value")
+            let value = request
+                .params
+                .get("value")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            format!(r#"
+            format!(
+                r#"
 (function() {{
     const el = document.querySelector("{}");
     if (!el) return JSON.stringify({{ error: "element_not_found", selector: "{}" }});
@@ -375,24 +391,30 @@ JSON.stringify({{ navigated: true, url: window.location.href }});
     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
     return JSON.stringify({{ filled: true, selector: "{}" }});
 }})();
-"#, 
-                request.target.replace('"', "\\\""), 
+"#,
+                request.target.replace('"', "\\\""),
                 request.target.replace('"', "\\\""),
                 value.replace('"', "\\\""),
-                request.target.replace('"', "\\\""))
+                request.target.replace('"', "\\\"")
+            )
         }
         GoalType::Submit => {
-            format!(r#"
+            format!(
+                r#"
 (function() {{
     const form = document.querySelector("{}");
     if (!form) return JSON.stringify({{ error: "form_not_found", selector: "{}" }});
     form.submit();
     return JSON.stringify({{ submitted: true }});
 }})();
-"#, request.target.replace('"', "\\\""), request.target.replace('"', "\\\""))
+"#,
+                request.target.replace('"', "\\\""),
+                request.target.replace('"', "\\\"")
+            )
         }
         GoalType::Wait => {
-            format!(r#"
+            format!(
+                r#"
 (function() {{
     return new Promise((resolve) => {{
         const check = () => {{
@@ -407,22 +429,28 @@ JSON.stringify({{ navigated: true, url: window.location.href }});
         setTimeout(() => resolve(JSON.stringify({{ error: "timeout", selector: "{}" }})), {});
     }});
 }})();
-"#, 
-                request.target.replace('"', "\\\""), 
+"#,
                 request.target.replace('"', "\\\""),
                 request.target.replace('"', "\\\""),
-                request.timeout_ms)
+                request.target.replace('"', "\\\""),
+                request.timeout_ms
+            )
         }
         GoalType::Extract => {
-            let all = request.params.get("all")
+            let all = request
+                .params
+                .get("all")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let attr = request.params.get("attribute")
+            let attr = request
+                .params
+                .get("attribute")
                 .and_then(|v| v.as_str())
                 .unwrap_or("text");
-            
+
             if all {
-                format!(r#"
+                format!(
+                    r#"
 (function() {{
     const elements = Array.from(document.querySelectorAll("{}"));
     if (elements.length === 0) return JSON.stringify({{ error: "no_elements", selector: "{}" }});
@@ -433,12 +461,16 @@ JSON.stringify({{ navigated: true, url: window.location.href }});
     }});
     return JSON.stringify({{ data: data, count: data.length }});
 }})();
-"#, 
+"#,
                     request.target.replace('"', "\\\""),
                     request.target.replace('"', "\\\""),
-                    attr, attr, attr)
+                    attr,
+                    attr,
+                    attr
+                )
             } else {
-                format!(r#"
+                format!(
+                    r#"
 (function() {{
     const el = document.querySelector("{}");
     if (!el) return JSON.stringify({{ error: "element_not_found", selector: "{}" }});
@@ -448,29 +480,44 @@ JSON.stringify({{ navigated: true, url: window.location.href }});
     else data = el.getAttribute("{}");
     return JSON.stringify({{ data: data }});
 }})();
-"#, 
+"#,
                     request.target.replace('"', "\\\""),
                     request.target.replace('"', "\\\""),
-                    attr, attr, attr)
+                    attr,
+                    attr,
+                    attr
+                )
             }
         }
         GoalType::Scroll => {
-            let direction = request.params.get("direction")
+            let direction = request
+                .params
+                .get("direction")
                 .and_then(|v| v.as_str())
                 .unwrap_or("down");
-            let amount = request.params.get("amount")
+            let amount = request
+                .params
+                .get("amount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(500);
-            
-            let delta = if direction == "up" { -(amount as i64) } else { amount as i64 };
-            format!(r#"
+
+            let delta = if direction == "up" {
+                -(amount as i64)
+            } else {
+                amount as i64
+            };
+            format!(
+                r#"
 window.scrollBy(0, {});
 JSON.stringify({{ scrolled: true, scrollY: window.scrollY }});
-"#, delta)
+"#,
+                delta
+            )
         }
         GoalType::Login | GoalType::Search | GoalType::Screenshot | GoalType::Custom => {
             // These are handled as composite goals
-            r#"JSON.stringify({ "note": "Composite goal - execute steps individually" });"#.to_string()
+            r#"JSON.stringify({ "note": "Composite goal - execute steps individually" });"#
+                .to_string()
         }
     }
 }
@@ -491,18 +538,20 @@ impl FlowRegistry {
             flows: HashMap::new(),
         }
     }
-    
+
     /// Register a custom flow
     pub fn register(&mut self, flow: PresetFlow) {
         self.flows.insert(flow.name.clone(), flow);
     }
-    
+
     /// Get a flow by name (custom first, then preset)
     pub fn get(&self, name: &str) -> Option<PresetFlow> {
-        self.flows.get(name).cloned()
+        self.flows
+            .get(name)
+            .cloned()
             .or_else(|| find_preset_flow(name))
     }
-    
+
     /// List all available flows
     pub fn list(&self) -> Vec<String> {
         let mut names: Vec<String> = self.flows.keys().cloned().collect();
@@ -519,34 +568,70 @@ impl FlowRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_classify_error_transient() {
-        assert_eq!(classify_error("timeout waiting for element"), ErrorCategory::Transient);
-        assert_eq!(classify_error("Element not found: #btn"), ErrorCategory::Transient);
-        assert_eq!(classify_error("Network error occurred"), ErrorCategory::Transient);
-        assert_eq!(classify_error("connection refused"), ErrorCategory::Transient);
-        assert_eq!(classify_error("element not visible"), ErrorCategory::Transient);
-        assert_eq!(classify_error("page still loading"), ErrorCategory::Transient);
-        assert_eq!(classify_error("stale element reference"), ErrorCategory::Transient);
+        assert_eq!(
+            classify_error("timeout waiting for element"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("Element not found: #btn"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("Network error occurred"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("connection refused"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("element not visible"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("page still loading"),
+            ErrorCategory::Transient
+        );
+        assert_eq!(
+            classify_error("stale element reference"),
+            ErrorCategory::Transient
+        );
     }
-    
+
     #[test]
     fn test_classify_error_permanent() {
-        assert_eq!(classify_error("Invalid selector syntax"), ErrorCategory::Permanent);
-        assert_eq!(classify_error("Unauthorized access"), ErrorCategory::Permanent);
+        assert_eq!(
+            classify_error("Invalid selector syntax"),
+            ErrorCategory::Permanent
+        );
+        assert_eq!(
+            classify_error("Unauthorized access"),
+            ErrorCategory::Permanent
+        );
         assert_eq!(classify_error("Session closed"), ErrorCategory::Permanent);
-        assert_eq!(classify_error("forbidden resource"), ErrorCategory::Permanent);
-        assert_eq!(classify_error("page not found 404"), ErrorCategory::Permanent);
-        assert_eq!(classify_error("syntax error in script"), ErrorCategory::Permanent);
+        assert_eq!(
+            classify_error("forbidden resource"),
+            ErrorCategory::Permanent
+        );
+        assert_eq!(
+            classify_error("page not found 404"),
+            ErrorCategory::Permanent
+        );
+        assert_eq!(
+            classify_error("syntax error in script"),
+            ErrorCategory::Permanent
+        );
     }
-    
+
     #[test]
     fn test_classify_error_unknown() {
         assert_eq!(classify_error("some random error"), ErrorCategory::Unknown);
         assert_eq!(classify_error(""), ErrorCategory::Unknown);
     }
-    
+
     #[test]
     fn test_calculate_delay() {
         let config = RetryConfig::default();
@@ -556,7 +641,7 @@ mod tests {
         assert_eq!(calculate_delay(3, &config), 8000);
         assert_eq!(calculate_delay(10, &config), 10000); // capped at max_delay
     }
-    
+
     #[test]
     fn test_calculate_delay_custom() {
         let config = RetryConfig {
@@ -570,23 +655,23 @@ mod tests {
         assert_eq!(calculate_delay(2, &config), 4500);
         assert_eq!(calculate_delay(3, &config), 5000); // capped
     }
-    
+
     #[test]
     fn test_preset_flows() {
         let login = find_preset_flow("login");
         assert!(login.is_some());
         assert_eq!(login.unwrap().steps.len(), 4);
-        
+
         let search = find_preset_flow("search");
         assert!(search.is_some());
-        
+
         let extract = find_preset_flow("extract_list");
         assert!(extract.is_some());
-        
+
         let nonexistent = find_preset_flow("nonexistent");
         assert!(nonexistent.is_none());
     }
-    
+
     #[test]
     fn test_generate_click_script() {
         let request = GoalRequest {
@@ -598,17 +683,17 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains("#submit-btn"));
         assert!(script.contains(".click()"));
     }
-    
+
     #[test]
     fn test_generate_fill_script() {
         let mut params = HashMap::new();
         params.insert("value".to_string(), serde_json::json!("test@example.com"));
-        
+
         let request = GoalRequest {
             session: "test".to_string(),
             goal_type: GoalType::Fill,
@@ -618,12 +703,12 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains("#email"));
         assert!(script.contains("test@example.com"));
     }
-    
+
     #[test]
     fn test_generate_navigate_script() {
         let request = GoalRequest {
@@ -635,11 +720,11 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains("https://example.com"));
     }
-    
+
     #[test]
     fn test_generate_wait_script() {
         let request = GoalRequest {
@@ -651,11 +736,11 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains("#loading"));
     }
-    
+
     #[test]
     fn test_generate_extract_script() {
         let request = GoalRequest {
@@ -667,11 +752,11 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains(".product-price"));
     }
-    
+
     #[test]
     fn test_generate_scroll_script() {
         let request = GoalRequest {
@@ -683,60 +768,60 @@ mod tests {
             timeout_ms: 5000,
             chain: None,
         };
-        
+
         let script = generate_goal_script(&request);
         assert!(script.contains("scroll"));
     }
-    
+
     #[test]
     fn test_flow_registry() {
         let mut registry = FlowRegistry::new();
-        
+
         let custom = PresetFlow {
             name: "my_flow".to_string(),
             description: "Custom flow".to_string(),
             steps: vec![],
         };
-        
+
         registry.register(custom);
-        
+
         assert!(registry.get("my_flow").is_some());
         assert!(registry.get("login").is_some()); // Fallback to preset
         assert!(registry.list().contains(&"my_flow".to_string()));
     }
-    
+
     #[test]
     fn test_flow_registry_list() {
         let registry = FlowRegistry::new();
         let list = registry.list();
-        
+
         // Should include default presets
         assert!(list.contains(&"login".to_string()));
         assert!(list.contains(&"search".to_string()));
     }
-    
+
     #[test]
     fn test_should_retry() {
         let config = RetryConfig::default();
-        
+
         // Transient - should retry
         assert!(should_retry("timeout occurred", &config));
         assert!(should_retry("element not found", &config));
-        
+
         // Permanent - should not retry
         assert!(!should_retry("invalid selector", &config));
         assert!(!should_retry("session closed", &config));
     }
-    
+
     #[test]
     fn test_should_retry_unknown_with_match() {
         let mut config = RetryConfig::default();
         config.retry_on = vec!["custom_error".to_string()];
-        
+
         assert!(should_retry("custom_error happened", &config));
         assert!(!should_retry("unknown_error", &config));
     }
-    
+
     #[test]
     fn test_retry_config_default() {
         let config = RetryConfig::default();
@@ -746,7 +831,7 @@ mod tests {
         assert_eq!(config.max_delay_ms, 10000);
         assert!(config.retry_on.contains(&"timeout".to_string()));
     }
-    
+
     #[test]
     fn test_default_functions() {
         assert_eq!(default_timeout(), 30000);
@@ -755,13 +840,13 @@ mod tests {
         assert_eq!(default_multiplier(), 2.0);
         assert_eq!(default_max_delay(), 10000);
     }
-    
+
     #[test]
     fn test_goal_type_equality() {
         assert_eq!(GoalType::Click, GoalType::Click);
         assert_ne!(GoalType::Click, GoalType::Fill);
     }
-    
+
     #[test]
     fn test_goal_request_deserialize() {
         let json = r##"{
@@ -769,14 +854,14 @@ mod tests {
             "type": "click",
             "target": "#btn"
         }"##;
-        
+
         let req: GoalRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.session, "main");
         assert_eq!(req.goal_type, GoalType::Click);
         assert_eq!(req.target, "#btn");
         assert_eq!(req.timeout_ms, 30000); // default
     }
-    
+
     #[test]
     fn test_goal_request_with_params() {
         let json = r##"{
@@ -786,22 +871,22 @@ mod tests {
             "params": {"value": "test@test.com"},
             "timeout_ms": 5000
         }"##;
-        
+
         let req: GoalRequest = serde_json::from_str(json).unwrap();
         assert!(req.params.contains_key("value"));
         assert_eq!(req.timeout_ms, 5000);
     }
-    
+
     #[test]
     fn test_error_category_equality() {
         assert_eq!(ErrorCategory::Transient, ErrorCategory::Transient);
         assert_ne!(ErrorCategory::Transient, ErrorCategory::Permanent);
     }
-    
+
     #[test]
     fn test_preset_flow_steps() {
         let login = find_preset_flow("login").unwrap();
-        
+
         // Check step structure
         assert!(!login.steps.is_empty());
         for step in &login.steps {
@@ -809,4 +894,3 @@ mod tests {
         }
     }
 }
-

@@ -4,19 +4,19 @@
 //! See: Plans.md Phase 8.3
 
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 // ============================================================================
 // Event Types
@@ -68,9 +68,7 @@ pub enum WbpEvent {
         timestamp: String,
     },
     /// Heartbeat/ping
-    Ping {
-        timestamp: String,
-    },
+    Ping { timestamp: String },
 }
 
 impl WbpEvent {
@@ -113,16 +111,16 @@ impl EventHub {
             clients: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Subscribe to global events
     pub fn subscribe_global(&self) -> broadcast::Receiver<WbpEvent> {
         self.global_tx.subscribe()
     }
-    
+
     /// Subscribe to session-specific events
     pub async fn subscribe_session(&self, session: &str) -> broadcast::Receiver<WbpEvent> {
         let mut channels = self.session_channels.write().await;
-        
+
         if let Some(tx) = channels.get(session) {
             tx.subscribe()
         } else {
@@ -131,17 +129,17 @@ impl EventHub {
             rx
         }
     }
-    
+
     /// Publish event globally
     pub fn publish(&self, event: WbpEvent) {
         let _ = self.global_tx.send(event);
     }
-    
+
     /// Publish event to specific session
     pub async fn publish_to_session(&self, session: &str, event: WbpEvent) {
         // Clone for global publish
         let event_clone = event.clone();
-        
+
         let channels = self.session_channels.read().await;
         if let Some(tx) = channels.get(session) {
             let _ = tx.send(event);
@@ -149,23 +147,26 @@ impl EventHub {
         // Also send to global
         self.publish(event_clone);
     }
-    
+
     /// Register a client
     pub async fn register_client(&self, client_id: &str, sessions: Vec<String>) {
         let mut clients = self.clients.write().await;
-        clients.insert(client_id.to_string(), ClientInfo {
-            id: client_id.to_string(),
-            subscribed_sessions: sessions,
-            connected_at: WbpEvent::timestamp(),
-        });
+        clients.insert(
+            client_id.to_string(),
+            ClientInfo {
+                id: client_id.to_string(),
+                subscribed_sessions: sessions,
+                connected_at: WbpEvent::timestamp(),
+            },
+        );
     }
-    
+
     /// Unregister a client
     pub async fn unregister_client(&self, client_id: &str) {
         let mut clients = self.clients.write().await;
         clients.remove(client_id);
     }
-    
+
     /// Get client count
     pub async fn client_count(&self) -> usize {
         self.clients.read().await.len()
@@ -192,34 +193,31 @@ pub struct WsState {
 // ============================================================================
 
 /// WebSocket upgrade handler
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<WsState>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<WsState>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
 async fn handle_socket(socket: WebSocket, state: WsState) {
     let client_id = uuid::Uuid::new_v4().to_string();
-    
+
     let (mut sender, mut receiver) = socket.split();
-    
+
     // Subscribe to global events
     let mut event_rx = state.event_hub.subscribe_global();
-    
+
     // Register client
     state.event_hub.register_client(&client_id, vec![]).await;
-    
+
     // Send connected event
     let connected = WbpEvent::Connected {
         client_id: client_id.clone(),
         timestamp: WbpEvent::timestamp(),
     };
-    
+
     if let Ok(msg) = serde_json::to_string(&connected) {
         let _ = sender.send(Message::Text(msg)).await;
     }
-    
+
     // Spawn task to forward events to client
     let client_id_clone = client_id.clone();
     let mut send_task = tokio::spawn(async move {
@@ -231,7 +229,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
             }
         }
     });
-    
+
     // Handle incoming messages
     let event_hub = state.event_hub.clone();
     let mut recv_task = tokio::spawn(async move {
@@ -256,13 +254,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
             }
         }
     });
-    
+
     // Wait for either task to complete
     tokio::select! {
         _ = &mut send_task => recv_task.abort(),
         _ = &mut recv_task => send_task.abort(),
     }
-    
+
     // Cleanup
     state.event_hub.unregister_client(&client_id).await;
 }
@@ -282,7 +280,7 @@ enum WsCommand {
 /// Create WebSocket router
 pub fn create_ws_router(event_hub: Arc<EventHub>) -> Router {
     let state = WsState { event_hub };
-    
+
     Router::new()
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -291,51 +289,56 @@ pub fn create_ws_router(event_hub: Arc<EventHub>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_event_hub_subscribe() {
         let hub = EventHub::new();
         let mut rx = hub.subscribe_global();
-        
+
         hub.publish(WbpEvent::Ping {
             timestamp: WbpEvent::timestamp(),
         });
-        
+
         let event = rx.recv().await.unwrap();
         assert!(matches!(event, WbpEvent::Ping { .. }));
     }
-    
+
     #[tokio::test]
     async fn test_client_registration() {
         let hub = EventHub::new();
-        
-        hub.register_client("client1", vec!["session1".to_string()]).await;
+
+        hub.register_client("client1", vec!["session1".to_string()])
+            .await;
         assert_eq!(hub.client_count().await, 1);
-        
+
         hub.unregister_client("client1").await;
         assert_eq!(hub.client_count().await, 0);
     }
-    
+
     #[test]
     fn test_event_hub_default() {
         let hub = EventHub::default();
         // Verify it doesn't panic
         let _ = hub.subscribe_global();
     }
-    
+
     #[tokio::test]
     async fn test_session_subscribe() {
         let hub = EventHub::new();
         let mut rx = hub.subscribe_session("test_session").await;
-        
-        hub.publish_to_session("test_session", WbpEvent::Ping {
-            timestamp: WbpEvent::timestamp(),
-        }).await;
-        
+
+        hub.publish_to_session(
+            "test_session",
+            WbpEvent::Ping {
+                timestamp: WbpEvent::timestamp(),
+            },
+        )
+        .await;
+
         let event = rx.recv().await.unwrap();
         assert!(matches!(event, WbpEvent::Ping { .. }));
     }
-    
+
     #[test]
     fn test_wbp_event_timestamp() {
         let ts = WbpEvent::timestamp();
@@ -344,7 +347,7 @@ mod tests {
         assert!(ts.ends_with('Z'));
         assert!(ts.contains('.'));
     }
-    
+
     #[test]
     fn test_wbp_event_dom_change() {
         let event = WbpEvent::DomChange {
@@ -353,12 +356,12 @@ mod tests {
             change_type: "added".to_string(),
             timestamp: WbpEvent::timestamp(),
         };
-        
+
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("dom_change"));
         assert!(json.contains("test"));
     }
-    
+
     #[test]
     fn test_wbp_event_navigation() {
         let event = WbpEvent::Navigation {
@@ -367,12 +370,12 @@ mod tests {
             status: "completed".to_string(),
             timestamp: WbpEvent::timestamp(),
         };
-        
+
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("navigation"));
         assert!(json.contains("example.com"));
     }
-    
+
     #[test]
     fn test_wbp_event_error() {
         let event = WbpEvent::Error {
@@ -381,36 +384,36 @@ mod tests {
             code: "ERR001".to_string(),
             timestamp: WbpEvent::timestamp(),
         };
-        
+
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("error"));
         assert!(json.contains("Something went wrong"));
     }
-    
+
     #[test]
     fn test_wbp_event_connected() {
         let event = WbpEvent::Connected {
             client_id: "abc123".to_string(),
             timestamp: WbpEvent::timestamp(),
         };
-        
+
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("connected"));
         assert!(json.contains("abc123"));
     }
-    
+
     #[tokio::test]
     async fn test_multiple_clients() {
         let hub = EventHub::new();
-        
+
         hub.register_client("client1", vec!["s1".to_string()]).await;
         hub.register_client("client2", vec!["s2".to_string()]).await;
-        hub.register_client("client3", vec!["s1".to_string(), "s2".to_string()]).await;
-        
+        hub.register_client("client3", vec!["s1".to_string(), "s2".to_string()])
+            .await;
+
         assert_eq!(hub.client_count().await, 3);
-        
+
         hub.unregister_client("client2").await;
         assert_eq!(hub.client_count().await, 2);
     }
 }
-

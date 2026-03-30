@@ -4,7 +4,6 @@
 //!
 //! Protocol: WBP2 (WebView Bridge Protocol v2)
 
-
 #[cfg(feature = "server")]
 pub mod api_v2;
 #[cfg(feature = "server")]

@@ -51,7 +51,9 @@ pub fn show(opts: &OutputOpts) -> Result<(), WbError> {
             if token.is_empty() {
                 output::print_result(opts, "Token file is empty");
             } else if opts.json {
-                output::print_json(&serde_json::json!({ "token": token, "path": path.display().to_string() }));
+                output::print_json(
+                    &serde_json::json!({ "token": token, "path": path.display().to_string() }),
+                );
             } else {
                 // Safe masking using char boundaries (handles multibyte)
                 let chars: Vec<char> = token.chars().collect();
@@ -60,7 +62,14 @@ pub fn show(opts: &OutputOpts) -> Result<(), WbError> {
                     format!("{prefix}***")
                 } else {
                     let prefix: String = chars.iter().take(8).collect();
-                    let suffix: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+                    let suffix: String = chars
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
                     format!("{prefix}...{suffix}")
                 };
                 output::print_result(opts, &format!("Token: {masked}"));

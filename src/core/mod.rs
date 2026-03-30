@@ -14,13 +14,13 @@ pub mod download;
 pub mod goal;
 pub mod macro_engine;
 pub mod media;
+pub mod network;
 pub mod profile;
 pub mod screenshot_v2;
 pub mod session_v2;
+pub mod upload;
 pub mod wait_v2;
 pub mod websocket;
-pub mod network;
-pub mod upload;
 
 // Export Network Types
 pub use network::*;
@@ -415,7 +415,8 @@ impl SessionManager {
         if sessions.len() >= self.max_sessions {
             return Err(format!(
                 "Maximum session limit reached ({}/{}). Release unused sessions: wb session release <name> or POST /session/release",
-                sessions.len(), self.max_sessions
+                sessions.len(),
+                self.max_sessions
             ));
         }
 
@@ -460,30 +461,35 @@ impl SessionManager {
             .to_string();
 
         // Create WebViewInstance
-        let title = options.window_title.as_deref()
+        let title = options
+            .window_title
+            .as_deref()
             .map(|t| format!("WB: {}", t))
             .unwrap_or_else(|| format!("WebView Bridge - {}", id));
-        let mut webview = match crate::webview::webview_instance::WebViewInstance::new(
-            &title,
-            !options.headless,
-        ) {
-            Ok(wv) => {
-                tracing::info!("[Session:{}] WebViewInstance created", id);
-                wv
-            }
-            Err(e) => {
-                tracing::error!("[Session:{}] Failed to create WebViewInstance: {:?}", id, e);
-                // Mark session as error
-                if let Some(handle) = sessions.lock().unwrap().get(&id) {
-                    *handle.status.lock().unwrap() = SessionStatus::Error;
+        let mut webview =
+            match crate::webview::webview_instance::WebViewInstance::new(&title, !options.headless)
+            {
+                Ok(wv) => {
+                    tracing::info!("[Session:{}] WebViewInstance created", id);
+                    wv
                 }
-                return;
-            }
-        };
+                Err(e) => {
+                    tracing::error!("[Session:{}] Failed to create WebViewInstance: {:?}", id, e);
+                    // Mark session as error
+                    if let Some(handle) = sessions.lock().unwrap().get(&id) {
+                        *handle.status.lock().unwrap() = SessionStatus::Error;
+                    }
+                    return;
+                }
+            };
 
         // Initialize WebView2
         if let Err(e) = webview.initialize(&user_data_folder) {
-            tracing::error!("[Session:{}] Failed to initialize WebView2: {:?}. Ensure WebView2 Runtime is installed (comes with Microsoft Edge). Install: winget install Microsoft.EdgeWebView2Runtime", id, e);
+            tracing::error!(
+                "[Session:{}] Failed to initialize WebView2: {:?}. Ensure WebView2 Runtime is installed (comes with Microsoft Edge). Install: winget install Microsoft.EdgeWebView2Runtime",
+                id,
+                e
+            );
             if let Some(handle) = sessions.lock().unwrap().get(&id) {
                 *handle.status.lock().unwrap() = SessionStatus::Error;
             }
@@ -616,7 +622,7 @@ impl SessionManager {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            
+
                             // Improved screenshot script with CSP bypass via fetch+eval
                             // and multiple CDN fallbacks
                             let init_script = r#"
@@ -722,14 +728,15 @@ impl SessionManager {
                                     return 'loading_started';
                                 })()
                             "#;
-                            
+
                             // Execute init script
-                            let init_result = webview.execute_script(init_script, Uuid::new_v4().to_string());
+                            let init_result =
+                                webview.execute_script(init_script, Uuid::new_v4().to_string());
                             if init_result.is_err() {
                                 let _ = resp_tx.send(Err("Failed to start capture".to_string()));
                                 continue;
                             }
-                            
+
                             // Step 2: Poll for result (up to 15 seconds for slow pages)
                             let poll_script = r#"
                                 JSON.stringify({
@@ -739,69 +746,112 @@ impl SessionManager {
                                     error: window.__wbp_ss_error
                                 })
                             "#;
-                            
-                            let mut result: Result<String, String> = Err("Screenshot timeout".to_string());
-                            
-                            for i in 0..150 {  // 15 seconds max
+
+                            let mut result: Result<String, String> =
+                                Err("Screenshot timeout".to_string());
+
+                            for i in 0..150 {
+                                // 15 seconds max
                                 std::thread::sleep(std::time::Duration::from_millis(100));
-                                
-                                if let Ok(status_json) = webview.execute_script(poll_script, Uuid::new_v4().to_string()) {
+
+                                if let Ok(status_json) =
+                                    webview.execute_script(poll_script, Uuid::new_v4().to_string())
+                                {
                                     // Parse status JSON
-                                    if let Ok(status) = serde_json::from_str::<serde_json::Value>(&status_json) {
-                                        let ss_status = status.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
-                                        let has_data = status.get("hasData").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    if let Ok(status) =
+                                        serde_json::from_str::<serde_json::Value>(&status_json)
+                                    {
+                                        let ss_status = status
+                                            .get("status")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("unknown");
+                                        let has_data = status
+                                            .get("hasData")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
                                         let error = status.get("error").and_then(|e| e.as_str());
-                                        
+
                                         if ss_status == "done" && has_data {
                                             // Get the actual data
-                                            if let Ok(data) = webview.execute_script("window.__wbp_ss_data", Uuid::new_v4().to_string()) {
+                                            if let Ok(data) = webview.execute_script(
+                                                "window.__wbp_ss_data",
+                                                Uuid::new_v4().to_string(),
+                                            ) {
                                                 let clean_data = data.trim_matches('"').to_string();
-                                                if clean_data.starts_with("iVBOR") || clean_data.len() > 1000 {
-                                                    tracing::info!("[Session:{}] Screenshot success, len={}", id, clean_data.len());
+                                                if clean_data.starts_with("iVBOR")
+                                                    || clean_data.len() > 1000
+                                                {
+                                                    tracing::info!(
+                                                        "[Session:{}] Screenshot success, len={}",
+                                                        id,
+                                                        clean_data.len()
+                                                    );
                                                     result = Ok(clean_data);
                                                     break;
                                                 }
                                             }
                                         } else if ss_status == "error" {
                                             let err_msg = error.unwrap_or("Unknown error");
-                                            tracing::warn!("[Session:{}] html2canvas error: {}, trying native CapturePreview", id, err_msg);
+                                            tracing::warn!(
+                                                "[Session:{}] html2canvas error: {}, trying native CapturePreview",
+                                                id,
+                                                err_msg
+                                            );
                                             // html2canvas failed (likely CSP), try native API
-                                            result = Err(format!("html2canvas failed: {}", err_msg));
+                                            result =
+                                                Err(format!("html2canvas failed: {}", err_msg));
                                             break;
                                         }
-                                        
+
                                         // Log progress every 2 seconds
                                         if i % 20 == 0 && i > 0 {
-                                            tracing::debug!("[Session:{}] Screenshot status: {}", id, ss_status);
+                                            tracing::debug!(
+                                                "[Session:{}] Screenshot status: {}",
+                                                id,
+                                                ss_status
+                                            );
                                         }
                                     }
                                 }
                             }
-                            
+
                             // Cleanup html2canvas state
                             let _ = webview.execute_script(
                                 "delete window.__wbp_ss_data; delete window.__wbp_ss_error; delete window.__wbp_ss_status;",
                                 Uuid::new_v4().to_string()
                             );
-                            
+
                             // If html2canvas failed, try native CapturePreview API
                             if result.is_err() {
-                                tracing::info!("[Session:{}] Falling back to native CapturePreview API", id);
+                                tracing::info!(
+                                    "[Session:{}] Falling back to native CapturePreview API",
+                                    id
+                                );
                                 match webview.capture_preview_native() {
                                     Ok(png_data) => {
                                         // Convert PNG bytes to base64
-                                        use base64::{Engine as _, engine::general_purpose::STANDARD};
+                                        use base64::{
+                                            Engine as _, engine::general_purpose::STANDARD,
+                                        };
                                         let base64_data = STANDARD.encode(&png_data);
-                                        tracing::info!("[Session:{}] Native screenshot success, size={} bytes", id, base64_data.len());
+                                        tracing::info!(
+                                            "[Session:{}] Native screenshot success, size={} bytes",
+                                            id,
+                                            base64_data.len()
+                                        );
                                         result = Ok(base64_data);
                                     }
                                     Err(e) => {
-                                        tracing::error!("[Session:{}] Native CapturePreview also failed: {}", id, e);
+                                        tracing::error!(
+                                            "[Session:{}] Native CapturePreview also failed: {}",
+                                            id,
+                                            e
+                                        );
                                         // Keep the original error
                                     }
                                 }
                             }
-                            
+
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::GetCookies { resp_tx } => {
@@ -822,17 +872,38 @@ impl SessionManager {
                             let result = webview.set_cookies_json(&cookies);
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::WaitForSelector { selector, timeout_ms, frame, resp_tx } => {
-                            tracing::debug!("[Session:{}] WaitForSelector: {} frame={:?}", id, selector, frame);
+                        SessionCommand::WaitForSelector {
+                            selector,
+                            timeout_ms,
+                            frame,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] WaitForSelector: {} frame={:?}",
+                                id,
+                                selector,
+                                frame
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.wait_for_selector(&selector, timeout_ms, frame.as_deref());
+                            let result =
+                                webview.wait_for_selector(&selector, timeout_ms, frame.as_deref());
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::Extract { selector, attribute, extract_all, resp_tx } => {
-                            tracing::debug!("[Session:{}] Extract: {} attr={}", id, selector, attribute);
+                        SessionCommand::Extract {
+                            selector,
+                            attribute,
+                            extract_all,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] Extract: {} attr={}",
+                                id,
+                                selector,
+                                attribute
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
@@ -851,38 +922,62 @@ impl SessionManager {
                             webview.bring_to_front();
                             let _ = resp_tx.send(Ok(()));
                         }
-                        SessionCommand::SimulateDevice { device_name, resp_tx } => {
+                        SessionCommand::SimulateDevice {
+                            device_name,
+                            resp_tx,
+                        } => {
                             tracing::debug!("[Session:{}] SimulateDevice: {}", id, device_name);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.simulate_device(&device_name)
+                            let result = webview
+                                .simulate_device(&device_name)
                                 .map_err(|e| format!("Device simulation failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::SetViewport { width, height, resp_tx } => {
+                        SessionCommand::SetViewport {
+                            width,
+                            height,
+                            resp_tx,
+                        } => {
                             tracing::debug!("[Session:{}] SetViewport: {}x{}", id, width, height);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.set_viewport(width, height)
+                            let result = webview
+                                .set_viewport(width, height)
                                 .map_err(|e| format!("Set viewport failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::SetUserAgent { user_agent, resp_tx } => {
+                        SessionCommand::SetUserAgent {
+                            user_agent,
+                            resp_tx,
+                        } => {
                             tracing::debug!("[Session:{}] SetUserAgent", id);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.set_user_agent(&user_agent)
+                            let result = webview
+                                .set_user_agent(&user_agent)
                                 .map_err(|e| format!("Set user agent failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::ScreenshotCdp { full_page, format, quality, frame, resp_tx } => {
-                            tracing::debug!("[Session:{}] ScreenshotCdp: full_page={}, frame={:?}", id, full_page, frame);
+                        SessionCommand::ScreenshotCdp {
+                            full_page,
+                            format,
+                            quality,
+                            frame,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] ScreenshotCdp: full_page={}, frame={:?}",
+                                id,
+                                full_page,
+                                frame
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
@@ -900,22 +995,44 @@ impl SessionManager {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.reset_device_emulation()
+                            let result = webview
+                                .reset_device_emulation()
                                 .map_err(|e| format!("Reset device emulation failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::SetViewportCdp { width, height, device_scale_factor, is_mobile, resp_tx } => {
-                            tracing::debug!("[Session:{}] SetViewportCdp: {}x{}", id, width, height);
+                        SessionCommand::SetViewportCdp {
+                            width,
+                            height,
+                            device_scale_factor,
+                            is_mobile,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] SetViewportCdp: {}x{}",
+                                id,
+                                width,
+                                height
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.set_viewport_cdp(width, height, device_scale_factor, is_mobile)
+                            let result = webview
+                                .set_viewport_cdp(width, height, device_scale_factor, is_mobile)
                                 .map_err(|e| format!("Set viewport CDP failed: {:?}", e));
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::ClickCdp { selector, human_mode, resp_tx } => {
-                            tracing::debug!("[Session:{}] ClickCdp: {}, human={}", id, selector, human_mode);
+                        SessionCommand::ClickCdp {
+                            selector,
+                            human_mode,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] ClickCdp: {}, human={}",
+                                id,
+                                selector,
+                                human_mode
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
@@ -923,8 +1040,18 @@ impl SessionManager {
                             let result = webview.click_selector_cdp(&selector, human_mode);
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::TypeCdp { text, char_delay_ms, human_mode, resp_tx } => {
-                            tracing::debug!("[Session:{}] TypeCdp: {} chars, human={}", id, text.len(), human_mode);
+                        SessionCommand::TypeCdp {
+                            text,
+                            char_delay_ms,
+                            human_mode,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] TypeCdp: {} chars, human={}",
+                                id,
+                                text.len(),
+                                human_mode
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
@@ -942,13 +1069,13 @@ impl SessionManager {
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::ManageNetwork { action, resp_tx } => {
-                             tracing::debug!("[Session:{}] ManageNetwork: {:?}", id, action);
+                            tracing::debug!("[Session:{}] ManageNetwork: {:?}", id, action);
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                             let result = webview.manage_network(action);
-                             let _ = resp_tx.send(result);
+                            let result = webview.manage_network(action);
+                            let _ = resp_tx.send(result);
                         }
                         SessionCommand::GetFrames { resp_tx } => {
                             tracing::debug!("[Session:{}] GetFrames", id);
@@ -956,12 +1083,20 @@ impl SessionManager {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.get_frames()
-                                .map(|v| v.to_string());
+                            let result = webview.get_frames().map(|v| v.to_string());
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::ExecuteInFrame { script, frame, resp_tx } => {
-                            tracing::debug!("[Session:{}] ExecuteInFrame: frame={}, script_len={}", id, frame, script.len());
+                        SessionCommand::ExecuteInFrame {
+                            script,
+                            frame,
+                            resp_tx,
+                        } => {
+                            tracing::debug!(
+                                "[Session:{}] ExecuteInFrame: frame={}, script_len={}",
+                                id,
+                                frame,
+                                script.len()
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
@@ -969,14 +1104,28 @@ impl SessionManager {
                             let result = webview.execute_in_frame(&script, &frame);
                             let _ = resp_tx.send(result);
                         }
-                        SessionCommand::FormInjectFile { selector, file_paths, frame, resp_tx } => {
-                            tracing::info!("[Session:{}] FormInjectFile: selector={}, files={:?}", id, selector, file_paths);
+                        SessionCommand::FormInjectFile {
+                            selector,
+                            file_paths,
+                            frame,
+                            resp_tx,
+                        } => {
+                            tracing::info!(
+                                "[Session:{}] FormInjectFile: selector={}, files={:?}",
+                                id,
+                                selector,
+                                file_paths
+                            );
                             if !webview.is_ready() {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
                             let result = if let Some(ref frame_spec) = frame {
-                                webview.set_file_input_files_in_frame(&selector, &file_paths, frame_spec)
+                                webview.set_file_input_files_in_frame(
+                                    &selector,
+                                    &file_paths,
+                                    frame_spec,
+                                )
                             } else {
                                 webview.set_file_input_files(&selector, &file_paths)
                             };
@@ -1185,7 +1334,10 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SetCookies { cookies, resp_tx: tx })?;
+        handle.send_command(SessionCommand::SetCookies {
+            cookies,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(())) => Ok(()),
@@ -1194,7 +1346,13 @@ impl SessionManager {
         }
     }
 
-    pub async fn wait_for_selector(&self, id: &str, selector: String, timeout_ms: u64, frame: Option<String>) -> Result<bool, String> {
+    pub async fn wait_for_selector(
+        &self,
+        id: &str,
+        selector: String,
+        timeout_ms: u64,
+        frame: Option<String>,
+    ) -> Result<bool, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1204,7 +1362,12 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::WaitForSelector { selector, timeout_ms, frame, resp_tx: tx })?;
+        handle.send_command(SessionCommand::WaitForSelector {
+            selector,
+            timeout_ms,
+            frame,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(result)) => Ok(result),
@@ -1213,7 +1376,13 @@ impl SessionManager {
         }
     }
 
-    pub async fn extract(&self, id: &str, selector: String, attribute: String, extract_all: bool) -> Result<String, String> {
+    pub async fn extract(
+        &self,
+        id: &str,
+        selector: String,
+        attribute: String,
+        extract_all: bool,
+    ) -> Result<String, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1223,7 +1392,12 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::Extract { selector, attribute, extract_all, resp_tx: tx })?;
+        handle.send_command(SessionCommand::Extract {
+            selector,
+            attribute,
+            extract_all,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(result)) => Ok(result),
@@ -1243,7 +1417,10 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SetVisibility { visible, resp_tx: tx })?;
+        handle.send_command(SessionCommand::SetVisibility {
+            visible,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(is_visible)) => Ok(is_visible),
@@ -1283,7 +1460,10 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SimulateDevice { device_name, resp_tx: tx })?;
+        handle.send_command(SessionCommand::SimulateDevice {
+            device_name,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(result)) => Ok(result),
@@ -1303,7 +1483,11 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SetViewport { width, height, resp_tx: tx })?;
+        handle.send_command(SessionCommand::SetViewport {
+            width,
+            height,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(())) => Ok(()),
@@ -1323,7 +1507,10 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SetUserAgent { user_agent, resp_tx: tx })?;
+        handle.send_command(SessionCommand::SetUserAgent {
+            user_agent,
+            resp_tx: tx,
+        })?;
 
         match rx.await {
             Ok(Ok(())) => Ok(()),
@@ -1333,7 +1520,14 @@ impl SessionManager {
     }
 
     /// CDP screenshot with full page and iframe support
-    pub async fn screenshot_cdp(&self, id: &str, full_page: bool, format: &str, quality: Option<u32>, frame: Option<String>) -> Result<Vec<u8>, String> {
+    pub async fn screenshot_cdp(
+        &self,
+        id: &str,
+        full_page: bool,
+        format: &str,
+        quality: Option<u32>,
+        frame: Option<String>,
+    ) -> Result<Vec<u8>, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1343,12 +1537,12 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::ScreenshotCdp { 
+        handle.send_command(SessionCommand::ScreenshotCdp {
             full_page,
             format: format.to_string(),
             quality,
             frame,
-            resp_tx: tx 
+            resp_tx: tx,
         })?;
 
         match rx.await {
@@ -1377,7 +1571,14 @@ impl SessionManager {
     }
 
     /// Set viewport via CDP
-    pub async fn set_viewport_cdp(&self, id: &str, width: u32, height: u32, device_scale_factor: f64, is_mobile: bool) -> Result<String, String> {
+    pub async fn set_viewport_cdp(
+        &self,
+        id: &str,
+        width: u32,
+        height: u32,
+        device_scale_factor: f64,
+        is_mobile: bool,
+    ) -> Result<String, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1387,12 +1588,12 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::SetViewportCdp { 
-            width, 
-            height, 
-            device_scale_factor, 
+        handle.send_command(SessionCommand::SetViewportCdp {
+            width,
+            height,
+            device_scale_factor,
             is_mobile,
-            resp_tx: tx 
+            resp_tx: tx,
         })?;
 
         match rx.await {
@@ -1402,7 +1603,12 @@ impl SessionManager {
     }
 
     /// Click element using CDP Input.dispatchMouseEvent (bot detection evasion)
-    pub async fn click_cdp(&self, id: &str, selector: String, human_mode: bool) -> Result<(), String> {
+    pub async fn click_cdp(
+        &self,
+        id: &str,
+        selector: String,
+        human_mode: bool,
+    ) -> Result<(), String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1412,10 +1618,10 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::ClickCdp { 
+        handle.send_command(SessionCommand::ClickCdp {
             selector,
             human_mode,
-            resp_tx: tx 
+            resp_tx: tx,
         })?;
 
         match rx.await {
@@ -1425,7 +1631,13 @@ impl SessionManager {
     }
 
     /// Type text using CDP Input.dispatchKeyEvent (bot detection evasion)
-    pub async fn type_cdp(&self, id: &str, text: String, char_delay_ms: u64, human_mode: bool) -> Result<(), String> {
+    pub async fn type_cdp(
+        &self,
+        id: &str,
+        text: String,
+        char_delay_ms: u64,
+        human_mode: bool,
+    ) -> Result<(), String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1435,11 +1647,11 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::TypeCdp { 
-            text, 
+        handle.send_command(SessionCommand::TypeCdp {
+            text,
             char_delay_ms,
             human_mode,
-            resp_tx: tx 
+            resp_tx: tx,
         })?;
 
         match rx.await {
@@ -1459,10 +1671,7 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::PressKeyCdp { 
-            key, 
-            resp_tx: tx 
-        })?;
+        handle.send_command(SessionCommand::PressKeyCdp { key, resp_tx: tx })?;
 
         match rx.await {
             Ok(result) => result,
@@ -1481,9 +1690,9 @@ impl SessionManager {
         };
 
         let (tx, rx) = oneshot::channel();
-        handle.send_command(SessionCommand::ManageNetwork { 
+        handle.send_command(SessionCommand::ManageNetwork {
             action,
-            resp_tx: tx 
+            resp_tx: tx,
         })?;
 
         match rx.await {
@@ -1512,7 +1721,12 @@ impl SessionManager {
     }
 
     /// Execute script in a specific frame (iframe) via CDP
-    pub async fn execute_in_frame(&self, id: &str, script: &str, frame: &str) -> Result<String, String> {
+    pub async fn execute_in_frame(
+        &self,
+        id: &str,
+        script: &str,
+        frame: &str,
+    ) -> Result<String, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1535,7 +1749,13 @@ impl SessionManager {
     }
 
     /// Inject file(s) into a WebView file input via CDP DOM.setFileInputFiles
-    pub async fn form_inject_file(&self, id: &str, selector: &str, file_paths: &[String], frame: Option<String>) -> Result<String, String> {
+    pub async fn form_inject_file(
+        &self,
+        id: &str,
+        selector: &str,
+        file_paths: &[String],
+        frame: Option<String>,
+    ) -> Result<String, String> {
         let handle = {
             let sessions = self.sessions.lock().unwrap();
             sessions
@@ -1579,7 +1799,10 @@ impl SessionManager {
         }
 
         if !removed.is_empty() {
-            tracing::info!("[SessionManager] Cleaned up {} idle sessions", removed.len());
+            tracing::info!(
+                "[SessionManager] Cleaned up {} idle sessions",
+                removed.len()
+            );
         }
 
         removed
@@ -1595,9 +1818,7 @@ impl SessionManager {
         let sessions = self.sessions.lock().unwrap();
         sessions
             .iter()
-            .map(|(id, handle)| {
-                (id.clone(), handle.idle_duration(), handle.get_status_sync())
-            })
+            .map(|(id, handle)| (id.clone(), handle.idle_duration(), handle.get_status_sync()))
             .collect()
     }
 

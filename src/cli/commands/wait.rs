@@ -3,8 +3,16 @@ use crate::output::{self, OutputOpts};
 use crate::refs;
 
 const VALID_CONDITIONS: &[&str] = &[
-    "present", "visible", "stable", "text_contains", "text_matches",
-    "attribute_equals", "clickable", "detached", "navigation_complete", "network_idle",
+    "present",
+    "visible",
+    "stable",
+    "text_contains",
+    "text_matches",
+    "attribute_equals",
+    "clickable",
+    "detached",
+    "navigation_complete",
+    "network_idle",
 ];
 
 pub fn run(
@@ -19,7 +27,9 @@ pub fn run(
 ) -> Result<(), WbError> {
     if !VALID_CONDITIONS.contains(&condition) {
         return Err(WbError::general(format!(
-            "Invalid condition '{}'. Valid: {}", condition, VALID_CONDITIONS.join(", ")
+            "Invalid condition '{}'. Valid: {}",
+            condition,
+            VALID_CONDITIONS.join(", ")
         )));
     }
 
@@ -41,18 +51,30 @@ pub fn run(
     resp.check_success("Wait failed")?;
 
     // Server returns "found" field — true if condition met, false if timed out
-    let found = resp.body.get("found").and_then(|v| v.as_bool()).unwrap_or(false);
+    let found = resp
+        .body
+        .get("found")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     if opts.json {
         output::print_json(&resp.body);
     } else {
         let status = if found { "found" } else { "timed out" };
-        output::print_result(opts, &format!("Wait '{condition}' on '{selector}': {status} [{} ms]", resp.elapsed_ms));
+        output::print_result(
+            opts,
+            &format!(
+                "Wait '{condition}' on '{selector}': {status} [{} ms]",
+                resp.elapsed_ms
+            ),
+        );
     }
 
     if found {
         Ok(())
     } else {
-        Err(WbError::timeout(format!("Wait '{condition}' on '{selector}' timed out after {timeout_ms}ms")))
+        Err(WbError::timeout(format!(
+            "Wait '{condition}' on '{selector}' timed out after {timeout_ms}ms"
+        )))
     }
 }
