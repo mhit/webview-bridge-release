@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.9.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-3.11.3-blue" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4" alt="Platform">
   <img src="https://img.shields.io/badge/CLI-Windows%20%7C%20Linux%20%7C%20macOS-brightgreen" alt="CLI">
   <img src="https://img.shields.io/badge/protocol-MCP-purple" alt="MCP">
@@ -560,6 +560,15 @@ curl -X POST http://localhost:9400/frames \
 ---
 
 ## 更新履歴
+
+### v3.11.3
+- **クラッシュ耐性強化**: WebView2 自動アップデートで複数バージョンの DLL が同時ロードされる場合も VEH が全インスタンスをカバー（サーバー生存率向上）
+- `navigate` レスポンスにインタラクティブ要素スナップショット同梱（別途 `/snapshot` 不要）
+- ログインページへのリダイレクトを自動検出 → レスポンスに auto-login ヒントを付与
+- `post_load_wait_ms` パラメータ追加 — Chart.js など遅延レンダリングページでのクラッシュ防止
+- `execute` で `await` を含むスクリプトを `async function` に自動ラップ（Promise 解決）
+- `--disable-extensions` 削除 → 1Password / Bitwarden のパスキー・認証情報補完が有効化
+- クラッシュ後のセッション復旧改善: `last_url` を即時永続化し再起動後の遷移先を保持
 
 ### v3.9.0
 - CDP iframe サポート (`wb frames`, 全コマンドに `--frame` フラグ)
