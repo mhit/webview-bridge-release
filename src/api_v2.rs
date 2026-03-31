@@ -1103,9 +1103,77 @@ async fn session_auto_login(
         debug_screenshots.push(json!({"step": "username_filled", "url": url}));
     }
 
-    // --- 10. Fill password via CDP key events (TypeCdp fires keydown/char/keyup per char) ---
+    // --- 10. Fill password (handles single-page and two-step login flows) ---
+    // Some sites (e.g. Rakuten RMS) use a two-step flow: username on screen 1 → submit
+    // → password on screen 2.  Probe for the password field now; if absent, submit the
+    // username form first to advance to screen 2, then wait for the password field there.
     {
-        // Click field first to focus
+        let password_present_now = {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: auto_login_cfg.password_selector.clone(),
+                timeout_ms: 1000,
+                frame: None,
+                resp_tx: tx,
+            });
+            matches!(
+                tokio::time::timeout(Duration::from_secs(2), rx).await,
+                Ok(Ok(Ok(_)))
+            )
+        };
+
+        if !password_present_now {
+            // Two-step flow: submit username to navigate to the password screen.
+            tracing::info!(
+                "[AutoLogin] Password field '{}' not on screen 1 — submitting username to advance to step 2",
+                auto_login_cfg.password_selector
+            );
+            {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                    id: handle.id.clone(),
+                    selector: auto_login_cfg.submit_selector.clone(),
+                    human_mode: false,
+                    resp_tx: tx,
+                });
+                let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+            }
+            if let Some(url) =
+                auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_step2_navigated", debug).await
+            {
+                debug_screenshots.push(json!({"step": "step2_navigated", "url": url}));
+            }
+            // Wait for password field to appear on screen 2.
+            {
+                let (tx, rx) = oneshot::channel();
+                let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                    id: handle.id.clone(),
+                    selector: auto_login_cfg.password_selector.clone(),
+                    timeout_ms: 10000,
+                    frame: None,
+                    resp_tx: tx,
+                });
+                if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
+                    tokio::time::timeout(Duration::from_secs(12), rx).await
+                {
+                    return (StatusCode::BAD_REQUEST, Json(json!({
+                        "success": false,
+                        "error": {
+                            "code": "PASSWORD_FIELD_NOT_FOUND",
+                            "message": format!(
+                                "Password field '{}' not found on step 2 screen (after submitting username).",
+                                auto_login_cfg.password_selector
+                            )
+                        }
+                    }))).into_response();
+                }
+            }
+        }
+    }
+
+    // Password field is now present — click to focus, then type via CDP key events.
+    {
         let (tx, rx) = oneshot::channel();
         let _ = state.cmd_tx.send(AppCommand::ClickCdp {
             id: handle.id.clone(),
@@ -1129,12 +1197,12 @@ async fn session_auto_login(
         }
     }
     if let Some(url) =
-        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_password_filled", debug).await
+        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_password_filled", debug).await
     {
         debug_screenshots.push(json!({"step": "password_filled", "url": url}));
     }
 
-    // --- 11. Submit via CDP physical click (get_element_center prefers visible element) ---
+    // --- 11. Submit via CDP physical click ---
     {
         let (tx, rx) = oneshot::channel();
         let _ = state.cmd_tx.send(AppCommand::ClickCdp {
@@ -1148,7 +1216,7 @@ async fn session_auto_login(
         }
     }
     if let Some(url) =
-        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_after_submit", debug).await
+        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "04_after_submit", debug).await
     {
         debug_screenshots.push(json!({"step": "after_submit", "url": url}));
     }
