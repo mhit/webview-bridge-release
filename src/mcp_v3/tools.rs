@@ -27,7 +27,7 @@ pub async fn route_tool(
     // automatically re-acquire the session and retry the operation.
     // This eliminates the common "expired → manual re-acquire → retry" cycle.
     if let Some(ref err) = result.error {
-        if err.code == "SESSION_NOT_FOUND" && tool != "session" {
+        if (err.code == "SESSION_NOT_FOUND" || err.code == "CHANNEL_CLOSED") && tool != "session" {
             if let Some(session_name) = params.get("session").and_then(|s| s.as_str()) {
                 if !session_name.is_empty() {
                     tracing::info!(
@@ -213,7 +213,10 @@ async fn execute_script_in(
     match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.".to_string()),
+        Ok(Err(_)) => Err(format!(
+            "CHANNEL_CLOSED: Session '{}' communication lost. The browser session crashed. REQUIRED ACTION: call the session tool with {{\"acquire\": \"{}\"}} to re-acquire, then retry your operation.",
+            session, session
+        )),
         Err(_) => Err("Script execution timed out. The script may have an infinite loop or be waiting for a resource.".to_string()),
     }
 }
@@ -240,8 +243,14 @@ async fn get_cookies_cdp(session: &str, state: &V2AppState) -> Result<String, St
     match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(result))) => Ok(result),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err("Session communication lost. The browser session may have crashed. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.".to_string()),
-        Err(_) => Err("GetCookies timed out. The session may be unresponsive. Try: use the session tool with {\"acquire\": \"<name>\"} to re-acquire.".to_string()),
+        Ok(Err(_)) => Err(format!(
+            "CHANNEL_CLOSED: Session '{}' communication lost. REQUIRED ACTION: call the session tool with {{\"acquire\": \"{}\"}} to re-acquire.",
+            session, session
+        )),
+        Err(_) => Err(format!(
+            "GetCookies timed out for session '{}'. The session may be unresponsive.",
+            session
+        )),
     }
 }
 
@@ -332,7 +341,13 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
     match tokio::time::timeout(Duration::from_millis(req.timeout_ms), rx).await {
         Ok(Ok(Ok(()))) => {}
         Ok(Ok(Err(e))) => return McpToolResponse::error("NAVIGATE_FAILED", &e),
-        Ok(Err(_)) => return McpToolResponse::error("CHANNEL_CLOSED", "Navigation channel closed"),
+        Ok(Err(_)) => return McpToolResponse::error(
+            "CHANNEL_CLOSED",
+            &format!(
+                "Session '{}' communication lost during navigation. The browser session crashed. REQUIRED ACTION: call the session tool with {{\"acquire\": \"{}\"}} to re-acquire, then retry.",
+                req.session, req.session
+            ),
+        ),
         Err(_) => return McpToolResponse::error("TIMEOUT", "Navigation timed out"),
     }
 
@@ -3444,7 +3459,14 @@ async fn handle_execute(req: ExecuteRequest, state: &V2AppState) -> McpToolRespo
                 },
             }))
         }
-        Err(e) => McpToolResponse::error("EXECUTE_FAILED", &e),
+        Err(e) => {
+            let code = if e.starts_with("CHANNEL_CLOSED") {
+                "CHANNEL_CLOSED"
+            } else {
+                "EXECUTE_FAILED"
+            };
+            McpToolResponse::error(code, &e)
+        }
     }
 }
 

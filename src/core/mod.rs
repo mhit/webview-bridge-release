@@ -560,6 +560,15 @@ impl SessionManager {
                             let result = webview
                                 .execute_script(&script, Uuid::new_v4().to_string())
                                 .map_err(|e| format!("Execute script failed: {:?}", e));
+                            // Mark session as Error on timeout or process failure so
+                            // the next acquire() detects the broken state and recreates.
+                            if let Err(ref e) = result {
+                                if e.contains("timeout") || e.contains("process failed") {
+                                    if let Some(handle) = sessions.lock().unwrap().get(&id) {
+                                        *handle.status.lock().unwrap() = SessionStatus::Error;
+                                    }
+                                }
+                            }
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::GetStatus { resp_tx } => {
@@ -1102,6 +1111,13 @@ impl SessionManager {
                                 continue;
                             }
                             let result = webview.execute_in_frame(&script, &frame);
+                            if let Err(ref e) = result {
+                                if e.contains("timeout") || e.contains("process failed") {
+                                    if let Some(handle) = sessions.lock().unwrap().get(&id) {
+                                        *handle.status.lock().unwrap() = SessionStatus::Error;
+                                    }
+                                }
+                            }
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::FormInjectFile {
@@ -1159,6 +1175,13 @@ impl SessionManager {
     pub fn get_session_status(&self, id: &str) -> Option<SessionStatus> {
         let sessions = self.sessions.lock().unwrap();
         sessions.get(id).map(|h| h.get_status_sync())
+    }
+
+    /// Returns how many seconds since the last command was sent to this session.
+    /// Returns None if the session doesn't exist.
+    pub fn get_session_idle_secs(&self, id: &str) -> Option<u64> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(id).map(|h| h.idle_duration().as_secs())
     }
 
     pub fn get_info(&self, id: &str) -> Result<SessionStatusInfo, String> {

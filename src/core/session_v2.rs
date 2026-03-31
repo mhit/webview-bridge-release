@@ -737,11 +737,25 @@ impl SessionManagerV2 {
                     }
 
                     // Skip sessions without handles (already suspended)
-                    if s.handle.is_none() {
-                        return false;
+                    let handle = match s.handle.as_ref() {
+                        Some(h) => h,
+                        None => return false,
+                    };
+
+                    // Check V1 session's in-memory command activity first.
+                    // This is updated on every navigate/execute/capture call and reflects
+                    // real usage even when meta.last_accessed hasn't been persisted yet.
+                    if let Some(core_mgr) = self.core_manager.get() {
+                        if let Some(v1_idle_secs) =
+                            core_mgr.get_session_idle_secs(&handle.id)
+                        {
+                            if v1_idle_secs < idle_seconds {
+                                return false; // Session recently used — don't suspend
+                            }
+                        }
                     }
 
-                    // Check if idle for too long
+                    // Fall back to persisted last_accessed timestamp
                     if let Ok(last_accessed) =
                         chrono::DateTime::parse_from_rfc3339(&s.meta.last_accessed)
                     {
