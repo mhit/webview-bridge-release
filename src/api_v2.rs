@@ -1047,178 +1047,244 @@ async fn session_auto_login(
         }
     }
 
-    // --- 7. Navigate to login URL if configured ---
-    if let Some(ref login_url) = auto_login_cfg.login_url {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::Navigate {
-            id: handle.id.clone(),
-            url: login_url.clone(),
-            resp_tx: tx,
-        });
-        let _ = tokio::time::timeout(Duration::from_secs(15), rx).await;
+    // --- 6b. Smart resume: detect current page state (1Password-style field detection) ---
+    // If auto-login is called while already mid-flow (e.g. AI retry after partial failure),
+    // skip already-completed steps.  Probe each field type with a short timeout; the first
+    // match determines where we resume from.
+    #[derive(PartialEq)]
+    enum ResumeState {
+        FullFlow,   // nothing found — navigate then fill everything
+        AtUsername, // username field visible — skip navigate, fill from here
+        AtPassword, // only password field visible — skip navigate + username fill
+        AtOtp,      // OTP field visible — skip all login steps, fill OTP directly
     }
 
-    // --- 8. Wait for username field ---
-    {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
-            id: handle.id.clone(),
-            selector: auto_login_cfg.username_selector.clone(),
-            timeout_ms: 10000,
-            frame: None,
-            resp_tx: tx,
-        });
-        if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
-            tokio::time::timeout(Duration::from_secs(12), rx).await
-        {
-            return (StatusCode::BAD_REQUEST, Json(json!({
-                "success": false,
-                "error": {
-                    "code": "LOGIN_FORM_NOT_FOUND",
-                    "message": format!(
-                        "Username field '{}' not found within 10s. Check login_url and username_selector in config.",
-                        auto_login_cfg.username_selector
-                    )
-                }
-            }))).into_response();
-        }
-    }
-
-    // --- 9. Fill username via JS (sets .value + fires input/change events, works with SPAs) ---
-    {
-        let (tx, rx) = oneshot::channel();
-        let script = js_fill_input(&auto_login_cfg.username_selector, &creds.username);
-        let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
-            id: handle.id.clone(),
-            script,
-            resp_tx: tx,
-        });
-        if let Ok(Ok(Ok(result))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
-            tracing::debug!("[AutoLogin] fill username result: {}", result);
-        }
-    }
-    if let Some(url) =
-        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await
-    {
-        debug_screenshots.push(json!({"step": "username_filled", "url": url}));
-    }
-
-    // --- 10. Fill password (handles single-page and two-step login flows) ---
-    // Some sites (e.g. Rakuten RMS) use a two-step flow: username on screen 1 → submit
-    // → password on screen 2.  Probe for the password field now; if absent, submit the
-    // username form first to advance to screen 2, then wait for the password field there.
-    {
-        let password_present_now = {
-            let (tx, rx) = oneshot::channel();
+    let resume_state = {
+        // Helper: probe a selector with a short timeout, returns true if found
+        let probe = |selector: String| async {
+            let (tx, rx) = oneshot::channel::<Result<bool, String>>();
             let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
                 id: handle.id.clone(),
-                selector: auto_login_cfg.password_selector.clone(),
-                timeout_ms: 1000,
+                selector,
+                timeout_ms: 500,
                 frame: None,
                 resp_tx: tx,
             });
             matches!(
-                tokio::time::timeout(Duration::from_secs(2), rx).await,
+                tokio::time::timeout(Duration::from_millis(800), rx).await,
                 Ok(Ok(Ok(_)))
             )
         };
 
-        if !password_present_now {
-            // Two-step flow: submit username to navigate to the password screen.
+        // Check OTP first (most specific — means we've already passed username/password)
+        let at_otp = if let Some(ref otp_sel) = auto_login_cfg.otp_selector {
+            probe(otp_sel.clone()).await
+        } else {
+            false
+        };
+
+        if at_otp {
+            tracing::info!("[AutoLogin] Smart resume: OTP field detected — skipping to OTP fill");
+            ResumeState::AtOtp
+        } else if probe(auto_login_cfg.password_selector.clone()).await {
             tracing::info!(
-                "[AutoLogin] Password field '{}' not on screen 1 — submitting username to advance to step 2",
+                "[AutoLogin] Smart resume: Password field '{}' already visible — skipping navigate+username",
                 auto_login_cfg.password_selector
             );
+            ResumeState::AtPassword
+        } else if probe(auto_login_cfg.username_selector.clone()).await {
+            tracing::info!(
+                "[AutoLogin] Smart resume: Username field '{}' already visible — skipping navigate",
+                auto_login_cfg.username_selector
+            );
+            ResumeState::AtUsername
+        } else {
+            ResumeState::FullFlow
+        }
+    };
+
+    // --- 7. Navigate to login URL (skipped if already on a login screen) ---
+    if resume_state == ResumeState::FullFlow {
+        if let Some(ref login_url) = auto_login_cfg.login_url {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::Navigate {
+                id: handle.id.clone(),
+                url: login_url.clone(),
+                resp_tx: tx,
+            });
+            let _ = tokio::time::timeout(Duration::from_secs(15), rx).await;
+        }
+    }
+
+    // --- 8–9. Wait for + fill username (skipped if already at password or OTP screen) ---
+    if resume_state != ResumeState::AtPassword && resume_state != ResumeState::AtOtp {
+        // --- 8. Wait for username field ---
+        {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: auto_login_cfg.username_selector.clone(),
+                timeout_ms: 10000,
+                frame: None,
+                resp_tx: tx,
+            });
+            if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
+                tokio::time::timeout(Duration::from_secs(12), rx).await
             {
-                let (tx, rx) = oneshot::channel();
-                let _ = state.cmd_tx.send(AppCommand::ClickCdp {
-                    id: handle.id.clone(),
-                    selector: auto_login_cfg.submit_selector.clone(),
-                    human_mode: false,
-                    resp_tx: tx,
-                });
-                let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                return (StatusCode::BAD_REQUEST, Json(json!({
+                    "success": false,
+                    "error": {
+                        "code": "LOGIN_FORM_NOT_FOUND",
+                        "message": format!(
+                            "Username field '{}' not found within 10s. Check login_url and username_selector in config.",
+                            auto_login_cfg.username_selector
+                        )
+                    }
+                }))).into_response();
             }
-            if let Some(url) =
-                auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_step2_navigated", debug).await
-            {
-                debug_screenshots.push(json!({"step": "step2_navigated", "url": url}));
+        }
+
+        // --- 9. Fill username via JS (sets .value + fires input/change events, works with SPAs) ---
+        {
+            let (tx, rx) = oneshot::channel();
+            let script = js_fill_input(&auto_login_cfg.username_selector, &creds.username);
+            let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                id: handle.id.clone(),
+                script,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(Ok(result))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+                tracing::debug!("[AutoLogin] fill username result: {}", result);
             }
-            // Wait for password field to appear on screen 2.
-            {
+        }
+        if let Some(url) =
+            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await
+        {
+            debug_screenshots.push(json!({"step": "username_filled", "url": url}));
+        }
+    }
+
+    // --- 10–11. Fill password + submit (skipped if already at OTP screen) ---
+    if resume_state != ResumeState::AtOtp {
+        // --- 10. Fill password (handles single-page and two-step login flows) ---
+        // Some sites (e.g. Rakuten RMS) use a two-step flow: username on screen 1 → submit
+        // → password on screen 2.  If we're already at the password screen (AtPassword resume),
+        // the field is present and we skip the probe entirely.
+        {
+            let password_present_now = if resume_state == ResumeState::AtPassword {
+                true // already confirmed by probe above
+            } else {
                 let (tx, rx) = oneshot::channel();
                 let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
                     id: handle.id.clone(),
                     selector: auto_login_cfg.password_selector.clone(),
-                    timeout_ms: 10000,
+                    timeout_ms: 1000,
                     frame: None,
                     resp_tx: tx,
                 });
-                if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
-                    tokio::time::timeout(Duration::from_secs(12), rx).await
+                matches!(
+                    tokio::time::timeout(Duration::from_secs(2), rx).await,
+                    Ok(Ok(Ok(_)))
+                )
+            };
+
+            if !password_present_now {
+                // Two-step flow: submit username to navigate to the password screen.
+                tracing::info!(
+                    "[AutoLogin] Password field '{}' not on screen 1 — submitting username to advance to step 2",
+                    auto_login_cfg.password_selector
+                );
                 {
-                    return (StatusCode::BAD_REQUEST, Json(json!({
-                        "success": false,
-                        "error": {
-                            "code": "PASSWORD_FIELD_NOT_FOUND",
-                            "message": format!(
-                                "Password field '{}' not found on step 2 screen (after submitting username).",
-                                auto_login_cfg.password_selector
-                            )
-                        }
-                    }))).into_response();
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                        id: handle.id.clone(),
+                        selector: auto_login_cfg.submit_selector.clone(),
+                        human_mode: false,
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                }
+                if let Some(url) =
+                    auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_step2_navigated", debug).await
+                {
+                    debug_screenshots.push(json!({"step": "step2_navigated", "url": url}));
+                }
+                // Wait for password field to appear on screen 2.
+                {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                        id: handle.id.clone(),
+                        selector: auto_login_cfg.password_selector.clone(),
+                        timeout_ms: 10000,
+                        frame: None,
+                        resp_tx: tx,
+                    });
+                    if let Err(_) | Ok(Ok(Err(_))) | Ok(Err(_)) =
+                        tokio::time::timeout(Duration::from_secs(12), rx).await
+                    {
+                        return (StatusCode::BAD_REQUEST, Json(json!({
+                            "success": false,
+                            "error": {
+                                "code": "PASSWORD_FIELD_NOT_FOUND",
+                                "message": format!(
+                                    "Password field '{}' not found on step 2 screen (after submitting username).",
+                                    auto_login_cfg.password_selector
+                                )
+                            }
+                        }))).into_response();
+                    }
                 }
             }
         }
-    }
 
-    // Password field is now present — click to focus, then type via CDP key events.
-    {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::ClickCdp {
-            id: handle.id.clone(),
-            selector: auto_login_cfg.password_selector.clone(),
-            human_mode: false,
-            resp_tx: tx,
-        });
-        let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
-    }
-    {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::TypeCdp {
-            id: handle.id.clone(),
-            text: creds.password.clone(),
-            char_delay_ms: 30,
-            human_mode: false,
-            resp_tx: tx,
-        });
-        if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(15), rx).await {
-            tracing::debug!("[AutoLogin] fill password: {:?}", r);
+        // Password field is now present — click to focus, then type via CDP key events.
+        {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                id: handle.id.clone(),
+                selector: auto_login_cfg.password_selector.clone(),
+                human_mode: false,
+                resp_tx: tx,
+            });
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
         }
-    }
-    if let Some(url) =
-        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_password_filled", debug).await
-    {
-        debug_screenshots.push(json!({"step": "password_filled", "url": url}));
-    }
+        {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+                id: handle.id.clone(),
+                text: creds.password.clone(),
+                char_delay_ms: 30,
+                human_mode: false,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(15), rx).await {
+                tracing::debug!("[AutoLogin] fill password: {:?}", r);
+            }
+        }
+        if let Some(url) =
+            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_password_filled", debug).await
+        {
+            debug_screenshots.push(json!({"step": "password_filled", "url": url}));
+        }
 
-    // --- 11. Submit via CDP physical click ---
-    {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::ClickCdp {
-            id: handle.id.clone(),
-            selector: auto_login_cfg.submit_selector.clone(),
-            human_mode: false,
-            resp_tx: tx,
-        });
-        if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
-            tracing::info!("[AutoLogin] submit click: {:?}", r);
+        // --- 11. Submit via CDP physical click ---
+        {
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                id: handle.id.clone(),
+                selector: auto_login_cfg.submit_selector.clone(),
+                human_mode: false,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
+                tracing::info!("[AutoLogin] submit click: {:?}", r);
+            }
         }
-    }
-    if let Some(url) =
-        auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "04_after_submit", debug).await
-    {
-        debug_screenshots.push(json!({"step": "after_submit", "url": url}));
+        if let Some(url) =
+            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "04_after_submit", debug).await
+        {
+            debug_screenshots.push(json!({"step": "after_submit", "url": url}));
+        }
     }
 
     // --- 12. Handle OTP/TOTP if configured ---
