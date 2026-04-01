@@ -1086,20 +1086,31 @@ async fn session_auto_login(
         if at_otp {
             tracing::info!("[AutoLogin] Smart resume: OTP field detected — skipping to OTP fill");
             ResumeState::AtOtp
-        } else if probe(auto_login_cfg.password_selector.clone()).await {
-            tracing::info!(
-                "[AutoLogin] Smart resume: Password field '{}' already visible — skipping navigate+username",
-                auto_login_cfg.password_selector
-            );
-            ResumeState::AtPassword
-        } else if probe(auto_login_cfg.username_selector.clone()).await {
-            tracing::info!(
-                "[AutoLogin] Smart resume: Username field '{}' already visible — skipping navigate",
-                auto_login_cfg.username_selector
-            );
-            ResumeState::AtUsername
         } else {
-            ResumeState::FullFlow
+            // Check username first: if the username field is visible the page needs
+            // username input regardless of whether the password is also present.
+            let at_username = probe(auto_login_cfg.username_selector.clone()).await;
+            let at_password = probe(auto_login_cfg.password_selector.clone()).await;
+
+            if at_username {
+                // Both fields may be visible (initial login form) or username only.
+                // Either way: skip navigate only; we still need to fill username.
+                tracing::info!(
+                    "[AutoLogin] Smart resume: Username field '{}' visible — skipping navigate",
+                    auto_login_cfg.username_selector
+                );
+                ResumeState::AtUsername
+            } else if at_password {
+                // Password visible without username → already past the username step
+                // (e.g. two-step flow where username was submitted and page advanced).
+                tracing::info!(
+                    "[AutoLogin] Smart resume: Password-only screen '{}' — skipping navigate+username",
+                    auto_login_cfg.password_selector
+                );
+                ResumeState::AtPassword
+            } else {
+                ResumeState::FullFlow
+            }
         }
     };
 
@@ -1343,45 +1354,9 @@ async fn session_auto_login(
         }
     }
 
-    // --- 13. Verify login success ---
-    let login_success = if let Some(ref sel) = auto_login_cfg.logged_in_selector {
-        let (tx, rx) = oneshot::channel();
-        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
-            id: handle.id.clone(),
-            selector: sel.clone(),
-            timeout_ms: 15000,
-            frame: None,
-            resp_tx: tx,
-        });
-        matches!(
-            tokio::time::timeout(Duration::from_secs(17), rx).await,
-            Ok(Ok(Ok(_)))
-        )
-    } else {
-        // No selector to verify — assume success after waiting briefly for navigation
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        true
-    };
-
-    if !login_success {
-        let err = "Login form submitted but logged_in_selector was not found within 15s.";
-        let _ = manager.record_auto_login_failure(&request.name, err);
-        tracing::warn!(
-            "[AutoLogin] Session '{}' login failed. Cache cleared.",
-            request.name
-        );
-        return (StatusCode::OK, Json(json!({
-            "success": false,
-            "logged_in": false,
-            "error": {
-                "code": "LOGIN_VERIFICATION_FAILED",
-                "message": err,
-                "next_action": "Retry with force=true to re-fetch credentials, or verify logged_in_selector and selectors in auto_login.toml."
-            }
-        }))).into_response();
-    }
-
     // --- 14. Process extra_steps (multi-stage auth, e.g. RMS → Rakuten SSO) ---
+    // NOTE: logged_in verification (step 13) intentionally runs AFTER extra_steps so that
+    // logged_in_selector is checked against the final post-SSO page, not an intermediate one.
     let mut steps_completed: usize = 0;
     for (step_idx, step) in auto_login_cfg.extra_steps.iter().enumerate() {
         tracing::info!(
@@ -1744,6 +1719,44 @@ async fn session_auto_login(
             );
         }
         steps_completed += 1;
+    }
+
+    // --- 13. Verify login success (after ALL steps including extra_steps) ---
+    let login_success = if let Some(ref sel) = auto_login_cfg.logged_in_selector {
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+            id: handle.id.clone(),
+            selector: sel.clone(),
+            timeout_ms: 15000,
+            frame: None,
+            resp_tx: tx,
+        });
+        matches!(
+            tokio::time::timeout(Duration::from_secs(17), rx).await,
+            Ok(Ok(Ok(_)))
+        )
+    } else {
+        // No selector configured — wait briefly for navigation, assume success
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        true
+    };
+
+    if !login_success {
+        let err = "Login form submitted but logged_in_selector was not found within 15s.";
+        let _ = manager.record_auto_login_failure(&request.name, err);
+        tracing::warn!(
+            "[AutoLogin] Session '{}' login failed. Cache cleared.",
+            request.name
+        );
+        return (StatusCode::OK, Json(json!({
+            "success": false,
+            "logged_in": false,
+            "error": {
+                "code": "LOGIN_VERIFICATION_FAILED",
+                "message": err,
+                "next_action": "Retry with force=true to re-fetch credentials, or verify logged_in_selector and selectors in auto_login.toml."
+            }
+        }))).into_response();
     }
 
     // --- 15. All steps completed — record success and return ---
