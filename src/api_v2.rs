@@ -828,6 +828,66 @@ async fn auto_login_debug_screenshot(
     }
 }
 
+/// Capture current page state for diagnostic purposes.
+/// Returns a JSON object with url, title, form_elements, and submit_candidates.
+/// Used in login failure responses so callers (wb CLI / API / MCP) can diagnose
+/// selector mismatches without needing filesystem access to execution logs.
+async fn capture_page_state(
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<AppCommand>,
+    session_id: &str,
+) -> serde_json::Value {
+    let script = r#"(function(){
+  try {
+    var els=[].slice.call(document.querySelectorAll('input,button,select,textarea'),0,20).map(function(el){
+      return {
+        tag:el.tagName.toLowerCase(),
+        type:el.type||null,
+        name:el.name||null,
+        id:el.id||null,
+        class:(el.className||'').trim().slice(0,60)||null,
+        placeholder:el.placeholder||null,
+        text:(el.textContent||'').trim().slice(0,80)||null,
+        visible:el.offsetParent!==null
+      };
+    });
+    var subs=[].slice.call(document.querySelectorAll('button,input[type="submit"],input[type="button"]'),0,8).map(function(el){
+      return {
+        tag:el.tagName.toLowerCase(),
+        type:el.type||null,
+        name:el.name||null,
+        id:el.id||null,
+        class:(el.className||'').trim().slice(0,60)||null,
+        text:(el.textContent||'').trim().slice(0,80)||null,
+        disabled:el.disabled
+      };
+    });
+    return JSON.stringify({url:location.href,title:document.title,form_elements:els,submit_candidates:subs});
+  } catch(e) { return JSON.stringify({url:location.href,title:document.title,error:e.message}); }
+})()"#;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = cmd_tx.send(AppCommand::ExecuteScript {
+        id: session_id.to_string(),
+        script: script.to_string(),
+        resp_tx: tx,
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(Ok(raw))) => {
+            let s = raw.trim_matches('"').replace("\\\"", "\"").replace("\\\\", "\\");
+            // The script returns a JSON string; parse it
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                return v;
+            }
+            // WebView2 may double-encode: try unescaping
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                return v;
+            }
+            serde_json::json!({"raw": raw})
+        }
+        _ => serde_json::json!({"error": "page_state capture timed out"}),
+    }
+}
+
 fn js_fill_input(selector: &str, value: &str) -> String {
     let val_json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
     // Build element-lookup expression supporting extended selectors (:has-text, js:, etc.)
@@ -1541,11 +1601,30 @@ async fn session_auto_login(
                     continue;
                 }
                 tracing::warn!(
-                    "[AutoLogin] Step {}: URL pattern '{}' not reached within 15s. Skipping remaining steps.",
+                    "[AutoLogin] Step {}: URL pattern '{}' not reached within 15s.",
                     step_idx + 1,
                     url_fragment
                 );
-                break;
+                let page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
+                let err = format!(
+                    "extra_step[{}]: waited 15s for URL containing '{}' but current URL is '{}'.",
+                    step_idx + 1,
+                    url_fragment,
+                    page_state.get("url").and_then(|v| v.as_str()).unwrap_or("unknown")
+                );
+                let _ = manager.record_auto_login_failure(&request.name, &err);
+                return (StatusCode::OK, Json(json!({
+                    "success": false,
+                    "logged_in": false,
+                    "error": {
+                        "code": "EXTRA_STEP_URL_TIMEOUT",
+                        "message": err,
+                        "step_index": step_idx,
+                        "wait_url_contains": url_fragment,
+                        "next_action": "Check wait_url_contains in auto_login.toml extra_steps. Use page_state.url to see where the browser is.",
+                        "page_state": page_state
+                    }
+                }))).into_response();
             }
             tracing::info!(
                 "[AutoLogin] Step {}: URL pattern '{}' matched.",
@@ -1930,13 +2009,15 @@ async fn session_auto_login(
             "[AutoLogin] Session '{}' login failed. Cache cleared.",
             request.name
         );
+        let page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
         return (StatusCode::OK, Json(json!({
             "success": false,
             "logged_in": false,
             "error": {
                 "code": "LOGIN_VERIFICATION_FAILED",
                 "message": err,
-                "next_action": "Retry with force=true to re-fetch credentials, or verify logged_in_selector and selectors in auto_login.toml."
+                "next_action": "Verify logged_in_selector in auto_login.toml matches the post-login page. Use page_state.submit_candidates to identify the correct selector.",
+                "page_state": page_state
             }
         }))).into_response();
     }

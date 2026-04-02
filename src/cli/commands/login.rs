@@ -65,21 +65,69 @@ pub fn run(
             );
         }
     } else {
-        let msg = resp
-            .body
-            .get("error")
+        let err_obj = resp.body.get("error");
+        let msg = err_obj
             .and_then(|e| e.get("message"))
             .and_then(|v| v.as_str())
             .or_else(|| resp.body.get("message").and_then(|v| v.as_str()))
             .unwrap_or("Login failed");
-        let next = resp
-            .body
-            .get("error")
+        let next = err_obj
             .and_then(|e| e.get("next_action"))
             .and_then(|v| v.as_str());
-        eprintln!("Login failed: {msg}");
+        let code = err_obj
+            .and_then(|e| e.get("code"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        eprintln!("Login failed [{}]: {msg}", code);
         if let Some(action) = next {
-            eprintln!("Next action: {action}");
+            eprintln!("Hint: {action}");
+        }
+        // Print page_state diagnostics — critical for AI-driven TOML authoring
+        if let Some(ps) = err_obj.and_then(|e| e.get("page_state")) {
+            if let Some(url) = ps.get("url").and_then(|v| v.as_str()) {
+                eprintln!("Page URL: {url}");
+            }
+            if let Some(title) = ps.get("title").and_then(|v| v.as_str()) {
+                eprintln!("Page title: {title}");
+            }
+            if let Some(subs) = ps.get("submit_candidates").and_then(|v| v.as_array()) {
+                if !subs.is_empty() {
+                    eprintln!("Submit candidates:");
+                    for s in subs {
+                        let tag = s.get("tag").and_then(|v| v.as_str()).unwrap_or("?");
+                        let typ = s.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let cls = s.get("class").and_then(|v| v.as_str()).unwrap_or("");
+                        let text = s.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        let disabled = s.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        eprintln!(
+                            "  <{tag}> type={typ} name={name:?} id={id:?} class={cls:?} text={text:?}{}",
+                            if disabled { " [disabled]" } else { "" }
+                        );
+                    }
+                }
+            }
+            if let Some(els) = ps.get("form_elements").and_then(|v| v.as_array()) {
+                let visible: Vec<_> = els
+                    .iter()
+                    .filter(|e| e.get("visible").and_then(|v| v.as_bool()).unwrap_or(false))
+                    .collect();
+                if !visible.is_empty() {
+                    eprintln!("Visible form elements ({}):", visible.len());
+                    for e in visible.iter().take(8) {
+                        let tag = e.get("tag").and_then(|v| v.as_str()).unwrap_or("?");
+                        let typ = e.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let name = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let ph = e.get("placeholder").and_then(|v| v.as_str()).unwrap_or("");
+                        let text = e.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        eprintln!(
+                            "  <{tag}> type={typ} name={name:?} id={id:?} placeholder={ph:?} text={text:?}"
+                        );
+                    }
+                }
+            }
         }
         return Err(WbError::general(format!(
             "Auto-login failed for session '{name}'"
