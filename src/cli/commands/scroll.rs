@@ -1,5 +1,6 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
+use crate::selector;
 
 pub fn run(
     client: &WbClient,
@@ -17,11 +18,9 @@ pub fn run(
     };
 
     let script = if let Some(sel) = selector {
-        // Critical fix: return error instead of fallback
-        let sel_json = serde_json::to_string(sel)
-            .map_err(|e| WbError::general(format!("Invalid selector: {e}")))?;
+        let el_expr = selector::to_single(sel);
         format!(
-            "(() => {{ const el = document.querySelector({sel_json}); \
+            "(() => {{ const el = {el_expr}; \
              if (!el) return 'Element not found'; \
              el.scrollBy(0, {pixels}); \
              return 'ok'; }})()"

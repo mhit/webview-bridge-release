@@ -829,41 +829,32 @@ async fn auto_login_debug_screenshot(
 }
 
 fn js_fill_input(selector: &str, value: &str) -> String {
-    let sel_json = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".to_string());
     let val_json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
+    // Build element-lookup expression supporting extended selectors (:has-text, js:, etc.)
+    let el_expr = crate::webview::webview_instance::selector_to_js_expr(selector);
     // Inspired by 1Password's Chrome extension autofill technique:
     //   1. Write value via native HTMLInputElement prototype setter (bypasses React's
     //      value-tracker interception so React sees the change as "external").
     //   2. Simulate Cmd+V paste events — React's SyntheticEvent system fires onChange
     //      reliably in response to "insertFromPaste" InputEvents, unlike plain "input".
     //   3. Fire change + blur to trigger form validation callbacks.
-    format!(
-        r#"(function(){{
-        var sel={sel};var val={val};
-        var el=document.querySelector(sel);
-        if(!el)return JSON.stringify({{error:"Element not found: "+sel}});
-        // 1. Set value via native prototype setter so React's _valueTracker sees it as new
-        try{{
-            var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
-            if(d&&d.set){{d.set.call(el,val);}}else{{el.value=val;}}
-        }}catch(e){{el.value=val;}}
-        // 2. Paste simulation: Meta+V key sequence + insertFromPaste InputEvents
-        //    React onChange fires reliably in response to these events on controlled inputs.
-        el.focus();
-        el.dispatchEvent(new KeyboardEvent('keydown',{{bubbles:true,cancelable:true,key:'Meta',code:'MetaLeft',keyCode:91,metaKey:true}}));
-        el.dispatchEvent(new KeyboardEvent('keydown',{{bubbles:true,cancelable:true,key:'v',code:'KeyV',keyCode:86,metaKey:true}}));
-        el.dispatchEvent(new InputEvent('beforeinput',{{bubbles:true,cancelable:true,composed:true,data:val,inputType:'insertFromPaste'}}));
-        el.dispatchEvent(new InputEvent('input',{{bubbles:true,cancelable:false,composed:true,inputType:'insertFromPaste'}}));
-        el.dispatchEvent(new KeyboardEvent('keyup',{{bubbles:true,cancelable:true,key:'v',code:'KeyV',keyCode:86}}));
-        el.dispatchEvent(new KeyboardEvent('keyup',{{bubbles:true,cancelable:true,key:'Meta',code:'MetaLeft',keyCode:91}}));
-        // 3. Change + blur to trigger form validation
-        el.dispatchEvent(new Event('change',{{bubbles:true,cancelable:false}}));
-        el.blur();
-        return JSON.stringify({{ok:true}});
-    }})()"#,
-        sel = sel_json,
-        val = val_json
-    )
+    // Use string concatenation to avoid Rust format! misinterpreting JS braces in el_expr
+    String::from("(function(){")
+        + "var val=" + &val_json + ";"
+        + "var el=" + &el_expr + ";"
+        + r#"if(!el)return JSON.stringify({error:"Element not found"});
+try{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set){d.set.call(el,val);}else{el.value=val;}}catch(e){el.value=val;}
+el.focus();
+el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Meta',code:'MetaLeft',keyCode:91,metaKey:true}));
+el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'v',code:'KeyV',keyCode:86,metaKey:true}));
+el.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,composed:true,data:val,inputType:'insertFromPaste'}));
+el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:false,composed:true,inputType:'insertFromPaste'}));
+el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'v',code:'KeyV',keyCode:86}));
+el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Meta',code:'MetaLeft',keyCode:91}));
+el.dispatchEvent(new Event('change',{bubbles:true,cancelable:false}));
+el.blur();
+return JSON.stringify({ok:true});
+})()"#
 }
 
 /// Generate a JavaScript snippet that intercepts `navigator.credentials` calls.

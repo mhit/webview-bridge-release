@@ -13,6 +13,114 @@ pub const WM_SCRIPT_RESULT: u32 = WM_USER + 101;
 pub const WM_CAPTURE_RESULT: u32 = WM_USER + 102;
 
 // ============================================================================
+// Extended Selector Support
+// ============================================================================
+
+/// Convert an extended selector to a JavaScript expression that returns an Element or null.
+///
+/// Supported extensions (inspired by Playwright's selector engine):
+///
+/// | Syntax                     | Description                                              |
+/// |----------------------------|----------------------------------------------------------|
+/// | `js:<expr>`               | Raw JS expression — must evaluate to Element or null     |
+/// | `TAG:has-text('TEXT')`    | Element whose textContent includes TEXT (case-sensitive) |
+/// | `TAG:text-is('TEXT')`     | Element whose trimmed textContent equals TEXT exactly    |
+/// | `TAG:has-text-i('TEXT')`  | Like :has-text but case-insensitive                      |
+/// | Standard CSS               | Falls through to `document.querySelector(sel)`           |
+///
+/// Returns a JS expression (no trailing semicolon) suitable for embedding in:
+///   - `document.querySelector(...)` replacement
+///   - `Array.from(...).find(...)` for collection-based matching
+///
+/// **Usage in JS templates**: wrap the returned expression in `(expr)` and call it as
+/// a function or use the result directly.
+pub fn selector_to_js_expr(selector: &str) -> String {
+    // js: prefix — pass through raw JS expression unchanged
+    if let Some(expr) = selector.strip_prefix("js:") {
+        return format!("({})", expr.trim());
+    }
+
+    // :has-text('TEXT') / :has-text("TEXT") — case-sensitive text contains
+    if let Some(pos) = find_pseudo(selector, ":has-text(") {
+        let (base, text) = split_pseudo(selector, pos, ":has-text(");
+        let escaped = text.replace('\\', "\\\\").replace('`', "\\`");
+        let base_sel = js_str(if base.is_empty() { "*" } else { base });
+        return format!(
+            "Array.from(document.querySelectorAll({})).find(function(e){{return e.textContent.includes(`{}`)}})||null",
+            base_sel, escaped
+        );
+    }
+
+    // :text-is('TEXT') — exact match on trimmed textContent
+    if let Some(pos) = find_pseudo(selector, ":text-is(") {
+        let (base, text) = split_pseudo(selector, pos, ":text-is(");
+        let escaped = text.replace('\\', "\\\\").replace('`', "\\`");
+        let base_sel = js_str(if base.is_empty() { "*" } else { base });
+        return format!(
+            "Array.from(document.querySelectorAll({})).find(function(e){{return e.textContent.trim()===`{}`}})||null",
+            base_sel, escaped
+        );
+    }
+
+    // :has-text-i('TEXT') — case-insensitive text contains
+    if let Some(pos) = find_pseudo(selector, ":has-text-i(") {
+        let (base, text) = split_pseudo(selector, pos, ":has-text-i(");
+        let escaped = text.replace('\\', "\\\\").replace('`', "\\`").to_lowercase();
+        let base_sel = js_str(if base.is_empty() { "*" } else { base });
+        return format!(
+            "Array.from(document.querySelectorAll({})).find(function(e){{return e.textContent.toLowerCase().includes(`{}`)}})||null",
+            base_sel, escaped
+        );
+    }
+
+    // Standard CSS — use document.querySelector directly
+    format!("document.querySelector({})", js_str(selector))
+}
+
+/// Returns true if the selector needs JS-expression handling (non-standard pseudo or js: prefix).
+pub fn selector_needs_js(selector: &str) -> bool {
+    selector.starts_with("js:")
+        || selector.contains(":has-text(")
+        || selector.contains(":text-is(")
+        || selector.contains(":has-text-i(")
+}
+
+/// Build a JS boolean expression: "element exists?"
+/// For use in wait_for_selector polling loops.
+pub fn selector_to_js_exists(selector: &str) -> String {
+    if selector_needs_js(selector) {
+        format!("(({})!==null)", selector_to_js_expr(selector))
+    } else {
+        format!("(document.querySelector({})!==null)", js_str(selector))
+    }
+}
+
+/// Escape a string value for use as a JS string literal (double-quoted).
+fn js_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Find the position of a pseudo-class in a selector string (outside of brackets).
+fn find_pseudo(selector: &str, pseudo: &str) -> Option<usize> {
+    selector.find(pseudo)
+}
+
+/// Split `"TAG:pseudo-class('text')"` into `("TAG", "text")`.
+/// Strips wrapping quotes from the argument.
+fn split_pseudo<'a>(selector: &'a str, pos: usize, pseudo: &str) -> (&'a str, String) {
+    let base = &selector[..pos];
+    let rest = &selector[pos + pseudo.len()..];
+    // Find closing paren — strip the trailing ')'
+    let arg_raw = rest.trim_end_matches(')');
+    // Strip surrounding quotes (single or double)
+    let arg = arg_raw
+        .trim()
+        .trim_start_matches(['\'', '"'])
+        .trim_end_matches(['\'', '"']);
+    (base, arg.to_string())
+}
+
+// ============================================================================
 // Debug Logging Helpers
 // ============================================================================
 
@@ -2708,28 +2816,34 @@ impl WebViewInstance {
     pub fn get_element_center(&self, selector: &str) -> Result<(f64, f64), String> {
         log_webview_start("WebViewInstance::get_element_center", selector);
 
-        let script = format!(
-            r#"
-            (function() {{
-                const all = document.querySelectorAll("{}");
-                if (!all.length) return JSON.stringify({{ error: "Element not found" }});
-                // Prefer first visible element (non-zero bounding rect)
-                const el = [...all].find(e => {{
-                    const r = e.getBoundingClientRect();
-                    return e.offsetParent !== null && r.width > 0 && r.height > 0;
-                }}) || all[0];
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) {{
-                    return JSON.stringify({{ error: "Element has zero size (may be hidden)" }});
-                }}
-                return JSON.stringify({{
-                    x: rect.left + rect.width / 2,
-                    y: rect.top + rect.height / 2
-                }});
-            }})()
-        "#,
-            selector.replace('"', "\\\"")
-        );
+        // Build the element-lookup expression — supports extended selectors (:has-text, js:, etc.)
+        let script = if selector_needs_js(selector) {
+            // Extended selector: js_expr returns the element directly
+            let el_expr = selector_to_js_expr(selector);
+            format!(
+                r#"(function(){{
+                var el={};
+                if(!el)return JSON.stringify({{error:"Element not found"}});
+                var rect=el.getBoundingClientRect();
+                if(rect.width===0||rect.height===0)return JSON.stringify({{error:"Element has zero size (may be hidden)"}});
+                return JSON.stringify({{x:rect.left+rect.width/2,y:rect.top+rect.height/2}});
+            }})()"#,
+                el_expr
+            )
+        } else {
+            // Standard CSS: querySelectorAll → pick most visible (original behaviour)
+            format!(
+                r#"(function(){{
+                var all=document.querySelectorAll({});
+                if(!all.length)return JSON.stringify({{error:"Element not found"}});
+                var el=[...all].find(function(e){{var r=e.getBoundingClientRect();return e.offsetParent!==null&&r.width>0&&r.height>0;}})||all[0];
+                var rect=el.getBoundingClientRect();
+                if(rect.width===0||rect.height===0)return JSON.stringify({{error:"Element has zero size (may be hidden)"}});
+                return JSON.stringify({{x:rect.left+rect.width/2,y:rect.top+rect.height/2}});
+            }})()"#,
+                js_str(selector)
+            )
+        };
 
         let request_id = Uuid::new_v4().to_string();
         let result = self
@@ -3502,10 +3616,10 @@ impl WebViewInstance {
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        let escaped_selector = selector.replace("'", "\\'");
+        // Use extended selector support (:has-text, js:, etc.)
         let check_script = format!(
-            "(function() {{ return document.querySelector('{}') !== null; }})()",
-            escaped_selector
+            "(function(){{return {}}})()",
+            selector_to_js_exists(selector)
         );
 
         // If frame is specified, use CDP-based execution in the iframe

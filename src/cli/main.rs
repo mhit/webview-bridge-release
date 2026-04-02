@@ -5,6 +5,7 @@ mod client;
 mod commands;
 mod output;
 mod refs;
+mod selector;
 mod updater;
 
 #[derive(Parser)]

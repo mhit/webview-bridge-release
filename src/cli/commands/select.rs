@@ -1,6 +1,7 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
 use crate::refs;
+use crate::selector;
 
 pub fn run(
     client: &WbClient,
@@ -11,15 +12,13 @@ pub fn run(
     frame: Option<&str>,
 ) -> Result<(), WbError> {
     let selector = refs::resolve_target(target);
-    // Critical fix: return error instead of fallback
-    let sel_json = serde_json::to_string(&selector)
-        .map_err(|e| WbError::general(format!("Invalid selector: {e}")))?;
+    let el_expr = selector::to_single(&selector);
     let val_json = serde_json::to_string(value)
         .map_err(|e| WbError::general(format!("Invalid value: {e}")))?;
 
     let script = format!(
         r#"(() => {{
-  const el = document.querySelector({sel_json});
+  const el = {el_expr};
   if (!el) return JSON.stringify({{ error: 'Element not found' }});
   if (el.tagName !== 'SELECT') return JSON.stringify({{ error: 'Not a <select> element' }});
   const opts = [...el.options].map(o => ({{ value: o.value, text: o.textContent.trim() }}));

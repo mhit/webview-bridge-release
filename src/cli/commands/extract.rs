@@ -1,5 +1,6 @@
 use crate::client::{WbClient, WbError};
 use crate::output::{self, OutputOpts};
+use crate::selector;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
@@ -34,18 +35,16 @@ pub fn run(
         Vec::new()
     };
 
-    // Critical fix: return error instead of fallback on serialization failure
-    let sel_json = serde_json::to_string(selector)
-        .map_err(|e| WbError::general(format!("Invalid selector: {e}")))?;
+    let sel_js_expr = selector::to_all(selector);
 
-    let script = build_extract_script(&sel_json, &field_pairs, limit)?;
+    let script = build_extract_script(&sel_js_expr, &field_pairs, limit)?;
 
     if scroll {
         return run_scroll_collect(
             client,
             opts,
             session,
-            &sel_json,
+            &sel_js_expr,
             &field_pairs,
             limit,
             output_path,
@@ -113,7 +112,7 @@ fn run_scroll_collect(
     client: &WbClient,
     opts: &OutputOpts,
     session: &str,
-    sel_json: &str,
+    sel_js_expr: &str,
     field_pairs: &[(&str, &str)],
     limit: usize,
     output_path: Option<&str>,
@@ -131,7 +130,7 @@ fn run_scroll_collect(
 
     for i in 0..scroll_max {
         // Build extraction script (no limit per iteration — collect all visible)
-        let script = build_extract_script(sel_json, field_pairs, 500)?;
+        let script = build_extract_script(sel_js_expr, field_pairs, 500)?;
 
         let body = serde_json::json!({
             "session": session,
@@ -267,14 +266,14 @@ fn run_scroll_collect(
 }
 
 fn build_extract_script(
-    sel_json: &str,
+    sel_js_expr: &str,
     field_pairs: &[(&str, &str)],
     limit: usize,
 ) -> Result<String, WbError> {
     if field_pairs.is_empty() {
         Ok(format!(
             r#"(() => {{
-  const els = [...document.querySelectorAll({sel_json})].slice(0, {limit});
+  const els = [...{sel_js_expr}].slice(0, {limit});
   return JSON.stringify(els.map((el, i) => ({{
     index: i, tag: el.tagName.toLowerCase(),
     text: (el.textContent || '').trim().slice(0, 200),
@@ -288,11 +287,9 @@ fn build_extract_script(
             .map(|(name, sub_sel)| {
                 let name_j = serde_json::to_string(name)
                     .map_err(|e| WbError::general(format!("Invalid field name '{name}': {e}")))?;
-                let sub_j = serde_json::to_string(sub_sel).map_err(|e| {
-                    WbError::general(format!("Invalid sub-selector '{sub_sel}': {e}"))
-                })?;
+                let sub_js = selector::to_single(sub_sel);
                 Ok(format!(
-                    "    {name_j}: (() => {{ const s = el.querySelector({sub_j}); \
+                    "    {name_j}: (() => {{ const s = {sub_js}; \
                      return s ? (s.textContent || '').trim() : null; }})()"
                 ))
             })
@@ -301,7 +298,7 @@ fn build_extract_script(
 
         Ok(format!(
             r#"(() => {{
-  const els = [...document.querySelectorAll({sel_json})].slice(0, {limit});
+  const els = [...{sel_js_expr}].slice(0, {limit});
   return JSON.stringify(els.map(el => ({{
 {field_js}
   }})));
