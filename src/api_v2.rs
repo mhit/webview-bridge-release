@@ -1023,7 +1023,8 @@ async fn session_auto_login(
     };
 
     // --- 6. Check if already logged in (skip if logged_in_selector found) ---
-    if let Some(ref sel) = auto_login_cfg.logged_in_selector {
+    // force=true bypasses this check so the full login flow always runs.
+    if !request.force && let Some(ref sel) = auto_login_cfg.logged_in_selector {
         let (tx, rx) = oneshot::channel();
         let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
             id: handle.id.clone(),
