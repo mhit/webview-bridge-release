@@ -513,6 +513,19 @@ enum AuthAction {
 }
 
 fn main() -> ExitCode {
+    // Set Windows console output to UTF-8 (code page 65001) so Japanese and other
+    // multi-byte characters are not garbled when wb.exe is called from PowerShell or cmd.exe.
+    // This is a process-level fix independent of [Console]::OutputEncoding.
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+        }
+        unsafe {
+            SetConsoleOutputCP(65001);
+        }
+    }
+
     let cli = Cli::parse();
 
     // H7: Background update check via channel (non-blocking, 1s timeout on exit)
