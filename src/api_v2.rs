@@ -1389,6 +1389,14 @@ async fn session_auto_login(
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
             if !found {
+                if step.optional {
+                    tracing::info!(
+                        "[AutoLogin] Step {}: URL pattern '{}' not reached — step is optional, skipping.",
+                        step_idx + 1,
+                        url_fragment
+                    );
+                    continue;
+                }
                 tracing::warn!(
                     "[AutoLogin] Step {}: URL pattern '{}' not reached within 15s. Skipping remaining steps.",
                     step_idx + 1,

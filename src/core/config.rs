@@ -252,6 +252,11 @@ pub struct AutoLoginStep {
     /// Timeout (ms) for `challenge_done_js` polling.  Default: 15000.
     #[serde(default = "default_challenge_timeout_ms")]
     pub challenge_timeout_ms: u64,
+    /// If true, this step is skipped when its trigger condition (`wait_url_contains` or the
+    /// first selector probe) is not met — instead of aborting remaining steps.
+    /// Use for post-login screens that only appear occasionally (e.g. "お知らせ", terms modals).
+    #[serde(default)]
+    pub optional: bool,
 }
 
 fn default_pre_submit_wait_ms() -> u64 {

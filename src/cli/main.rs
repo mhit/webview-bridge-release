@@ -515,14 +515,20 @@ enum AuthAction {
 fn main() -> ExitCode {
     // Set Windows console output to UTF-8 (code page 65001) so Japanese and other
     // multi-byte characters are not garbled when wb.exe is called from PowerShell or cmd.exe.
-    // This is a process-level fix independent of [Console]::OutputEncoding.
+    // SetConsoleOutputCP fixes console display; _setmode fixes piped/redirected stdout/stderr
+    // by disabling the CRT's CRLF/encoding translation layer (sets raw binary passthrough).
     #[cfg(windows)]
     {
         unsafe extern "system" {
             fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
         }
+        unsafe extern "C" {
+            fn _setmode(fd: i32, mode: i32) -> i32;
+        }
         unsafe {
             SetConsoleOutputCP(65001);
+            _setmode(1, 0x8000); // stdout → _O_BINARY
+            _setmode(2, 0x8000); // stderr → _O_BINARY
         }
     }
 
