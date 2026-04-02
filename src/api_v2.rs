@@ -1033,7 +1033,7 @@ async fn session_auto_login(
             frame: None,
             resp_tx: tx,
         });
-        if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(3), rx).await {
+        if let Ok(Ok(Ok(true))) = tokio::time::timeout(Duration::from_secs(3), rx).await {
             let _ = manager.record_auto_login_skipped(&request.name);
             return (
                 StatusCode::OK,
@@ -1073,7 +1073,7 @@ async fn session_auto_login(
             });
             matches!(
                 tokio::time::timeout(Duration::from_millis(800), rx).await,
-                Ok(Ok(Ok(_)))
+                Ok(Ok(Ok(true)))
             )
         };
 
@@ -1196,7 +1196,7 @@ async fn session_auto_login(
                 });
                 matches!(
                     tokio::time::timeout(Duration::from_secs(2), rx).await,
-                    Ok(Ok(Ok(_)))
+                    Ok(Ok(Ok(true)))
                 )
             };
 
@@ -1322,7 +1322,7 @@ async fn session_auto_login(
             frame: None,
             resp_tx: tx,
         });
-        if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
+        if let Ok(Ok(Ok(true))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
             // Fetch TOTP code from 1Password
             let op_path_otp = op_path.clone();
             let totp_code = tokio::task::spawn_blocking(move || {
@@ -1676,7 +1676,7 @@ async fn session_auto_login(
                 frame: None,
                 resp_tx: tx,
             });
-            if let Ok(Ok(Ok(_))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
+            if let Ok(Ok(Ok(true))) = tokio::time::timeout(Duration::from_secs(12), rx).await {
                 let op_path_otp = op_path.clone();
                 if let Ok(Ok(code)) = tokio::task::spawn_blocking(move || {
                     crate::auto_login::read_secret(&op_path_otp, &otp_ref)
@@ -1714,7 +1714,7 @@ async fn session_auto_login(
             });
             let step_ok = matches!(
                 tokio::time::timeout(Duration::from_secs(17), rx).await,
-                Ok(Ok(Ok(_)))
+                Ok(Ok(Ok(true)))
             );
             if step_ok {
                 tracing::info!(
@@ -1751,7 +1751,7 @@ async fn session_auto_login(
         });
         matches!(
             tokio::time::timeout(Duration::from_secs(17), rx).await,
-            Ok(Ok(Ok(_)))
+            Ok(Ok(Ok(true)))
         )
     } else {
         // No selector configured — wait briefly for navigation, assume success
