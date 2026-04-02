@@ -185,6 +185,12 @@ pub struct AutoLoginConfig {
     /// 1Password TOTP field reference (e.g. "op://Personal/item/one-time password")
     #[serde(default)]
     pub otp_op_ref: Option<String>,
+    /// Wait (ms) between filling the password field and clicking submit.
+    /// Use when the page re-renders after input events (e.g. React/Vue forms), which may
+    /// temporarily remove the submit button from the DOM.
+    /// Default: 0.  Recommended: 1000–2000 for pages with JS-driven form validation.
+    #[serde(default)]
+    pub pre_submit_wait_ms: u64,
     /// Additional login steps for multi-step auth flows (e.g. RMS → Rakuten SSO).
     /// Each step is triggered when the URL contains `wait_url_contains`.
     #[serde(default)]

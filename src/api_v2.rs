@@ -1280,6 +1280,15 @@ async fn session_auto_login(
         }
 
         // --- 11. Submit via CDP physical click ---
+        // Wait before submit if configured — allows React/Vue re-renders triggered by input
+        // events to stabilize before we look for the submit button.
+        if auto_login_cfg.pre_submit_wait_ms > 0 {
+            tracing::info!(
+                "[AutoLogin] pre-submit wait: {}ms",
+                auto_login_cfg.pre_submit_wait_ms
+            );
+            tokio::time::sleep(Duration::from_millis(auto_login_cfg.pre_submit_wait_ms)).await;
+        }
         {
             let (tx, rx) = oneshot::channel();
             let _ = state.cmd_tx.send(AppCommand::ClickCdp {
