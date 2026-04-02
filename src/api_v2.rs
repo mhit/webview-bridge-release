@@ -1280,14 +1280,40 @@ async fn session_auto_login(
         }
 
         // --- 11. Submit via CDP physical click ---
-        // Wait before submit if configured — allows React/Vue re-renders triggered by input
-        // events to stabilize before we look for the submit button.
+        // (a) Fixed pre-submit wait — baseline delay for React/Vue re-renders.
         if auto_login_cfg.pre_submit_wait_ms > 0 {
             tracing::info!(
                 "[AutoLogin] pre-submit wait: {}ms",
                 auto_login_cfg.pre_submit_wait_ms
             );
             tokio::time::sleep(Duration::from_millis(auto_login_cfg.pre_submit_wait_ms)).await;
+        }
+        // (b) submit_ready_selector — wait until button is re-enabled (SPA re-render guard).
+        // More reliable than a fixed delay: waits for the actual DOM state change.
+        if let Some(ref ready_sel) = auto_login_cfg.submit_ready_selector.clone() {
+            tracing::info!(
+                "[AutoLogin] waiting for submit_ready_selector: '{}'",
+                ready_sel
+            );
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: ready_sel.clone(),
+                timeout_ms: 10000,
+                frame: None,
+                resp_tx: tx,
+            });
+            match tokio::time::timeout(Duration::from_secs(11), rx).await {
+                Ok(Ok(Ok(true))) => {
+                    tracing::info!("[AutoLogin] submit_ready_selector found — proceeding to click.");
+                }
+                _ => {
+                    tracing::warn!(
+                        "[AutoLogin] submit_ready_selector '{}' not found within 10s — clicking anyway.",
+                        ready_sel
+                    );
+                }
+            }
         }
         {
             let (tx, rx) = oneshot::channel();
@@ -1623,6 +1649,37 @@ async fn session_auto_login(
         // 2. Fixed pre-submit wait (catches timing issues even without challenge_done_js).
         if step.pre_submit_wait_ms > 0 {
             tokio::time::sleep(Duration::from_millis(step.pre_submit_wait_ms)).await;
+        }
+        // 3. submit_ready_selector — wait until button is re-enabled (SPA re-render guard).
+        if let Some(ref ready_sel) = step.submit_ready_selector {
+            tracing::info!(
+                "[AutoLogin] step {}: waiting for submit_ready_selector: '{}'",
+                step_idx + 1,
+                ready_sel
+            );
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
+                id: handle.id.clone(),
+                selector: ready_sel.clone(),
+                timeout_ms: 10000,
+                frame: None,
+                resp_tx: tx,
+            });
+            match tokio::time::timeout(Duration::from_secs(11), rx).await {
+                Ok(Ok(Ok(true))) => {
+                    tracing::info!(
+                        "[AutoLogin] step {}: submit_ready_selector found.",
+                        step_idx + 1
+                    );
+                }
+                _ => {
+                    tracing::warn!(
+                        "[AutoLogin] step {}: submit_ready_selector '{}' not found within 10s — clicking anyway.",
+                        step_idx + 1,
+                        ready_sel
+                    );
+                }
+            }
         }
 
         // Click submit — use CDP physical click (get_element_center prefers visible elements)

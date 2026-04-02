@@ -191,6 +191,14 @@ pub struct AutoLoginConfig {
     /// Default: 0.  Recommended: 1000–2000 for pages with JS-driven form validation.
     #[serde(default)]
     pub pre_submit_wait_ms: u64,
+    /// CSS selector to wait for before clicking submit.
+    /// Instead of (or in addition to) `pre_submit_wait_ms`, waits until this selector
+    /// appears in the DOM.  Useful for SPAs that re-enable the submit button after
+    /// validating all fields (e.g. `"button[name='submit']:not([disabled])"`).
+    /// Timeout: 10 seconds.  If the selector does not appear within the timeout, the
+    /// automation clicks submit anyway (best-effort).
+    #[serde(default)]
+    pub submit_ready_selector: Option<String>,
     /// Additional login steps for multi-step auth flows (e.g. RMS → Rakuten SSO).
     /// Each step is triggered when the URL contains `wait_url_contains`.
     #[serde(default)]
@@ -249,6 +257,10 @@ pub struct AutoLoginStep {
     /// Default: 1000ms.  Set higher (e.g. 3000) for slow PoW or laggy pages.
     #[serde(default = "default_pre_submit_wait_ms")]
     pub pre_submit_wait_ms: u64,
+    /// CSS selector to wait for before clicking submit (SPA re-render guard).
+    /// Works the same as `AutoLoginConfig.submit_ready_selector`.  Timeout: 10 seconds.
+    #[serde(default)]
+    pub submit_ready_selector: Option<String>,
     /// JavaScript snippet evaluated before submit.  The automation waits until the expression
     /// returns a truthy value (up to `challenge_timeout_ms`).
     /// Example: `"typeof window.r10ChallengeReady !== 'undefined' && window.r10ChallengeReady"`
