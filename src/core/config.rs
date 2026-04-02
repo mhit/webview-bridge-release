@@ -199,10 +199,39 @@ pub struct AutoLoginConfig {
     /// automation clicks submit anyway (best-effort).
     #[serde(default)]
     pub submit_ready_selector: Option<String>,
+    /// Passkey / WebAuthn interception mode.
+    ///
+    /// Sites increasingly offer passkey authentication via `navigator.credentials.get/create`.
+    /// WB can intercept these calls before the browser's native dialog appears.
+    ///
+    /// Modes:
+    ///   - `"skip"` (default when field is absent): do not intercept — let the browser handle it
+    ///   - `"bypass"`: override `navigator.credentials` to throw NotAllowedError immediately,
+    ///     forcing the site to fall back to password / username-password form.
+    ///     Use this when a site auto-triggers the passkey dialog and you want password login.
+    ///   - `"detect"`: intercept and store the WebAuthn request in `window._wbWebAuthnPending`
+    ///     (JSON string), then block until WB writes a response to `window._wbWebAuthnResponse`.
+    ///     This is the extension point for custom passkey handlers (e.g. a software FIDO2
+    ///     authenticator loaded with private key data from 1Password in a future release).
+    #[serde(default)]
+    pub passkey_mode: PasskeyMode,
     /// Additional login steps for multi-step auth flows (e.g. RMS → Rakuten SSO).
     /// Each step is triggered when the URL contains `wait_url_contains`.
     #[serde(default)]
     pub extra_steps: Vec<AutoLoginStep>,
+}
+
+/// How WB handles WebAuthn / passkey challenges during auto-login.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PasskeyMode {
+    /// Do not intercept — browser native WebAuthn dialog (default).
+    #[default]
+    Skip,
+    /// Throw NotAllowedError immediately, forcing sites to fall back to password login.
+    Bypass,
+    /// Intercept and expose request via `window._wbWebAuthnPending` for custom handling.
+    Detect,
 }
 
 /// A single step in a multi-step login flow.

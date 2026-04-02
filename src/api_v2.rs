@@ -866,6 +866,81 @@ fn js_fill_input(selector: &str, value: &str) -> String {
     )
 }
 
+/// Generate a JavaScript snippet that intercepts `navigator.credentials` calls.
+///
+/// Inspired by 1Password's `webauthn-listeners.js`: the extension overrides
+/// `navigator.credentials.create/get` and uses `window.postMessage` to route requests to
+/// its background worker.  WB uses a simpler polling approach via `window._wbWebAuthn*`.
+///
+/// Modes:
+///   - `Bypass`: throw `NotAllowedError` immediately — sites fall back to password login.
+///   - `Detect`: store the WebAuthn options in `window._wbWebAuthnPending` (JSON) and block
+///     until WB writes a response object to `window._wbWebAuthnResponse`.
+fn js_passkey_intercept(mode: &crate::core::config::PasskeyMode) -> String {
+    use crate::core::config::PasskeyMode;
+    match mode {
+        PasskeyMode::Skip => String::new(),
+        PasskeyMode::Bypass => r#"(function(){
+            if(window._wbPasskeyIntercepted)return;
+            window._wbPasskeyIntercepted=true;
+            var orig_create=navigator.credentials.create.bind(navigator.credentials);
+            var orig_get=navigator.credentials.get.bind(navigator.credentials);
+            // Throw NotAllowedError so the site falls back to password form.
+            navigator.credentials.create=function(opts){
+                console.info('[WB] passkey bypass: create intercepted, throwing NotAllowedError');
+                return Promise.reject(new DOMException('WB passkey bypass: use password login','NotAllowedError'));
+            };
+            navigator.credentials.get=function(opts){
+                // Conditional mediation (autofill) — just skip silently
+                if(opts&&opts.mediation==='conditional')return Promise.resolve(null);
+                console.info('[WB] passkey bypass: get intercepted, throwing NotAllowedError');
+                return Promise.reject(new DOMException('WB passkey bypass: use password login','NotAllowedError'));
+            };
+            console.info('[WB] passkey bypass active');
+        })()"#.to_string(),
+        PasskeyMode::Detect => r#"(function(){
+            if(window._wbPasskeyIntercepted)return;
+            window._wbPasskeyIntercepted=true;
+            window._wbWebAuthnPending=null;
+            window._wbWebAuthnResponse=null;
+            function intercept(type,opts){
+                return new Promise(function(resolve,reject){
+                    // Serialize options (ArrayBuffers → arrays)
+                    var serialized=JSON.stringify({type:type,options:opts},function(k,v){
+                        if(v instanceof ArrayBuffer)return Array.from(new Uint8Array(v));
+                        if(v instanceof Uint8Array||v instanceof Int8Array)return Array.from(v);
+                        return v;
+                    });
+                    window._wbWebAuthnPending=serialized;
+                    console.info('[WB] passkey detect: '+type+' intercepted, waiting for WB response...');
+                    var deadline=Date.now()+30000;
+                    var iv=setInterval(function(){
+                        if(Date.now()>deadline){
+                            clearInterval(iv);
+                            window._wbWebAuthnPending=null;
+                            reject(new DOMException('WB passkey detect: timeout waiting for response','NotAllowedError'));
+                            return;
+                        }
+                        var resp=window._wbWebAuthnResponse;
+                        if(!resp)return;
+                        window._wbWebAuthnResponse=null;
+                        window._wbWebAuthnPending=null;
+                        clearInterval(iv);
+                        if(resp.error){reject(new DOMException(resp.error,'NotAllowedError'));}
+                        else{resolve(resp.credential);}
+                    },50);
+                });
+            }
+            navigator.credentials.create=function(opts){return intercept('create',opts);};
+            navigator.credentials.get=function(opts){
+                if(opts&&opts.mediation==='conditional')return Promise.resolve(null);
+                return intercept('get',opts);
+            };
+            console.info('[WB] passkey detect active');
+        })()"#.to_string(),
+    }
+}
+
 /// POST /session/auto-login
 ///
 /// Performs automatic login using credentials stored in 1Password.
@@ -1134,6 +1209,27 @@ async fn session_auto_login(
             }
         }
     };
+
+    // --- 6c. Passkey / WebAuthn interception ---
+    // Inject a script that overrides navigator.credentials before any navigation so the
+    // passkey dialog never appears mid-login.  Inspired by how 1Password's Chrome extension
+    // monkey-patches navigator.credentials (webauthn-listeners.js) and communicates with its
+    // background service worker via window.postMessage.  WB uses ExecuteScript polling instead.
+    use crate::core::config::PasskeyMode;
+    if auto_login_cfg.passkey_mode != PasskeyMode::Skip {
+        let passkey_script = js_passkey_intercept(&auto_login_cfg.passkey_mode);
+        let (tx, rx) = oneshot::channel();
+        let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+            id: handle.id.clone(),
+            script: passkey_script,
+            resp_tx: tx,
+        });
+        let _ = tokio::time::timeout(Duration::from_secs(3), rx).await;
+        tracing::info!(
+            "[AutoLogin] passkey intercept injected (mode={:?})",
+            auto_login_cfg.passkey_mode
+        );
+    }
 
     // --- 7. Navigate to login URL (skipped if already on a login screen) ---
     if resume_state == ResumeState::FullFlow {
