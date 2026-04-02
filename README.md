@@ -13,11 +13,13 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-3.11.3-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-3.12.0-blue">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Rust" src="https://img.shields.io/badge/rust-edition%202024-orange">
 </p>
+
+> **v3.12 — React SPA Auto-Login & AI-Native Diagnostics**: 1Password CRX インスパイアの paste simulation で React SPA フォームに確実に値を注入。`:has-text()` / `js:` 拡張セレクタが wb CLI 全コマンドで使用可能に。ログイン失敗時に `page_state`（URL・DOM要素一覧）をレスポンスに含め、ファイルアクセス不要でAIが自律的にTOMLを修正できる設計に。
 
 > **v3.11 — Crash Resilience & Auto-Login**: WebView2 レンダラークラッシュからサーバーが自動回復。navigate レスポンスにインタラクティブ要素スナップショットを同梱、ログインページ検出 & auto-login ヒント。`execute` で `await` を含むスクリプトを自動ラップ。
 
@@ -387,6 +389,95 @@ Amazonを開いてワイヤレスマウスを検索して
 <img src="docs/img/Autonomous_Visual_Agents_Page10.png" alt="開発者コミュニティへの衝撃" width="700">
 
 </details>
+
+## 🔑 Auto-Login (`wb login`)
+
+1Password連携による自動ログイン機能。SPAを含む複雑なログインフローに対応。
+
+### 設定ファイル（auto_login.toml）
+
+```toml
+op_item   = "your-1password-item-id"
+op_vault  = "自動化用"
+login_url = "https://example.com/login"
+
+username_selector = "input[name='email']"
+password_selector = "input[name='password']"
+submit_selector   = "button[type='submit']"
+
+# SPA再レンダリング後にsubmitボタンが消える場合の待機（ms）
+pre_submit_wait_ms = 1500
+
+# ログイン完了判定（標準CSSまたはjs:プレフィックスでカスタム判定）
+logged_in_selector = "js:window.location.hostname==='app.example.com'?document.body:null"
+
+# 多段ログインフロー（SSO、お知らせ、利用規約など）
+[[extra_steps]]
+wait_url_contains = "sso.example.com"
+password_selector = "#password"
+submit_selector   = "#submit"
+optional = true   # クッキー有効時はスキップ
+
+[[extra_steps]]
+wait_url_contains = "notice.example.com"
+submit_selector   = "button:has-text('閉じる')"
+optional = true
+```
+
+### 拡張セレクタ
+
+標準CSSに加え、以下の拡張構文が全セレクタフィールドと `wb` CLIコマンドで使用可能：
+
+| 構文 | 説明 | 例 |
+|------|------|-----|
+| `button:has-text('TEXT')` | テキストを含む要素 | `button:has-text('ログイン')` |
+| `button:text-is('TEXT')` | テキストが完全一致 | `button:text-is('次へ')` |
+| `button:has-text-i('TEXT')` | 大小文字無視 | `button:has-text-i('login')` |
+| `js:<expr>` | 任意JS式（Element or null） | `js:document.forms[0].querySelector('button')` |
+
+### React SPA対応（paste simulation）
+
+v3.12でフォーム入力を1Password CRX方式に刷新。`InputEvent({inputType:'insertFromPaste'})` を使ってReactの `onChange` を確実にトリガーし、ネイティブvalue setterをバイパスすることで値がReact状態に反映される。
+
+### ログイン失敗時の診断
+
+```bash
+$ wb login run mysite --force
+Login failed [LOGIN_VERIFICATION_FAILED]: logged_in_selector was not found within 15s.
+Hint: Verify logged_in_selector in auto_login.toml matches the post-login page.
+Page URL: https://mysite.com/notice
+Page title: お知らせ
+Submit candidates:
+  <button> type=submit name="" id="" class="btn-primary" text="閉じる"
+Visible form elements (1):
+  <button> type=submit name="" id="" class="btn-primary" text="閉じる"
+```
+
+**ファイルアクセス不要**：失敗レスポンスの `page_state` フィールドに現在のURL・タイトル・DOM要素が含まれるため、wb CLI・REST API・MCPの全インターフェースからAIが自律的にTOMLを修正できる。
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "LOGIN_VERIFICATION_FAILED",
+    "page_state": {
+      "url": "https://mysite.com/notice",
+      "title": "お知らせ",
+      "submit_candidates": [
+        {"tag": "button", "text": "閉じる", "class": "btn-primary"}
+      ]
+    }
+  }
+}
+```
+
+### 実行
+
+```bash
+wb login run <session>           # ログイン実行
+wb login run <session> --force   # キャッシュ無視して強制再ログイン
+wb login status <session>        # ログイン状態確認
+```
 
 ## ⚠️ Bot対策サイトのコツ
 
