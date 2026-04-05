@@ -341,13 +341,15 @@ async fn handle_navigate(req: NavigateRequest, state: &V2AppState) -> McpToolRes
     match tokio::time::timeout(Duration::from_millis(req.timeout_ms), rx).await {
         Ok(Ok(Ok(()))) => {}
         Ok(Ok(Err(e))) => return McpToolResponse::error("NAVIGATE_FAILED", &e),
-        Ok(Err(_)) => return McpToolResponse::error(
-            "CHANNEL_CLOSED",
-            &format!(
-                "Session '{}' communication lost during navigation. The browser session crashed. REQUIRED ACTION: call the session tool with {{\"acquire\": \"{}\"}} to re-acquire, then retry.",
-                req.session, req.session
-            ),
-        ),
+        Ok(Err(_)) => {
+            return McpToolResponse::error(
+                "CHANNEL_CLOSED",
+                &format!(
+                    "Session '{}' communication lost during navigation. The browser session crashed. REQUIRED ACTION: call the session tool with {{\"acquire\": \"{}\"}} to re-acquire, then retry.",
+                    req.session, req.session
+                ),
+            );
+        }
         Err(_) => return McpToolResponse::error("TIMEOUT", "Navigation timed out"),
     }
 
