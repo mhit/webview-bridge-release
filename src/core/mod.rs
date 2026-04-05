@@ -1212,7 +1212,10 @@ impl SessionManager {
             match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
                 Ok(_) => {}
                 Err(_) => {
-                    tracing::warn!("[remove_session] Session {} close timed out after 5s, forcing removal", id);
+                    tracing::warn!(
+                        "[remove_session] Session {} close timed out after 5s, forcing removal",
+                        id
+                    );
                 }
             }
         }

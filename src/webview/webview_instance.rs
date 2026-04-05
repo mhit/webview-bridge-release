@@ -42,7 +42,11 @@ pub fn selector_to_js_expr(selector: &str) -> String {
 
     // @eN or bare eN — resolve via data-wb-ref DOM attribute (set by snapshot)
     // e.g. "@e3" or "e3" → document.querySelector('[data-wb-ref="e3"]')
-    let ref_id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    let ref_id = if let Some(r) = selector.strip_prefix('@') {
+        r
+    } else {
+        selector
+    };
     if ref_id.len() >= 2
         && ref_id.starts_with('e')
         && ref_id[1..].chars().all(|c| c.is_ascii_digit())
@@ -78,7 +82,10 @@ pub fn selector_to_js_expr(selector: &str) -> String {
     // :has-text-i('TEXT') — case-insensitive text contains
     if let Some(pos) = find_pseudo(selector, ":has-text-i(") {
         let (base, text) = split_pseudo(selector, pos, ":has-text-i(");
-        let escaped = text.replace('\\', "\\\\").replace('`', "\\`").to_lowercase();
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .to_lowercase();
         let base_sel = js_str(if base.is_empty() { "*" } else { base });
         return format!(
             "Array.from(document.querySelectorAll({})).find(function(e){{return e.textContent.toLowerCase().includes(`{}`)}})||null",
@@ -100,7 +107,11 @@ pub fn selector_needs_js(selector: &str) -> bool {
         return true;
     }
     // @eN or bare eN ref
-    let ref_id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    let ref_id = if let Some(r) = selector.strip_prefix('@') {
+        r
+    } else {
+        selector
+    };
     ref_id.len() >= 2 && ref_id.starts_with('e') && ref_id[1..].chars().all(|c| c.is_ascii_digit())
 }
 
@@ -2225,7 +2236,9 @@ impl WebViewInstance {
             // Skip COM close if render process already crashed — controller.Close() can hang
             // indefinitely if the browser process is in a broken state (no crash guard here).
             if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
-                tracing::warn!("[WebViewInstance::close] WebView2 process failed, skipping controller.Close() to avoid hang");
+                tracing::warn!(
+                    "[WebViewInstance::close] WebView2 process failed, skipping controller.Close() to avoid hang"
+                );
             } else {
                 unsafe {
                     // Ignore errors — window may already be gone

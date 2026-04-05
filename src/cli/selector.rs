@@ -10,7 +10,11 @@
 
 /// Returns true if selector is a snapshot ref: @e1, @e2, e1, e2, etc.
 fn is_ref(selector: &str) -> Option<&str> {
-    let id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    let id = if let Some(r) = selector.strip_prefix('@') {
+        r
+    } else {
+        selector
+    };
     if id.len() >= 2 && id.starts_with('e') && id[1..].chars().all(|c| c.is_ascii_digit()) {
         Some(id)
     } else {

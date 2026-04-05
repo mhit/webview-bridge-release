@@ -746,9 +746,7 @@ impl SessionManagerV2 {
                     // This is updated on every navigate/execute/capture call and reflects
                     // real usage even when meta.last_accessed hasn't been persisted yet.
                     if let Some(core_mgr) = self.core_manager.get() {
-                        if let Some(v1_idle_secs) =
-                            core_mgr.get_session_idle_secs(&handle.id)
-                        {
+                        if let Some(v1_idle_secs) = core_mgr.get_session_idle_secs(&handle.id) {
                             if v1_idle_secs < idle_seconds {
                                 return false; // Session recently used — don't suspend
                             }

@@ -161,7 +161,11 @@ pub struct V2AppState {
     pub cmd_tx: mpsc::UnboundedSender<AppCommand>,
     /// Per-session element ref registry: session_name → { "e1" → ElementRefEntry, ... }
     /// Populated by /snapshot; enables @e1 shorthand and SPA fallback recovery.
-    pub element_refs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, std::collections::HashMap<String, ElementRefEntry>>>>,
+    pub element_refs: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, std::collections::HashMap<String, ElementRefEntry>>,
+        >,
+    >,
 }
 
 /// Auth middleware: checks Bearer token on non-public routes
@@ -886,7 +890,10 @@ async fn capture_page_state(
     });
     match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(raw))) => {
-            let s = raw.trim_matches('"').replace("\\\"", "\"").replace("\\\\", "\\");
+            let s = raw
+                .trim_matches('"')
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
             // The script returns a JSON string; parse it
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
                 return v;
@@ -917,7 +924,11 @@ async fn store_element_refs(state: &V2AppState, session_name: &str, snap: &serde
             Some(r) => r.to_string(),
             None => continue,
         };
-        let tag = el.get("tag").and_then(|v| v.as_str()).unwrap_or("*").to_string();
+        let tag = el
+            .get("tag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
         let text = el
             .get("text")
             .and_then(|v| v.as_str())
@@ -954,7 +965,14 @@ async fn store_element_refs(state: &V2AppState, session_name: &str, snap: &serde
             tag.clone()
         };
 
-        registry.insert(ref_id, ElementRefEntry { tag, text, fallback_sel });
+        registry.insert(
+            ref_id,
+            ElementRefEntry {
+                tag,
+                text,
+                fallback_sel,
+            },
+        );
     }
 
     let mut refs = state.element_refs.write().await;
@@ -1009,8 +1027,12 @@ fn js_fill_input(selector: &str, value: &str) -> String {
     //   3. Fire change + blur to trigger form validation callbacks.
     // Use string concatenation to avoid Rust format! misinterpreting JS braces in el_expr
     String::from("(function(){")
-        + "var val=" + &val_json + ";"
-        + "var el=" + &el_expr + ";"
+        + "var val="
+        + &val_json
+        + ";"
+        + "var el="
+        + &el_expr
+        + ";"
         + r#"if(!el)return JSON.stringify({error:"Element not found"});
 try{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set){d.set.call(el,val);}else{el.value=val;}}catch(e){el.value=val;}
 el.focus();
@@ -1279,7 +1301,9 @@ async fn session_auto_login(
 
     // --- 6. Check if already logged in (skip if logged_in_selector found) ---
     // force=true bypasses this check so the full login flow always runs.
-    if !request.force && let Some(ref sel) = auto_login_cfg.logged_in_selector {
+    if !request.force
+        && let Some(ref sel) = auto_login_cfg.logged_in_selector
+    {
         let (tx, rx) = oneshot::channel();
         let _ = state.cmd_tx.send(AppCommand::WaitForSelector {
             id: handle.id.clone(),
@@ -1446,7 +1470,8 @@ async fn session_auto_login(
             }
         }
         if let Some(url) =
-            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug).await
+            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "01_username_filled", debug)
+                .await
         {
             debug_screenshots.push(json!({"step": "username_filled", "url": url}));
         }
@@ -1492,8 +1517,13 @@ async fn session_auto_login(
                     });
                     let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
                 }
-                if let Some(url) =
-                    auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "02_step2_navigated", debug).await
+                if let Some(url) = auto_login_debug_screenshot(
+                    &state.cmd_tx,
+                    &handle.id,
+                    "02_step2_navigated",
+                    debug,
+                )
+                .await
                 {
                     debug_screenshots.push(json!({"step": "step2_navigated", "url": url}));
                 }
@@ -1550,7 +1580,8 @@ async fn session_auto_login(
             }
         }
         if let Some(url) =
-            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_password_filled", debug).await
+            auto_login_debug_screenshot(&state.cmd_tx, &handle.id, "03_password_filled", debug)
+                .await
         {
             debug_screenshots.push(json!({"step": "password_filled", "url": url}));
         }
@@ -1581,7 +1612,9 @@ async fn session_auto_login(
             });
             match tokio::time::timeout(Duration::from_secs(11), rx).await {
                 Ok(Ok(Ok(true))) => {
-                    tracing::info!("[AutoLogin] submit_ready_selector found — proceeding to click.");
+                    tracing::info!(
+                        "[AutoLogin] submit_ready_selector found — proceeding to click."
+                    );
                 }
                 _ => {
                     tracing::warn!(
@@ -1719,7 +1752,10 @@ async fn session_auto_login(
                     "extra_step[{}]: waited 15s for URL containing '{}' but current URL is '{}'.",
                     step_idx + 1,
                     url_fragment,
-                    page_state.get("url").and_then(|v| v.as_str()).unwrap_or("unknown")
+                    page_state
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
                 );
                 let _ = manager.record_auto_login_failure(&request.name, &err);
                 return (StatusCode::OK, Json(json!({
@@ -3668,7 +3704,11 @@ async fn type_v2(
     // Resolve @eN refs and extended selectors
     let resolved = resolve_ref_selector(&request.selector, &request.session, &state).await;
     let el_expr = crate::webview::webview_instance::selector_to_js_expr(&resolved);
-    let clear_code = if request.clear_first { "el.value='';" } else { "" };
+    let clear_code = if request.clear_first {
+        "el.value='';"
+    } else {
+        ""
+    };
     let val_json = serde_json::to_string(&request.text).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!(
         "(function(){{ var el={el_expr}; if(!el) return JSON.stringify({{error:\"Element not found\"}}); {clear_code} el.value={val_json}; el.dispatchEvent(new Event('input',{{bubbles:true}})); return JSON.stringify({{typed:true}}); }})()"
