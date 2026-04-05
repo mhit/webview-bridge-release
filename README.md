@@ -13,11 +13,13 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-3.12.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-3.13.0-blue">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Rust" src="https://img.shields.io/badge/rust-edition%202024-orange">
 </p>
+
+> **v3.13 — Universal Element Refs (@e1) with SPA Fallback**: `wb snapshot` が返す `@e1`, `@e2`... がclick/type/wait/extract/scroll/select**全コマンドで**セレクタとして使用可能に。SPAがDOMを再構築しても、保存済みのテキストから自動fallback解決。agent-browser の refs システムをインスパイアし、ARIA非対応の日本語サイトでも動くテキストベース実装で進化。
 
 > **v3.12 — React SPA Auto-Login & AI-Native Diagnostics**: 1Password CRX インスパイアの paste simulation で React SPA フォームに確実に値を注入。`:has-text()` / `js:` 拡張セレクタが wb CLI 全コマンドで使用可能に。ログイン失敗時に `page_state`（URL・DOM要素一覧）をレスポンスに含め、ファイルアクセス不要でAIが自律的にTOMLを修正できる設計に。
 
@@ -478,6 +480,37 @@ wb login run <session>           # ログイン実行
 wb login run <session> --force   # キャッシュ無視して強制再ログイン
 wb login status <session>        # ログイン状態確認
 ```
+
+## 🏷️ Element Refs (`@e1`, `@e2`...)
+
+`wb snapshot` / `POST /snapshot` 実行後、各要素に `@e1`, `@e2`... の短縮 ref が割り当てられる。この ref は **全コマンドのセレクタフィールド**でそのまま使用可能。
+
+```bash
+# まず snapshot でページ要素を確認
+wb snapshot mysite --no-file
+# → [e1] input[text] "メールアドレス"
+# → [e2] input[password]
+# → [e3] button "ログイン"
+
+# ref で直接操作（CSSセレクタ不要）
+wb type    mysite @e1 "user@example.com"
+wb type    mysite @e2 "password123"
+wb click   mysite @e3
+wb wait    mysite @e3           # 要素が現れるまで待機
+wb extract mysite @e1           # ref要素を起点に抽出
+wb scroll  mysite down 300 --selector @e1
+```
+
+### SPA再レンダリング後の自動 fallback
+
+Reactなどのフレームワークは画面遷移でDOMを再構築するため、`data-wb-ref` 属性が消える場合がある。WebView Bridge は snapshot 実行時に**テキスト・属性を記録**しており、`data-wb-ref` が見つからない場合は自動的に `:has-text()` 等で再検索する。
+
+```
+@e3 → [data-wb-ref="e3"]  ← 通常ルート（高速）
+    → button:has-text('ログイン')  ← SPA再レンダリング後のfallback
+```
+
+agent-browser の Accessibility Tree ベースの refs と異なり、**ARIA実装がない日本語サイトでも動作**する。
 
 ## ⚠️ Bot対策サイトのコツ
 

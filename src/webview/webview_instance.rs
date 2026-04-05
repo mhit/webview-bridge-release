@@ -40,6 +40,19 @@ pub fn selector_to_js_expr(selector: &str) -> String {
         return format!("({})", expr.trim());
     }
 
+    // @eN or bare eN — resolve via data-wb-ref DOM attribute (set by snapshot)
+    // e.g. "@e3" or "e3" → document.querySelector('[data-wb-ref="e3"]')
+    let ref_id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    if ref_id.len() >= 2
+        && ref_id.starts_with('e')
+        && ref_id[1..].chars().all(|c| c.is_ascii_digit())
+    {
+        return format!(
+            "document.querySelector(\"[data-wb-ref=\\\"{}\\\"]\") ",
+            ref_id.replace('"', "\\\"")
+        );
+    }
+
     // :has-text('TEXT') / :has-text("TEXT") — case-sensitive text contains
     if let Some(pos) = find_pseudo(selector, ":has-text(") {
         let (base, text) = split_pseudo(selector, pos, ":has-text(");
@@ -79,10 +92,16 @@ pub fn selector_to_js_expr(selector: &str) -> String {
 
 /// Returns true if the selector needs JS-expression handling (non-standard pseudo or js: prefix).
 pub fn selector_needs_js(selector: &str) -> bool {
-    selector.starts_with("js:")
+    if selector.starts_with("js:")
         || selector.contains(":has-text(")
         || selector.contains(":text-is(")
         || selector.contains(":has-text-i(")
+    {
+        return true;
+    }
+    // @eN or bare eN ref
+    let ref_id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    ref_id.len() >= 2 && ref_id.starts_with('e') && ref_id[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Build a JS boolean expression: "element exists?"

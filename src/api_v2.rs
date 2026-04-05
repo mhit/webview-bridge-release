@@ -141,6 +141,16 @@ fn error_response(error: Wbp2Error, message: &str) -> axum::response::Response {
 use crate::core::AppCommand;
 use tokio::sync::{mpsc, oneshot};
 
+/// Metadata for a snapshot element ref (e.g. "e1") stored server-side.
+/// Enables SPA re-render recovery: if `data-wb-ref` is lost, use `fallback_sel`.
+#[derive(Debug, Clone)]
+pub struct ElementRefEntry {
+    pub tag: String,
+    pub text: String,
+    /// Pre-computed selector using extended syntax (e.g. `button:has-text('ログイン')`)
+    pub fallback_sel: String,
+}
+
 /// App state for v2 API (session creation callback)
 #[derive(Clone)]
 pub struct V2AppState {
@@ -149,6 +159,9 @@ pub struct V2AppState {
         Arc<dyn Fn(SessionOptions) -> Result<(String, SessionHandle), String> + Send + Sync>,
     /// Command sender to communicate with session threads (same as v1)
     pub cmd_tx: mpsc::UnboundedSender<AppCommand>,
+    /// Per-session element ref registry: session_name → { "e1" → ElementRefEntry, ... }
+    /// Populated by /snapshot; enables @e1 shorthand and SPA fallback recovery.
+    pub element_refs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, std::collections::HashMap<String, ElementRefEntry>>>>,
 }
 
 /// Auth middleware: checks Bearer token on non-public routes
@@ -886,6 +899,102 @@ async fn capture_page_state(
         }
         _ => serde_json::json!({"error": "page_state capture timed out"}),
     }
+}
+
+/// Store element refs from a snapshot result into the session registry.
+/// Called after every successful /snapshot execution.
+async fn store_element_refs(state: &V2AppState, session_name: &str, snap: &serde_json::Value) {
+    let elements = match snap.get("elements").and_then(|v| v.as_array()) {
+        Some(els) => els,
+        None => return,
+    };
+
+    let mut registry: std::collections::HashMap<String, ElementRefEntry> =
+        std::collections::HashMap::new();
+
+    for el in elements {
+        let ref_id = match el.get("ref").and_then(|v| v.as_str()) {
+            Some(r) => r.to_string(),
+            None => continue,
+        };
+        let tag = el.get("tag").and_then(|v| v.as_str()).unwrap_or("*").to_string();
+        let text = el
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let name = el
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let placeholder = el
+            .get("placeholder")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        // Build the best fallback selector using extended syntax.
+        // Priority: text > name/aria-label > placeholder > bare tag
+        let fallback_sel = if !text.is_empty() {
+            // Use first 40 chars of text to avoid overly long selectors
+            let snippet = text.chars().take(40).collect::<String>();
+            let snippet = snippet.replace('\'', "\\'");
+            format!("{}:has-text('{}')", tag, snippet)
+        } else if !name.is_empty() {
+            let name_escaped = name.replace('"', "\\\"");
+            format!("{}[name=\"{}\"]", tag, name_escaped)
+        } else if !placeholder.is_empty() {
+            let ph_escaped = placeholder.replace('"', "\\\"");
+            format!("{}[placeholder=\"{}\"]", tag, ph_escaped)
+        } else {
+            tag.clone()
+        };
+
+        registry.insert(ref_id, ElementRefEntry { tag, text, fallback_sel });
+    }
+
+    let mut refs = state.element_refs.write().await;
+    refs.insert(session_name.to_string(), registry);
+}
+
+/// Resolve an element ref (@eN or eN) to a JS expression with SPA-safe fallback.
+/// If selector is not a ref pattern, returns the original selector unchanged.
+///
+/// The generated JS tries `data-wb-ref` first (fastest, set by snapshot),
+/// then falls back to text/attribute matching if the SPA re-rendered the DOM.
+async fn resolve_ref_selector(selector: &str, session_name: &str, state: &V2AppState) -> String {
+    let ref_id = if let Some(r) = selector.strip_prefix('@') {
+        r
+    } else if selector.len() >= 2
+        && selector.starts_with('e')
+        && selector[1..].chars().all(|c| c.is_ascii_digit())
+    {
+        selector
+    } else {
+        return selector.to_string(); // not a ref — pass through unchanged
+    };
+
+    // Look up fallback in session registry
+    let refs = state.element_refs.read().await;
+    if let Some(session_refs) = refs.get(session_name) {
+        if let Some(entry) = session_refs.get(ref_id) {
+            // Generate fallback JS expression using stored text/selector
+            let fallback_js =
+                crate::webview::webview_instance::selector_to_js_expr(&entry.fallback_sel);
+            // Return as js: expression combining data-wb-ref lookup + fallback
+            return format!(
+                "js:(document.querySelector('[data-wb-ref=\"{}\"]')||({}))",
+                ref_id, fallback_js
+            );
+        }
+    }
+
+    // No registry entry — just resolve via data-wb-ref
+    format!("js:document.querySelector('[data-wb-ref=\"{}\"]')", ref_id)
 }
 
 fn js_fill_input(selector: &str, value: &str) -> String {
@@ -3465,18 +3574,11 @@ async fn click_v2(
         }
     };
 
-    // Execute click via JavaScript
+    // Resolve @eN refs and extended selectors to a JS element expression
+    let resolved = resolve_ref_selector(&request.selector, &request.session, &state).await;
+    let el_expr = crate::webview::webview_instance::selector_to_js_expr(&resolved);
     let script = format!(
-        r#"(function(){{ 
-            var el = document.querySelector("{}"); 
-            if(!el) return JSON.stringify({{error:"Element not found"}}); 
-            el.click(); 
-            return JSON.stringify({{clicked:true}}); 
-        }})()"#,
-        request
-            .selector
-            .replace('\\', r#"\\"#)
-            .replace('"', r#"\""#)
+        "(function(){{ var el = {el_expr}; if(!el) return JSON.stringify({{error:\"Element not found\"}}); el.click(); return JSON.stringify({{clicked:true}}); }})()"
     );
 
     let (tx, rx) = oneshot::channel();
@@ -3563,30 +3665,13 @@ async fn type_v2(
         }
     };
 
-    let clear_code = if request.clear_first {
-        "el.value = '';"
-    } else {
-        ""
-    };
+    // Resolve @eN refs and extended selectors
+    let resolved = resolve_ref_selector(&request.selector, &request.session, &state).await;
+    let el_expr = crate::webview::webview_instance::selector_to_js_expr(&resolved);
+    let clear_code = if request.clear_first { "el.value='';" } else { "" };
+    let val_json = serde_json::to_string(&request.text).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!(
-        r#"(function(){{ 
-            var el = document.querySelector("{}"); 
-            if(!el) return JSON.stringify({{error:"Element not found"}}); 
-            {} 
-            el.value = "{}"; 
-            el.dispatchEvent(new Event('input', {{bubbles:true}})); 
-            return JSON.stringify({{typed:true}}); 
-        }})()"#,
-        request
-            .selector
-            .replace('\\', r#"\\"#)
-            .replace('"', r#"\""#),
-        clear_code,
-        request
-            .text
-            .replace('\\', r#"\\"#)
-            .replace('"', r#"\""#)
-            .replace('\n', r#"\n"#)
+        "(function(){{ var el={el_expr}; if(!el) return JSON.stringify({{error:\"Element not found\"}}); {clear_code} el.value={val_json}; el.dispatchEvent(new Event('input',{{bubbles:true}})); return JSON.stringify({{typed:true}}); }})()"
     );
 
     let (tx, rx) = oneshot::channel();
@@ -3878,6 +3963,10 @@ async fn snapshot_v2(
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
+
+            // Store element refs in session registry for @eN resolution with SPA fallback
+            store_element_refs(&state, &request.session, &snap).await;
+
             (
                 StatusCode::OK,
                 Json(json!({

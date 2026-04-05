@@ -8,8 +8,23 @@
 ///
 /// Standard CSS selectors pass through unchanged.
 
+/// Returns true if selector is a snapshot ref: @e1, @e2, e1, e2, etc.
+fn is_ref(selector: &str) -> Option<&str> {
+    let id = if let Some(r) = selector.strip_prefix('@') { r } else { selector };
+    if id.len() >= 2 && id.starts_with('e') && id[1..].chars().all(|c| c.is_ascii_digit()) {
+        Some(id)
+    } else {
+        None
+    }
+}
+
 /// Convert a (possibly extended) selector to a JS expression that returns one Element or null.
 pub fn to_single(selector: &str) -> String {
+    // @eN / eN — resolve via data-wb-ref DOM attribute set by snapshot
+    if let Some(ref_id) = is_ref(selector) {
+        return format!("document.querySelector('[data-wb-ref=\"{ref_id}\"]')");
+    }
+
     if let Some(expr) = selector.strip_prefix("js:") {
         return format!("({})", expr);
     }
@@ -45,6 +60,13 @@ pub fn to_single(selector: &str) -> String {
 
 /// Convert a (possibly extended) selector to a JS expression that returns a NodeList/Array.
 pub fn to_all(selector: &str) -> String {
+    // @eN / eN — single element wrapped in array
+    if let Some(ref_id) = is_ref(selector) {
+        return format!(
+            "(function(){{var el=document.querySelector('[data-wb-ref=\"{ref_id}\"]');return el?[el]:[];}}())"
+        );
+    }
+
     if let Some(expr) = selector.strip_prefix("js:") {
         return format!("(function(){{var r=({expr});return r instanceof Array?r:(r?[r]:[])}}())");
     }
@@ -81,7 +103,8 @@ pub fn to_all(selector: &str) -> String {
 /// Returns true if selector uses extensions (needs special JS, not plain querySelectorAll).
 #[allow(dead_code)]
 pub fn is_extended(selector: &str) -> bool {
-    selector.starts_with("js:")
+    is_ref(selector).is_some()
+        || selector.starts_with("js:")
         || selector.contains(":has-text(")
         || selector.contains(":text-is(")
         || selector.contains(":has-text-i(")

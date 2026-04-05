@@ -324,6 +324,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
             Ok((id, handle))
         }),
         cmd_tx: unbounded_tx,
+        element_refs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     // Clone cmd_tx before v2_state is moved into router
