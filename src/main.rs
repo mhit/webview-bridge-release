@@ -302,6 +302,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
                     None => break,
                 }
             }
+            tracing::warn!("Command processor {} exited (channel closed)", i);
         });
     }
 

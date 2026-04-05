@@ -2222,8 +2222,15 @@ impl WebViewInstance {
     pub fn close(&mut self) -> WinResult<()> {
         log_webview_start("WebViewInstance::close", "");
         if let Some(controller) = self.controller.take() {
-            unsafe {
-                controller.Close()?;
+            // Skip COM close if render process already crashed — controller.Close() can hang
+            // indefinitely if the browser process is in a broken state (no crash guard here).
+            if WEBVIEW_PROCESS_FAILED.with(|f| *f.borrow()) {
+                tracing::warn!("[WebViewInstance::close] WebView2 process failed, skipping controller.Close() to avoid hang");
+            } else {
+                unsafe {
+                    // Ignore errors — window may already be gone
+                    let _ = controller.Close();
+                }
             }
         }
         self.window.close();

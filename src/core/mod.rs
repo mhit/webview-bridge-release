@@ -1204,10 +1204,17 @@ impl SessionManager {
         };
 
         if let Some(handle) = handle {
-            // Send close command to session thread
+            // Send close command to session thread with a 5s timeout.
+            // Without a timeout, controller.Close() can hang if the WebView2 render process
+            // has already crashed — which would block this command processor slot forever.
             let (tx, rx) = oneshot::channel();
             let _ = handle.send_command(SessionCommand::Close { resp_tx: tx });
-            let _ = rx.await;
+            match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::warn!("[remove_session] Session {} close timed out after 5s, forcing removal", id);
+                }
+            }
         }
 
         let mut sessions = self.sessions.lock().unwrap();
