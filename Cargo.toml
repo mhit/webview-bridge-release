@@ -1,6 +1,6 @@
 [package]
 name = "webview-bridge-rust"
-version = "3.13.1"
+version = "3.13.2"
 edition = "2024"
 
 [features]

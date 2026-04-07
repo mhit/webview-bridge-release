@@ -330,6 +330,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
 
     // Clone cmd_tx before v2_state is moved into router
     let cmd_tx_cleanup = v2_state.cmd_tx.clone();
+    let cmd_tx_watchdog = v2_state.cmd_tx.clone();
 
     // Create routers
     let event_hub = Arc::new(crate::core::websocket::EventHub::new());
@@ -388,6 +389,53 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
                         "[AutoCleanup] Cleaned up {} expired sessions",
                         expired_ids.len()
                     );
+                }
+            }
+        }
+    });
+
+    // Watchdog: periodically probe all command processor slots.
+    // If even one Ping times out, all 4 slots may be blocked (deadlock).
+    // Self-terminate so the external restart script can recover.
+    tokio::spawn(async move {
+        // Wait 30s after startup before first check (let sessions initialize)
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(30));
+        let ping_timeout = tokio::time::Duration::from_secs(15);
+        loop {
+            interval.tick().await;
+
+            // Send COMMAND_PROCESSOR_COUNT pings to saturate all slots.
+            // Each ping is handled by one processor; if any slot is stuck, at
+            // least one ping will not return within the timeout.
+            let mut rxs = Vec::with_capacity(COMMAND_PROCESSOR_COUNT);
+            for _ in 0..COMMAND_PROCESSOR_COUNT {
+                let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                if cmd_tx_watchdog
+                    .send(crate::core::AppCommand::Ping { resp_tx: tx })
+                    .is_err()
+                {
+                    // Channel closed — server is shutting down
+                    return;
+                }
+                rxs.push(rx);
+            }
+
+            for (i, rx) in rxs.into_iter().enumerate() {
+                match tokio::time::timeout(ping_timeout, rx).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        tracing::error!(
+                            "[Watchdog] Command processor slot {} is not responding \
+                             (>{}s). Likely deadlock — terminating for restart.",
+                            i,
+                            ping_timeout.as_secs()
+                        );
+                        // Give the logger a moment to flush
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -591,6 +639,9 @@ async fn process_command_async(cmd: AppCommand, manager: &Arc<SessionManager>) {
                 .form_inject_file(&id, &selector, &file_paths, frame)
                 .await;
             let _ = resp_tx.send(result);
+        }
+        AppCommand::Ping { resp_tx } => {
+            let _ = resp_tx.send(());
         }
     }
 }

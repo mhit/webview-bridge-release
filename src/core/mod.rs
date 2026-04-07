@@ -171,6 +171,11 @@ pub enum AppCommand {
         frame: Option<String>,
         resp_tx: oneshot::Sender<Result<String, String>>,
     },
+    /// Watchdog ping — no session involved. Command processor responds immediately.
+    /// Used to verify that at least one command processor slot is alive.
+    Ping {
+        resp_tx: oneshot::Sender<()>,
+    },
 }
 
 /// Session thread command enum
