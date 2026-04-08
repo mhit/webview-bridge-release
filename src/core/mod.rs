@@ -173,9 +173,7 @@ pub enum AppCommand {
     },
     /// Watchdog ping — no session involved. Command processor responds immediately.
     /// Used to verify that at least one command processor slot is alive.
-    Ping {
-        resp_tx: oneshot::Sender<()>,
-    },
+    Ping { resp_tx: oneshot::Sender<()> },
 }
 
 /// Session thread command enum
@@ -628,12 +626,11 @@ impl SessionManager {
                             }
                             let result = if format == "ax" {
                                 // AX Tree snapshot via CDP Accessibility domain (no DOM injection)
-                                webview
-                                    .get_ax_snapshot()
-                                    .and_then(|snap| {
-                                        serde_json::to_string(&snap)
-                                            .map_err(|e| format!("Failed to serialize AX snapshot: {e}"))
+                                webview.get_ax_snapshot().and_then(|snap| {
+                                    serde_json::to_string(&snap).map_err(|e| {
+                                        format!("Failed to serialize AX snapshot: {e}")
                                     })
+                                })
                             } else {
                                 webview.snapshot(&format)
                             };

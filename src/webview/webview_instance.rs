@@ -4058,15 +4058,18 @@ impl WebViewInstance {
     pub fn get_ax_tree(&self) -> Result<crate::webview::ax_types::AXTree, String> {
         use crate::webview::ax_types::{AXNode, AXTree};
 
-        log_webview_start("WebViewInstance::get_ax_tree", "CDP Accessibility.getFullAXTree");
+        log_webview_start(
+            "WebViewInstance::get_ax_tree",
+            "CDP Accessibility.getFullAXTree",
+        );
 
         // Enable Accessibility domain (safe to call multiple times)
         let _ = self.call_cdp_sync("Accessibility.enable", "{}")?;
 
         // Fetch full AX tree
         let raw = self.call_cdp_sync("Accessibility.getFullAXTree", "{}")?;
-        let parsed: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|e| format!("Failed to parse AX tree JSON: {e}"))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("Failed to parse AX tree JSON: {e}"))?;
 
         let nodes_json = parsed
             .get("nodes")
@@ -4207,7 +4210,10 @@ impl WebViewInstance {
     pub fn get_ax_snapshot(&self) -> Result<crate::webview::ax_types::AXSnapshot, String> {
         use crate::webview::ax_types::{AXElement, AXSnapshot};
 
-        log_webview_start("WebViewInstance::get_ax_snapshot", "AX Tree + refs + iframes");
+        log_webview_start(
+            "WebViewInstance::get_ax_snapshot",
+            "AX Tree + refs + iframes",
+        );
 
         // Step 1: Get main frame AX tree
         let main_tree = self.get_ax_tree()?;
@@ -4300,7 +4306,11 @@ impl WebViewInstance {
         let ref_count = elements.len();
         log_webview_success("WebViewInstance::get_ax_snapshot", Some(ref_count as u128));
 
-        Ok(AXSnapshot { elements, total_nodes, ref_count })
+        Ok(AXSnapshot {
+            elements,
+            total_nodes,
+            ref_count,
+        })
     }
 }
 

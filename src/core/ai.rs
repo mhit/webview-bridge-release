@@ -751,7 +751,9 @@ No markdown formatting, no explanation, just the JSON.
                         m.get("supportedGenerationMethods")
                             .and_then(|v| v.as_array())
                             .map(|methods| {
-                                methods.iter().any(|method| method.as_str() == Some("generateContent"))
+                                methods
+                                    .iter()
+                                    .any(|method| method.as_str() == Some("generateContent"))
                             })
                             .unwrap_or(false)
                     })

@@ -21,7 +21,11 @@ pub struct AXValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
     /// Related DOM nodes (used for labelledby, describedby, etc.)
-    #[serde(rename = "relatedNodes", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "relatedNodes",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub related_nodes: Vec<serde_json::Value>,
     /// Sources that contributed to this value (optional, for debugging).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,7 +79,11 @@ pub struct AXNode {
     pub ignored: bool,
 
     /// Reasons why this node is ignored (only when ignored=true).
-    #[serde(rename = "ignoredReasons", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "ignoredReasons",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub ignored_reasons: Vec<AXProperty>,
 
     /// The accessible role of this node.
@@ -261,7 +269,11 @@ pub struct AXElement {
 
     /// Whether this element was detected as interactive by JS cursor/event heuristics
     /// (CSS cursor:pointer, onclick, tabindex) even if not in an interactive AX role.
-    #[serde(rename = "cursorInteractive", default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        rename = "cursorInteractive",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub is_cursor_interactive: bool,
 }
 

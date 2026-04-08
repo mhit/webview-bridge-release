@@ -670,14 +670,16 @@ async fn ai_models_list(
                     model: config.ai.model.clone(),
                     timeout_ms: 10000,
                 };
-                client.list_models().unwrap_or_else(|_| vec![
-                    "gemini-2.5-pro".to_string(),
-                    "gemini-2.5-flash".to_string(),
-                    "gemini-2.0-flash".to_string(),
-                    "gemini-2.0-flash-lite".to_string(),
-                    "gemini-1.5-flash".to_string(),
-                    "gemini-1.5-pro".to_string(),
-                ])
+                client.list_models().unwrap_or_else(|_| {
+                    vec![
+                        "gemini-2.5-pro".to_string(),
+                        "gemini-2.5-flash".to_string(),
+                        "gemini-2.0-flash".to_string(),
+                        "gemini-2.0-flash-lite".to_string(),
+                        "gemini-1.5-flash".to_string(),
+                        "gemini-1.5-pro".to_string(),
+                    ]
+                })
             } else {
                 vec![]
             };
@@ -2086,7 +2088,9 @@ return JSON.stringify(btns.slice(0,10).map(function(b){
 })()"#.to_string(),
                         resp_tx: dtx,
                     });
-                    if let Ok(Ok(Ok(info))) = tokio::time::timeout(Duration::from_secs(3), drx).await {
+                    if let Ok(Ok(Ok(info))) =
+                        tokio::time::timeout(Duration::from_secs(3), drx).await
+                    {
                         tracing::info!("[AutoLogin] step {} page buttons: {}", step_idx + 1, info);
                     }
                 }
@@ -5905,17 +5909,19 @@ async fn ai_extract(
     });
     let raw = match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(r))) => r,
-        _ => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "success": false, "error": { "code": "WBP2_050",
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "error": { "code": "WBP2_050",
                 "name": "EXECUTE_FAILED", "message": "Failed to get page content" } })),
-        ),
+            );
+        }
     };
 
-    let page_info: serde_json::Value = serde_json::from_str(&raw)
-        .unwrap_or(serde_json::json!({ "text": raw }));
-    let page_text  = page_info["text"].as_str().unwrap_or("").to_string();
-    let page_url   = page_info["url"].as_str().unwrap_or("").to_string();
+    let page_info: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or(serde_json::json!({ "text": raw }));
+    let page_text = page_info["text"].as_str().unwrap_or("").to_string();
+    let page_url = page_info["url"].as_str().unwrap_or("").to_string();
     let page_title = page_info["title"].as_str().unwrap_or("").to_string();
 
     let schema_hint = if let Some(schema) = &request.schema {
@@ -5943,41 +5949,56 @@ async fn ai_extract(
     match crate::core::ai::AiClient::new(&ai_cfg) {
         Some(client) => match client.call(&prompt, None) {
             Ok(raw_json) => {
-                let clean = raw_json.trim()
-                    .trim_start_matches("```json").trim_start_matches("```")
-                    .trim_end_matches("```").trim();
+                let clean = raw_json
+                    .trim()
+                    .trim_start_matches("```json")
+                    .trim_start_matches("```")
+                    .trim_end_matches("```")
+                    .trim();
                 match serde_json::from_str::<serde_json::Value>(clean) {
                     Ok(data) => {
                         let count = data.as_array().map(|a| a.len()).unwrap_or(1);
-                        (StatusCode::OK, Json(json!({
-                            "success": true,
-                            "data": data,
-                            "count": count,
-                            "model": config.ai.model,
-                            "context_chars": page_text.len(),
-                            "page": { "title": page_title, "url": page_url }
-                        })))
+                        (
+                            StatusCode::OK,
+                            Json(json!({
+                                "success": true,
+                                "data": data,
+                                "count": count,
+                                "model": config.ai.model,
+                                "context_chars": page_text.len(),
+                                "page": { "title": page_title, "url": page_url }
+                            })),
+                        )
                     }
-                    Err(_) => (StatusCode::OK, Json(json!({
-                        "success": true,
-                        "data": raw_json.trim(),
-                        "count": 0,
-                        "model": config.ai.model,
-                        "warning": "AI response was not valid JSON — returned as string"
-                    }))),
+                    Err(_) => (
+                        StatusCode::OK,
+                        Json(json!({
+                            "success": true,
+                            "data": raw_json.trim(),
+                            "count": 0,
+                            "model": config.ai.model,
+                            "warning": "AI response was not valid JSON — returned as string"
+                        })),
+                    ),
                 }
             }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                "success": false,
-                "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
-                    "message": format!("AI extraction failed: {e}") }
-            }))),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
+                        "message": format!("AI extraction failed: {e}") }
+                })),
+            ),
         },
-        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
-            "success": false,
-            "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
-                "message": "AI client could not be initialized" }
-        }))),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                    "message": "AI client could not be initialized" }
+            })),
+        ),
     }
 }
 
@@ -5990,7 +6011,9 @@ struct AiAskRequest {
     context_chars: usize,
 }
 
-fn default_ask_context_chars() -> usize { 8000 }
+fn default_ask_context_chars() -> usize {
+    8000
+}
 
 async fn ai_ask(
     State(state): State<V2AppState>,
@@ -6048,17 +6071,19 @@ async fn ai_ask(
     });
     let raw = match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
         Ok(Ok(Ok(r))) => r,
-        _ => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "success": false, "error": { "code": "WBP2_050",
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "success": false, "error": { "code": "WBP2_050",
                 "name": "EXECUTE_FAILED", "message": "Failed to get page content" } })),
-        ),
+            );
+        }
     };
 
-    let page_info: serde_json::Value = serde_json::from_str(&raw)
-        .unwrap_or(serde_json::json!({ "text": raw }));
-    let page_text  = page_info["text"].as_str().unwrap_or("").to_string();
-    let page_url   = page_info["url"].as_str().unwrap_or("").to_string();
+    let page_info: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or(serde_json::json!({ "text": raw }));
+    let page_text = page_info["text"].as_str().unwrap_or("").to_string();
+    let page_url = page_info["url"].as_str().unwrap_or("").to_string();
     let page_title = page_info["title"].as_str().unwrap_or("").to_string();
 
     let prompt = format!(
@@ -6074,25 +6099,34 @@ async fn ai_ask(
 
     match crate::core::ai::AiClient::new(&ai_cfg) {
         Some(client) => match client.call(&prompt, None) {
-            Ok(answer) => (StatusCode::OK, Json(json!({
-                "success": true,
-                "answer": answer.trim(),
-                "question": request.question,
-                "model": config.ai.model,
-                "context_chars": page_text.len(),
-                "page": { "title": page_title, "url": page_url }
-            }))),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                "success": false,
-                "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
-                    "message": format!("AI call failed: {e}") }
-            }))),
+            Ok(answer) => (
+                StatusCode::OK,
+                Json(json!({
+                    "success": true,
+                    "answer": answer.trim(),
+                    "question": request.question,
+                    "model": config.ai.model,
+                    "context_chars": page_text.len(),
+                    "page": { "title": page_title, "url": page_url }
+                })),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
+                        "message": format!("AI call failed: {e}") }
+                })),
+            ),
         },
-        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
-            "success": false,
-            "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
-                "message": "AI client could not be initialized" }
-        }))),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                    "message": "AI client could not be initialized" }
+            })),
+        ),
     }
 }
 
@@ -6118,14 +6152,25 @@ async fn login_setup(
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
-        None => return (StatusCode::NOT_FOUND, Json(json!({
-            "success": false,
-            "error": { "code": "WBP2_001", "name": "SESSION_NOT_FOUND",
-                "message": format!("Session '{}' not found", request.session) }
-        }))).into_response(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "WBP2_001", "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session) }
+                })),
+            )
+                .into_response();
+        }
     };
 
-    tracing::info!("[LoginSetup] session={} url={:?} op_item={:?}", request.session, request.url, request.op_item);
+    tracing::info!(
+        "[LoginSetup] session={} url={:?} op_item={:?}",
+        request.session,
+        request.url,
+        request.op_item
+    );
 
     // Step 1: Navigate to login URL if provided
     if let Some(ref url) = request.url {
@@ -6137,11 +6182,17 @@ async fn login_setup(
         });
         match tokio::time::timeout(std::time::Duration::from_secs(12), rx).await {
             Ok(Ok(Ok(_))) => {}
-            _ => return (StatusCode::GATEWAY_TIMEOUT, Json(json!({
-                "success": false,
-                "error": { "code": "WBP2_050", "name": "NAVIGATE_FAILED",
-                    "message": format!("Failed to navigate to {url}") }
-            }))).into_response(),
+            _ => {
+                return (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "error": { "code": "WBP2_050", "name": "NAVIGATE_FAILED",
+                            "message": format!("Failed to navigate to {url}") }
+                    })),
+                )
+                    .into_response();
+            }
         }
         // Let the page settle — wait longer for JS-heavy SPAs (X, Google, etc.)
         tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
@@ -6150,19 +6201,50 @@ async fn login_setup(
     // Step 2: Capture form elements from the current page
     // Retry once if page hasn't rendered any form elements yet (JS-heavy SPAs)
     let mut page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
-    let initial_form_count = page_state.get("form_elements").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let initial_form_count = page_state
+        .get("form_elements")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     if initial_form_count == 0 {
         tracing::info!("[LoginSetup] no form elements yet — waiting 2s for JS render");
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
     }
-    let page_url = page_state.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let form_count = page_state.get("form_elements").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let submit_count = page_state.get("submit_candidates").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    tracing::info!("[LoginSetup] page={} form_elements={} submit_candidates={}", page_url, form_count, submit_count);
-    let page_title = page_state.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let form_elements = page_state.get("form_elements").cloned().unwrap_or(json!([]));
-    let submit_candidates = page_state.get("submit_candidates").cloned().unwrap_or(json!([]));
+    let page_url = page_state
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let form_count = page_state
+        .get("form_elements")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let submit_count = page_state
+        .get("submit_candidates")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    tracing::info!(
+        "[LoginSetup] page={} form_elements={} submit_candidates={}",
+        page_url,
+        form_count,
+        submit_count
+    );
+    let page_title = page_state
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let form_elements = page_state
+        .get("form_elements")
+        .cloned()
+        .unwrap_or(json!([]));
+    let submit_candidates = page_state
+        .get("submit_candidates")
+        .cloned()
+        .unwrap_or(json!([]));
 
     // Step 3: AI analysis of the form
     let config = crate::core::config::get_config();
@@ -6216,16 +6298,27 @@ async fn login_setup(
 
         match crate::core::ai::AiClient::new(&ai_cfg) {
             Some(client) => {
-                tracing::info!("[LoginSetup] calling AI model={:?} prompt_len={}", ai_cfg.model, prompt.len());
+                tracing::info!(
+                    "[LoginSetup] calling AI model={:?} prompt_len={}",
+                    ai_cfg.model,
+                    prompt.len()
+                );
                 match client.call(&prompt, None) {
                     Ok(raw) => {
-                        tracing::info!("[LoginSetup] AI raw response: {}", raw.chars().take(500).collect::<String>());
-                        let clean = raw.trim()
-                            .trim_start_matches("```json").trim_start_matches("```")
-                            .trim_end_matches("```").trim();
+                        tracing::info!(
+                            "[LoginSetup] AI raw response: {}",
+                            raw.chars().take(500).collect::<String>()
+                        );
+                        let clean = raw
+                            .trim()
+                            .trim_start_matches("```json")
+                            .trim_start_matches("```")
+                            .trim_end_matches("```")
+                            .trim();
                         match serde_json::from_str::<serde_json::Value>(clean) {
                             Ok(v) => {
-                                tracing::info!("[LoginSetup] AI parsed OK: username_selector={:?} password_selector={:?} submit_selector={:?}",
+                                tracing::info!(
+                                    "[LoginSetup] AI parsed OK: username_selector={:?} password_selector={:?} submit_selector={:?}",
                                     v.get("username_selector").and_then(|x| x.as_str()),
                                     v.get("password_selector").and_then(|x| x.as_str()),
                                     v.get("submit_selector").and_then(|x| x.as_str()),
@@ -6233,7 +6326,10 @@ async fn login_setup(
                                 Some(v)
                             }
                             Err(e) => {
-                                tracing::warn!("[LoginSetup] AI JSON parse failed: {e} | raw={}", &clean[..clean.len().min(200)]);
+                                tracing::warn!(
+                                    "[LoginSetup] AI JSON parse failed: {e} | raw={}",
+                                    &clean[..clean.len().min(200)]
+                                );
                                 None
                             }
                         }
@@ -6245,7 +6341,15 @@ async fn login_setup(
                 }
             }
             None => {
-                tracing::warn!("[LoginSetup] AI not available (provider={:?} api_key={})", ai_cfg.provider, if ai_cfg.api_key.is_some() { "set" } else { "missing" });
+                tracing::warn!(
+                    "[LoginSetup] AI not available (provider={:?} api_key={})",
+                    ai_cfg.provider,
+                    if ai_cfg.api_key.is_some() {
+                        "set"
+                    } else {
+                        "missing"
+                    }
+                );
                 None
             }
         }
@@ -6253,87 +6357,139 @@ async fn login_setup(
         None
     };
 
-    let username_selector = ai_result.as_ref()
-        .and_then(|r| r.get("username_selector")).and_then(|v| v.as_str())
-        .unwrap_or("").to_string();
-    let password_selector = ai_result.as_ref()
-        .and_then(|r| r.get("password_selector")).and_then(|v| v.as_str())
-        .unwrap_or("").to_string();
-    let submit_selector = ai_result.as_ref()
-        .and_then(|r| r.get("submit_selector")).and_then(|v| v.as_str())
-        .unwrap_or("").to_string();
-    let logged_in_selector = ai_result.as_ref()
-        .and_then(|r| r.get("logged_in_selector")).and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty()).map(String::from);
-    let ai_notes = ai_result.as_ref()
-        .and_then(|r| r.get("notes")).and_then(|v| v.as_str())
-        .unwrap_or("").to_string();
-    let is_multi_step = ai_result.as_ref()
-        .and_then(|r| r.get("multi_step")).and_then(|v| v.as_bool())
+    let username_selector = ai_result
+        .as_ref()
+        .and_then(|r| r.get("username_selector"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let password_selector = ai_result
+        .as_ref()
+        .and_then(|r| r.get("password_selector"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let submit_selector = ai_result
+        .as_ref()
+        .and_then(|r| r.get("submit_selector"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let logged_in_selector = ai_result
+        .as_ref()
+        .and_then(|r| r.get("logged_in_selector"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let ai_notes = ai_result
+        .as_ref()
+        .and_then(|r| r.get("notes"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let is_multi_step = ai_result
+        .as_ref()
+        .and_then(|r| r.get("multi_step"))
+        .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
     // Parse extra_steps from AI response
-    let extra_steps: Vec<crate::core::config::AutoLoginStep> = ai_result.as_ref()
+    let extra_steps: Vec<crate::core::config::AutoLoginStep> = ai_result
+        .as_ref()
         .and_then(|r| r.get("extra_steps"))
         .and_then(|v| v.as_array())
         .map(|steps| {
-            steps.iter().filter_map(|step| {
-                let wait_url = step.get("wait_url_contains").and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty()).map(String::from);
-                let pwd_sel = step.get("password_selector").and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty()).map(String::from);
-                let sub_sel = step.get("submit_selector").and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
-                let done_sel = step.get("done_selector").and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty()).map(String::from);
-                // Only include step if it has at least a submit_selector
-                sub_sel.map(|sub| crate::core::config::AutoLoginStep {
-                    wait_url_contains: wait_url,
-                    op_item: None,
-                    op_vault: None,
-                    username: None,
-                    password: None,
-                    username_selector: None,
-                    next_selector: None,
-                    wait_password_selector: None,
-                    password_selector: pwd_sel,
-                    submit_selector: Some(sub.to_string()),
-                    done_selector: done_sel,
-                    otp_selector: None,
-                    otp_op_ref: None,
-                    pre_submit_wait_ms: 1000,
-                    submit_ready_selector: None,
-                    challenge_done_js: None,
-                    challenge_timeout_ms: 15000,
-                    optional: false,
+            steps
+                .iter()
+                .filter_map(|step| {
+                    let wait_url = step
+                        .get("wait_url_contains")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(String::from);
+                    let pwd_sel = step
+                        .get("password_selector")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(String::from);
+                    let sub_sel = step
+                        .get("submit_selector")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty());
+                    let done_sel = step
+                        .get("done_selector")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(String::from);
+                    // Only include step if it has at least a submit_selector
+                    sub_sel.map(|sub| crate::core::config::AutoLoginStep {
+                        wait_url_contains: wait_url,
+                        op_item: None,
+                        op_vault: None,
+                        username: None,
+                        password: None,
+                        username_selector: None,
+                        next_selector: None,
+                        wait_password_selector: None,
+                        password_selector: pwd_sel,
+                        submit_selector: Some(sub.to_string()),
+                        done_selector: done_sel,
+                        otp_selector: None,
+                        otp_op_ref: None,
+                        pre_submit_wait_ms: 1000,
+                        submit_ready_selector: None,
+                        challenge_done_js: None,
+                        challenge_timeout_ms: 15000,
+                        optional: false,
+                    })
                 })
-            }).collect()
+                .collect()
         })
         .unwrap_or_default();
 
-    tracing::info!("[LoginSetup] multi_step={} extra_steps={}", is_multi_step, extra_steps.len());
+    tracing::info!(
+        "[LoginSetup] multi_step={} extra_steps={}",
+        is_multi_step,
+        extra_steps.len()
+    );
 
     // Step 4: Search 1Password for matching credentials
     let op_path_cfg = config.session.op_path.clone();
     let op_path_opt = crate::auto_login::find_op_binary(op_path_cfg.as_deref());
 
-    let (op_candidates, resolved_op_item, resolved_op_vault) = if let Some(ref op_path) = op_path_opt {
-        tracing::info!("[LoginSetup] searching 1Password for url={}", page_url);
-        let op_p = op_path.clone();
-        let search_url = page_url.clone();
-        let candidates = tokio::task::spawn_blocking(move || {
-            crate::auto_login::search_items_by_url(&op_p, &search_url)
-        }).await.ok().and_then(|r| r.ok()).unwrap_or_default();
+    let (op_candidates, resolved_op_item, resolved_op_vault) =
+        if let Some(ref op_path) = op_path_opt {
+            tracing::info!("[LoginSetup] searching 1Password for url={}", page_url);
+            let op_p = op_path.clone();
+            let search_url = page_url.clone();
+            let candidates = tokio::task::spawn_blocking(move || {
+                crate::auto_login::search_items_by_url(&op_p, &search_url)
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
 
-        tracing::info!("[LoginSetup] 1Password candidates: {:?}", candidates.iter().map(|(id, title, vault)| format!("{title}({id}) vault={vault}")).collect::<Vec<_>>());
-        let resolved = request.op_item.clone()
-            .or_else(|| candidates.first().map(|(id, _, _)| id.clone()));
-        let resolved_vault = candidates.first().map(|(_, _, vault)| vault.clone()).filter(|v| !v.is_empty());
-        (candidates, resolved, resolved_vault)
-    } else {
-        tracing::info!("[LoginSetup] 1Password not available");
-        (vec![], request.op_item.clone(), None)
-    };
+            tracing::info!(
+                "[LoginSetup] 1Password candidates: {:?}",
+                candidates
+                    .iter()
+                    .map(|(id, title, vault)| format!("{title}({id}) vault={vault}"))
+                    .collect::<Vec<_>>()
+            );
+            let resolved = request
+                .op_item
+                .clone()
+                .or_else(|| candidates.first().map(|(id, _, _)| id.clone()));
+            let resolved_vault = candidates
+                .first()
+                .map(|(_, _, vault)| vault.clone())
+                .filter(|v| !v.is_empty());
+            (candidates, resolved, resolved_vault)
+        } else {
+            tracing::info!("[LoginSetup] 1Password not available");
+            (vec![], request.op_item.clone(), None)
+        };
 
     // Step 5: Build and save auto_login.toml
     let auto_login_config = crate::core::config::AutoLoginConfig {
@@ -6356,11 +6512,17 @@ async fn login_setup(
 
     let toml_str = match toml::to_string_pretty(&auto_login_config) {
         Ok(s) => s,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": { "code": "WBP2_099", "name": "SERIALIZE_FAILED",
-                "message": format!("Failed to serialize config: {e}") }
-        }))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "WBP2_099", "name": "SERIALIZE_FAILED",
+                        "message": format!("Failed to serialize config: {e}") }
+                })),
+            )
+                .into_response();
+        }
     };
 
     let config_path = crate::core::config::AppConfig::session_auto_login_path(&request.session);
@@ -6369,44 +6531,59 @@ async fn login_setup(
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(e) = std::fs::write(&config_path, &toml_str) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-            "success": false,
-            "error": { "code": "WBP2_099", "name": "WRITE_FAILED",
-                "message": format!("Failed to write config: {e}") }
-        }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_099", "name": "WRITE_FAILED",
+                    "message": format!("Failed to write config: {e}") }
+            })),
+        )
+            .into_response();
     }
 
-    let candidates_json: Vec<_> = op_candidates.iter()
+    let candidates_json: Vec<_> = op_candidates
+        .iter()
         .map(|(id, title, vault)| json!({"id": id, "title": title, "vault": vault}))
         .collect();
 
-    let extra_steps_json: Vec<_> = auto_login_config.extra_steps.iter().map(|s| json!({
-        "wait_url_contains": s.wait_url_contains,
-        "password_selector": s.password_selector,
-        "submit_selector": s.submit_selector,
-        "done_selector": s.done_selector,
-    })).collect();
+    let extra_steps_json: Vec<_> = auto_login_config
+        .extra_steps
+        .iter()
+        .map(|s| {
+            json!({
+                "wait_url_contains": s.wait_url_contains,
+                "password_selector": s.password_selector,
+                "submit_selector": s.submit_selector,
+                "done_selector": s.done_selector,
+            })
+        })
+        .collect();
 
-    (StatusCode::OK, Json(json!({
-        "success": true,
-        "session": request.session,
-        "config_path": config_path.to_string_lossy(),
-        "config": {
-            "login_url": page_url,
-            "username_selector": username_selector,
-            "password_selector": password_selector,
-            "submit_selector": submit_selector,
-            "logged_in_selector": logged_in_selector,
-            "op_item": resolved_op_item,
-            "multi_step": is_multi_step,
-            "extra_steps": extra_steps_json,
-        },
-        "op_candidates": candidates_json,
-        "op_available": op_path_opt.is_some(),
-        "ai_used": ai_cfg.is_available(),
-        "ai_notes": ai_notes,
-        "model": config.ai.model,
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "session": request.session,
+            "config_path": config_path.to_string_lossy(),
+            "config": {
+                "login_url": page_url,
+                "username_selector": username_selector,
+                "password_selector": password_selector,
+                "submit_selector": submit_selector,
+                "logged_in_selector": logged_in_selector,
+                "op_item": resolved_op_item,
+                "multi_step": is_multi_step,
+                "extra_steps": extra_steps_json,
+            },
+            "op_candidates": candidates_json,
+            "op_available": op_path_opt.is_some(),
+            "ai_used": ai_cfg.is_available(),
+            "ai_notes": ai_notes,
+            "model": config.ai.model,
+        })),
+    )
+        .into_response()
 }
 
 /// GET /v2/ai/usage - Get AI usage statistics

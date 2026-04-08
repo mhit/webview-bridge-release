@@ -54,7 +54,10 @@ fn snapshot_script(all: bool, within: Option<&str>, limit: usize) -> String {
 /// - link    @e4  "パスワードを忘れた方"
 /// ```
 fn format_ax_text(snap: &serde_json::Value) -> String {
-    let title = snap.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
+    let title = snap
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(untitled)");
     let url = snap.get("url").and_then(|v| v.as_str()).unwrap_or("");
     let elements = snap.get("elements").and_then(|v| v.as_array());
 
@@ -69,12 +72,21 @@ fn format_ax_text(snap: &serde_json::Value) -> String {
             let name = el.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let description = el.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let value = el.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            let disabled = el.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
-            let required = el.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
+            let disabled = el
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let required = el
+                .get("required")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let checked = el.get("checked").and_then(|v| v.as_bool());
             let expanded = el.get("expanded").and_then(|v| v.as_bool());
             let level = el.get("level").and_then(|v| v.as_u64());
-            let cursor = el.get("cursorInteractive").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cursor = el
+                .get("cursorInteractive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let frame_id = el.get("frameId").and_then(|v| v.as_str()).unwrap_or("");
 
             // "- button  @e1  "ログイン""
@@ -104,12 +116,24 @@ fn format_ax_text(snap: &serde_json::Value) -> String {
 
             // Flags
             let mut flags: Vec<&str> = Vec::new();
-            if disabled { flags.push("disabled"); }
-            if required { flags.push("required"); }
-            if checked == Some(true) { flags.push("checked"); }
-            if expanded == Some(false) { flags.push("collapsed"); }
-            if expanded == Some(true) { flags.push("expanded"); }
-            if cursor { flags.push("cursor-interactive"); }
+            if disabled {
+                flags.push("disabled");
+            }
+            if required {
+                flags.push("required");
+            }
+            if checked == Some(true) {
+                flags.push("checked");
+            }
+            if expanded == Some(false) {
+                flags.push("collapsed");
+            }
+            if expanded == Some(true) {
+                flags.push("expanded");
+            }
+            if cursor {
+                flags.push("cursor-interactive");
+            }
 
             if !flags.is_empty() {
                 let f = flags.join(", ");
@@ -142,7 +166,10 @@ fn format_ax_text(snap: &serde_json::Value) -> String {
 
 /// Format DOM elements for terminal output (existing dom mode).
 fn format_dom_text(snap: &serde_json::Value) -> (String, usize) {
-    let title = snap.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
+    let title = snap
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(untitled)");
     let url = snap.get("url").and_then(|v| v.as_str()).unwrap_or("");
     let elements = snap.get("elements").and_then(|v| v.as_array());
 
@@ -162,7 +189,10 @@ fn format_dom_text(snap: &serde_json::Value) -> (String, usize) {
             let value = el.get("value").and_then(|v| v.as_str());
             let placeholder = el.get("placeholder").and_then(|v| v.as_str());
             let checked = el.get("checked").and_then(|v| v.as_bool()).unwrap_or(false);
-            let disabled = el.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let disabled = el
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let mut desc = format!("[{ref_id}] ");
 
@@ -200,8 +230,12 @@ fn format_dom_text(snap: &serde_json::Value) -> (String, usize) {
                 }
             }
 
-            if checked { desc.push_str(" [checked]"); }
-            if disabled { desc.push_str(" [disabled]"); }
+            if checked {
+                desc.push_str(" [checked]");
+            }
+            if disabled {
+                desc.push_str(" [disabled]");
+            }
 
             text.push_str(&desc);
             text.push('\n');

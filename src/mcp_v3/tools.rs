@@ -3429,7 +3429,12 @@ async fn handle_snapshot_ax(req: SnapshotRequest, state: &V2AppState) -> McpTool
     let manager = get_session_manager_v2();
     let handle = match manager.get_handle(&req.session) {
         Some(h) => h,
-        None => return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session)),
+        None => {
+            return McpToolResponse::error(
+                "SESSION_NOT_FOUND",
+                &format!("Session '{}' not found", req.session),
+            );
+        }
     };
 
     let (tx, rx) = oneshot::channel();
@@ -3446,7 +3451,12 @@ async fn handle_snapshot_ax(req: SnapshotRequest, state: &V2AppState) -> McpTool
         Ok(Ok(Ok(json_str))) => {
             let ax_snap: serde_json::Value = match serde_json::from_str(&json_str) {
                 Ok(v) => v,
-                Err(e) => return McpToolResponse::error("PARSE_FAILED", &format!("Failed to parse AX snapshot: {e}")),
+                Err(e) => {
+                    return McpToolResponse::error(
+                        "PARSE_FAILED",
+                        &format!("Failed to parse AX snapshot: {e}"),
+                    );
+                }
             };
             let elem_count = ax_snap
                 .get("elements")

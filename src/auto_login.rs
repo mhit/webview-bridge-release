@@ -193,7 +193,10 @@ pub fn read_secret(op_path: &str, op_ref: &str) -> Result<String, String> {
 /// Search 1Password items whose URL host matches the given URL.
 ///
 /// Returns `(item_id, item_title, vault_id)` — vault_id needed for service account auth.
-pub fn search_items_by_url(op_path: &str, url: &str) -> Result<Vec<(String, String, String)>, String> {
+pub fn search_items_by_url(
+    op_path: &str,
+    url: &str,
+) -> Result<Vec<(String, String, String)>, String> {
     let output = op_cmd(op_path)
         .args(["item", "list", "--format", "json"])
         .output()

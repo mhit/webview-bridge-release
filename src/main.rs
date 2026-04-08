@@ -400,8 +400,7 @@ async fn run_http_server(addr: SocketAddr, shutdown_rx: std::sync::mpsc::Receive
     tokio::spawn(async move {
         // Wait 30s after startup before first check (let sessions initialize)
         tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-        let mut interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(30));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         let ping_timeout = tokio::time::Duration::from_secs(15);
         loop {
             interval.tick().await;

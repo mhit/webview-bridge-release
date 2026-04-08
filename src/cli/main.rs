@@ -816,9 +816,11 @@ fn main() -> ExitCode {
                 commands::login::setup(&client, &opts, &name, url.as_deref(), op_item.as_deref())
             }
         },
-        Command::Ask { question, session, context_chars } => {
-            commands::ask::run(&client, &opts, &session, &question, context_chars)
-        }
+        Command::Ask {
+            question,
+            session,
+            context_chars,
+        } => commands::ask::run(&client, &opts, &session, &question, context_chars),
     };
 
     // H7: Collect background update check (non-blocking, 1s timeout)

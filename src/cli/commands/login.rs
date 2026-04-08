@@ -478,10 +478,22 @@ pub fn setup(
     if let Some(steps) = cfg.get("extra_steps").and_then(|v| v.as_array()) {
         if !steps.is_empty() {
             for (i, step) in steps.iter().enumerate() {
-                let wait = step.get("wait_url_contains").and_then(|v| v.as_str()).unwrap_or("");
-                let pwd = step.get("password_selector").and_then(|v| v.as_str()).unwrap_or("");
-                let sub = step.get("submit_selector").and_then(|v| v.as_str()).unwrap_or("?");
-                let done = step.get("done_selector").and_then(|v| v.as_str()).unwrap_or("");
+                let wait = step
+                    .get("wait_url_contains")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let pwd = step
+                    .get("password_selector")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let sub = step
+                    .get("submit_selector")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let done = step
+                    .get("done_selector")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 println!();
                 println!("Selectors (step {} — password page):", i + 2);
                 if !wait.is_empty() {
@@ -497,7 +509,9 @@ pub fn setup(
             }
         } else if is_multi_step {
             println!();
-            println!("  (multi-step detected but extra_steps could not be generated — edit TOML manually)");
+            println!(
+                "  (multi-step detected but extra_steps could not be generated — edit TOML manually)"
+            );
         }
     }
 
@@ -535,9 +549,7 @@ pub fn setup(
     println!("Next steps:");
     println!("  wb login run {name}        # Test auto-login now");
     println!("  wb login status {name}     # Check login status");
-    println!(
-        "  wb login config-get {name} # Review the full config"
-    );
+    println!("  wb login config-get {name} # Review the full config");
 
     Ok(())
 }
