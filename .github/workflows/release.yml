@@ -186,7 +186,8 @@ jobs:
             トークン効率的なブラウザ操作 CLI。MCP 経由と比較して 97-99% のトークン削減。
 
             ```bash
-            wb snapshot              # ページ要素一覧
+            wb snapshot              # ページ要素一覧 (DOM mode)
+            wb snapshot --format ax  # AX Tree mode — semantic roles, no DOM pollution
             wb click e3              # 要素クリック
             wb type e5 "検索語"       # テキスト入力
             wb screenshot            # スクリーンショット
