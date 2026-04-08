@@ -411,6 +411,12 @@ enum Command {
         check: bool,
     },
 
+    /// Manage the WebView Bridge server process and updates
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
+
     /// Auto-login a session using 1Password credentials
     Login {
         #[command(subcommand)]
@@ -573,6 +579,37 @@ enum AuthAction {
 
     /// Remove the saved token
     Clear,
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Download and replace the server binary with the latest release
+    Update {
+        /// Update even if already up to date
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Register a Windows Task Scheduler task to auto-update the server daily
+    #[command(after_help = "\
+EXAMPLES:
+  wb server schedule              # Register daily 3:00 AM update task
+  wb server schedule --time 02:30 # Register at 2:30 AM
+  wb server unschedule            # Remove the task
+
+Requires Administrator privileges.")]
+    Schedule {
+        /// Time to run (HH:MM, 24-hour)
+        #[arg(long, default_value = "03:00")]
+        time: String,
+
+        /// Override path to wb.exe (default: auto-detected)
+        #[arg(long)]
+        exe_path: Option<String>,
+    },
+
+    /// Remove the Windows Task Scheduler auto-update task
+    Unschedule,
 }
 
 fn main() -> ExitCode {
@@ -800,6 +837,15 @@ fn main() -> ExitCode {
             frame.as_deref(),
         ),
         Command::Update { check } => commands::update::run(check),
+        Command::Server { action } => match action {
+            ServerAction::Update { force } => {
+                commands::server::update(&client, &opts, force)
+            }
+            ServerAction::Schedule { time, exe_path } => {
+                commands::server::schedule(&opts, &time, exe_path.as_deref())
+            }
+            ServerAction::Unschedule => commands::server::unschedule(&opts),
+        },
         Command::Login { action } => match action {
             LoginAction::Run {
                 name,
