@@ -459,6 +459,13 @@ pub struct SnapshotRequest {
     pub limit: usize,
     #[serde(default)]
     pub frame: Option<String>,
+    /// Snapshot format: "dom" (default) or "ax" (CDP Accessibility tree)
+    #[serde(default = "default_snapshot_format")]
+    pub format: String,
+}
+
+fn default_snapshot_format() -> String {
+    "dom".to_string()
 }
 
 // ============================================================================

@@ -126,15 +126,19 @@ enum Command {
         #[arg(short, long, default_value = "default")]
         session: String,
 
-        /// Include all elements, not just interactive ones
+        /// Snapshot format: "dom" (default, DOM injection) or "ax" (CDP Accessibility tree)
+        #[arg(long, default_value = "dom", value_parser = ["dom", "ax"])]
+        format: String,
+
+        /// Include all elements, not just interactive ones (dom mode only)
         #[arg(long)]
         all: bool,
 
-        /// Limit scope to elements within a CSS selector
+        /// Limit scope to elements within a CSS selector (dom mode only)
         #[arg(long)]
         within: Option<String>,
 
-        /// Maximum number of elements
+        /// Maximum number of elements (dom mode only)
         #[arg(long, default_value = "50")]
         limit: usize,
 
@@ -142,7 +146,7 @@ enum Command {
         #[arg(short, long)]
         output: Option<String>,
 
-        /// Target iframe (URL substring, frame name, or frame ID)
+        /// Target iframe (URL substring, frame name, or frame ID) (dom mode only)
         #[arg(short, long)]
         frame: Option<String>,
     },
@@ -568,6 +572,7 @@ fn main() -> ExitCode {
         }
         Command::Snapshot {
             session,
+            format,
             all,
             within,
             limit,
@@ -577,6 +582,7 @@ fn main() -> ExitCode {
             &client,
             &opts,
             &session,
+            &format,
             all,
             within.as_deref(),
             limit,

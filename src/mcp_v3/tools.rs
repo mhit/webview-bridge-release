@@ -3355,6 +3355,11 @@ fn generate_collect_images_script(
 // ============================================================================
 
 async fn handle_snapshot(req: SnapshotRequest, state: &V2AppState) -> McpToolResponse {
+    // AX Tree path: uses CDP Accessibility.getFullAXTree (no DOM injection, no DOM pollution)
+    if req.format == "ax" {
+        return handle_snapshot_ax(req, state).await;
+    }
+
     let scope_selector_json = serde_json::to_string(req.within.as_deref().unwrap_or("body"))
         .unwrap_or_else(|_| "\"body\"".to_string());
 
@@ -3414,6 +3419,51 @@ async fn handle_snapshot(req: SnapshotRequest, state: &V2AppState) -> McpToolRes
             }))
         }
         Err(e) => McpToolResponse::error("SNAPSHOT_FAILED", &e),
+    }
+}
+
+/// MCP handle_snapshot for format=ax.
+/// Routes through AppCommand::Snapshot { format: "ax" } → SessionCommand::Snapshot →
+/// webview.get_ax_snapshot() → AXSnapshot JSON.
+async fn handle_snapshot_ax(req: SnapshotRequest, state: &V2AppState) -> McpToolResponse {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&req.session) {
+        Some(h) => h,
+        None => return McpToolResponse::error("SESSION_NOT_FOUND", &format!("Session '{}' not found", req.session)),
+    };
+
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::Snapshot {
+        id: handle.id.clone(),
+        format: "ax".to_string(),
+        resp_tx: tx,
+    };
+    if state.cmd_tx.send(cmd).is_err() {
+        return McpToolResponse::error("COMMAND_FAILED", "Failed to send snapshot command");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(Ok(json_str))) => {
+            let ax_snap: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => return McpToolResponse::error("PARSE_FAILED", &format!("Failed to parse AX snapshot: {e}")),
+            };
+            let elem_count = ax_snap
+                .get("elements")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            McpToolResponse::success_json(serde_json::json!({
+                "session": req.session,
+                "snapshot": ax_snap,
+                "element_count": elem_count,
+                "format": "ax",
+                "tip": "Use elements[].ref (e.g. '@e3') as selector in interact/click/type. AX mode: semantic roles, no DOM pollution.",
+            }))
+        }
+        Ok(Ok(Err(e))) => McpToolResponse::error("SNAPSHOT_FAILED", &e),
+        Ok(Err(_)) => McpToolResponse::error("CHANNEL_CLOSED", "Session communication lost"),
+        Err(_) => McpToolResponse::error("TIMEOUT", "AX snapshot timed out"),
     }
 }
 
@@ -3673,15 +3723,16 @@ pub fn get_mcp_tools() -> serde_json::Value {
         },
         {
             "name": "snapshot",
-            "description": "⚡ FAST DOM element extraction — USE THIS BEFORE screenshot or capture when you need to identify interactive elements (buttons, inputs, links). Returns numbered refs (e1, e2, ...) that work directly as CSS selectors in 'interact'. Much faster and cheaper than screenshots. Workflow: snapshot → identify element ref → interact with ref. Use screenshot/capture only if you need to see visual layout or images.",
+            "description": "⚡ FAST element extraction — USE THIS BEFORE screenshot or capture when you need to identify interactive elements (buttons, inputs, links). Returns numbered refs (e1, e2, ...) usable directly in 'interact'. Two modes: format='dom' (default, DOM injection) and format='ax' (CDP Accessibility tree, semantic roles, no DOM pollution, works in cross-origin iframes). Workflow: snapshot → identify element ref → interact with ref.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "default": "default", "description": "Session name" },
-                    "all": { "type": "boolean", "default": false, "description": "Include non-interactive elements too (headings, paragraphs, images, tables). Default false = only interactive elements." },
-                    "within": { "type": "string", "description": "CSS selector to scope extraction to a subtree. Example: '#login-form', '.main-content'. Default: whole page." },
-                    "limit": { "type": "integer", "default": 200, "description": "Maximum number of elements to return" },
-                    "frame": { "type": "string", "description": "Target iframe (URL substring, frame name, or frame ID). Omit for main page." }
+                    "format": { "type": "string", "enum": ["dom", "ax"], "default": "dom", "description": "'dom' = DOM injection (default, backward compatible). 'ax' = CDP Accessibility tree (semantic role/name, no DOM pollution, works in cross-origin iframes)." },
+                    "all": { "type": "boolean", "default": false, "description": "Include non-interactive elements too (headings, paragraphs, images, tables). Default false = only interactive elements. Only applies to format='dom'." },
+                    "within": { "type": "string", "description": "CSS selector to scope extraction to a subtree. Example: '#login-form', '.main-content'. Default: whole page. Only applies to format='dom'." },
+                    "limit": { "type": "integer", "default": 200, "description": "Maximum number of elements to return. Only applies to format='dom'." },
+                    "frame": { "type": "string", "description": "Target iframe (URL substring, frame name, or frame ID). Omit for main page. Only applies to format='dom'." }
                 }
             }
         },

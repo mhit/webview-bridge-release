@@ -3897,15 +3897,24 @@ struct SnapshotRequest {
     /// Optional frame specifier (URL substring, frame name, or frame ID)
     #[serde(default)]
     frame: Option<String>,
+    /// Snapshot format:
+    /// - `"dom"` (default) — DOM injection mode, backward compatible
+    /// - `"ax"` — CDP Accessibility.getFullAXTree, no DOM pollution
+    #[serde(default = "default_snapshot_format")]
+    format: String,
 }
 
 fn default_snapshot_limit() -> usize {
     200
 }
 
+fn default_snapshot_format() -> String {
+    "dom".to_string()
+}
+
 /// POST /snapshot
 ///
-/// Extracts all interactive elements from the page DOM and returns them as
+/// Extracts all interactive elements from the page and returns them as
 /// numbered references (e1, e2, ...) that can be used with /click, /type, etc.
 ///
 /// **Prefer this over /screenshot** for AI navigation — it's faster, uses less
@@ -3913,11 +3922,21 @@ fn default_snapshot_limit() -> usize {
 ///
 /// The returned `elements[].ref` values (e.g. "e3") can be passed as `selector`
 /// to /click and /type without needing to identify CSS selectors manually.
+///
+/// Set `format: "ax"` to use the CDP Accessibility tree instead of DOM injection.
+/// AX mode returns semantic role/name data and works across cross-origin iframes
+/// without polluting the DOM.
 async fn snapshot_v2(
     State(state): State<V2AppState>,
     Json(request): Json<SnapshotRequest>,
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
+
+    // AX Tree path (format=ax) — uses CDP Accessibility.getFullAXTree
+    if request.format == "ax" {
+        return snapshot_ax_v2(state, request, start).await;
+    }
+
     let manager = get_session_manager_v2();
 
     let handle = match manager.get_handle(&request.session) {
@@ -4023,6 +4042,187 @@ async fn snapshot_v2(
         Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost."),
         Err(_) => error_response(Wbp2Error::InternalError, "Snapshot timed out."),
     }
+}
+
+/// POST /snapshot handler for `format=ax` — CDP Accessibility tree path.
+///
+/// Returns the same outer response shape as `format=dom` (`success`, `session`,
+/// `snapshot`, `element_count`, `elapsed_ms`) so existing clients can switch
+/// by adding `"format":"ax"` without changing their response parsing.
+///
+/// The `snapshot.elements[]` objects differ from DOM mode:
+/// DOM: `{ref, tag, type, role, text, name, href, value, placeholder, checked, disabled}`
+/// AX:  `{ref, role, name, description, value, level, checked, expanded, disabled,
+///        focused, required, haspopup, backendNodeId, frameId, cursorInteractive}`
+async fn snapshot_ax_v2(
+    state: V2AppState,
+    request: SnapshotRequest,
+    start: std::time::Instant,
+) -> axum::response::Response {
+    let manager = get_session_manager_v2();
+
+    let handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return error_response(
+                Wbp2Error::SessionNotFound,
+                &format!("Session '{}' not found", request.session),
+            );
+        }
+    };
+
+    // Route through the existing AppCommand::Snapshot pipeline with format="ax".
+    // The session thread's command handler will call webview.get_ax_snapshot().
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::Snapshot {
+        id: handle.id.clone(),
+        format: "ax".to_string(),
+        resp_tx: tx,
+    };
+
+    if state.cmd_tx.send(cmd).is_err() {
+        return error_response(Wbp2Error::InternalError, "Failed to send command");
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(Ok(json_str))) => {
+            // json_str is the serialized AXSnapshot
+            let ax_snap: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    return error_response(
+                        Wbp2Error::InternalError,
+                        &format!("Failed to parse AX snapshot: {e}"),
+                    );
+                }
+            };
+
+            let elements = ax_snap
+                .get("elements")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let elem_count = elements.len();
+
+            // Get title and URL via a lightweight JS call (AX tree doesn't include page meta)
+            let title_url = get_page_title_url(&state, &request.session).await;
+
+            // Build the snapshot object in a shape parallel to DOM mode
+            let snapshot = serde_json::json!({
+                "title": title_url.0,
+                "url": title_url.1,
+                "elements": elements,
+            });
+
+            // Task 3.4: Store AX refs in session registry for @eN resolution
+            store_ax_element_refs(&state, &request.session, &elements).await;
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "session": request.session,
+                    "snapshot": snapshot,
+                    "element_count": elem_count,
+                    "elapsed_ms": start.elapsed().as_millis() as u64,
+                    "format": "ax",
+                })),
+            )
+                .into_response()
+        }
+        Ok(Ok(Err(e))) => error_response(Wbp2Error::InternalError, &e),
+        Ok(Err(_)) => error_response(Wbp2Error::InternalError, "Session communication lost."),
+        Err(_) => error_response(Wbp2Error::InternalError, "AX snapshot timed out."),
+    }
+}
+
+/// Get page title and URL via a small JS eval (used by format=ax response).
+async fn get_page_title_url(state: &V2AppState, session_name: &str) -> (String, String) {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(session_name) {
+        Some(h) => h,
+        None => return (String::new(), String::new()),
+    };
+    let (tx, rx) = oneshot::channel();
+    let cmd = AppCommand::ExecuteScript {
+        id: handle.id.clone(),
+        script: "JSON.stringify({title:document.title,url:location.href})".to_string(),
+        resp_tx: tx,
+    };
+    if state.cmd_tx.send(cmd).is_err() {
+        return (String::new(), String::new());
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(Ok(raw))) => {
+            let inner: String = serde_json::from_str(&raw).unwrap_or(raw);
+            let v: serde_json::Value = serde_json::from_str(&inner).unwrap_or_default();
+            let title = v["title"].as_str().unwrap_or("").to_string();
+            let url = v["url"].as_str().unwrap_or("").to_string();
+            (title, url)
+        }
+        _ => (String::new(), String::new()),
+    }
+}
+
+/// Task 3.4: Store AX element refs in the session registry for @eN → click resolution.
+///
+/// AX elements don't have `data-wb-ref` attributes, so the `data-wb-ref` DOM lookup
+/// in `resolve_ref_selector` will return null. The fallback selector (role + has-text)
+/// is the primary resolution mechanism for AX refs.
+async fn store_ax_element_refs(
+    state: &V2AppState,
+    session_name: &str,
+    elements: &[serde_json::Value],
+) {
+    let mut registry: std::collections::HashMap<String, ElementRefEntry> =
+        std::collections::HashMap::new();
+
+    for el in elements {
+        // AX elements use "ref" (renamed from ref_id)
+        let ref_id = match el.get("ref").and_then(|v| v.as_str()) {
+            Some(r) => r.to_string(),
+            None => continue,
+        };
+        let role = el.get("role").and_then(|v| v.as_str()).unwrap_or("*");
+        let name = el.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+
+        // Map AX role → a DOM selector prefix for the fallback.
+        // For interactive roles, prefer the semantic ARIA selector.
+        let tag = match role {
+            "button" => "button",
+            "link" => "a",
+            "textbox" | "searchbox" => "input",
+            "checkbox" => "input[type=\"checkbox\"]",
+            "radio" => "input[type=\"radio\"]",
+            "combobox" => "select",
+            _ => "*",
+        };
+
+        let fallback_sel = if !name.is_empty() {
+            let snippet = name.chars().take(40).collect::<String>();
+            let snippet = snippet.replace('\'', "\\'");
+            // Try role-specific selector first, then generic ARIA
+            if tag == "*" {
+                format!("[role=\"{role}\"]:has-text('{snippet}')")
+            } else {
+                format!("{tag}:has-text('{snippet}')")
+            }
+        } else {
+            format!("[role=\"{role}\"]")
+        };
+
+        registry.insert(
+            ref_id,
+            ElementRefEntry {
+                tag: role.to_string(),
+                text: name.to_string(),
+                fallback_sel,
+            },
+        );
+    }
+
+    let mut refs = state.element_refs.write().await;
+    refs.insert(session_name.to_string(), registry);
 }
 
 /// Query params for GET /frames

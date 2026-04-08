@@ -626,7 +626,17 @@ impl SessionManager {
                                 let _ = resp_tx.send(Err("Session is not acquired. Call 'wb session acquire <name>' or POST /session/acquire first.".to_string()));
                                 continue;
                             }
-                            let result = webview.snapshot(&format);
+                            let result = if format == "ax" {
+                                // AX Tree snapshot via CDP Accessibility domain (no DOM injection)
+                                webview
+                                    .get_ax_snapshot()
+                                    .and_then(|snap| {
+                                        serde_json::to_string(&snap)
+                                            .map_err(|e| format!("Failed to serialize AX snapshot: {e}"))
+                                    })
+                            } else {
+                                webview.snapshot(&format)
+                            };
                             let _ = resp_tx.send(result);
                         }
                         SessionCommand::Screenshot { resp_tx } => {

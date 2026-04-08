@@ -4046,6 +4046,260 @@ impl WebViewInstance {
             }
         }
     }
+
+    // ========================================================================
+    // AX Tree Snapshot (CDP Accessibility domain) — Task 1.2 / 1.3 / 1.4
+    // ========================================================================
+
+    /// Get the full AX tree from CDP `Accessibility.getFullAXTree`.
+    ///
+    /// Enables the Accessibility domain first (idempotent), then fetches the tree.
+    /// Returns a flat list of nodes; tree structure is encoded via `childIds`.
+    pub fn get_ax_tree(&self) -> Result<crate::webview::ax_types::AXTree, String> {
+        use crate::webview::ax_types::{AXNode, AXTree};
+
+        log_webview_start("WebViewInstance::get_ax_tree", "CDP Accessibility.getFullAXTree");
+
+        // Enable Accessibility domain (safe to call multiple times)
+        let _ = self.call_cdp_sync("Accessibility.enable", "{}")?;
+
+        // Fetch full AX tree
+        let raw = self.call_cdp_sync("Accessibility.getFullAXTree", "{}")?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("Failed to parse AX tree JSON: {e}"))?;
+
+        let nodes_json = parsed
+            .get("nodes")
+            .ok_or_else(|| "AX tree response missing 'nodes' field".to_string())?;
+
+        let nodes: Vec<AXNode> = serde_json::from_value(nodes_json.clone())
+            .map_err(|e| format!("Failed to deserialize AX nodes: {e}"))?;
+
+        log_webview_success("WebViewInstance::get_ax_tree", Some(nodes.len() as u128));
+        Ok(AXTree { nodes })
+    }
+
+    /// Detect elements that are interactive via CSS/JS heuristics but may not appear
+    /// in standard AX interactive roles (cursor:pointer, onclick, tabindex).
+    ///
+    /// Returns JSON objects with {tag, text, id, rect} for each such element.
+    /// Standard interactive HTML elements (a, button, input, select, textarea) are excluded
+    /// because they are already covered by the AX tree.
+    fn detect_cursor_interactive(&self) -> Result<Vec<serde_json::Value>, String> {
+        let script = r#"
+(function() {
+    var results = [];
+    var skipTags = {a:1, button:1, input:1, select:1, textarea:1};
+    var all = document.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        var tag = el.tagName.toLowerCase();
+        if (skipTags[tag]) continue;
+        var style = window.getComputedStyle(el);
+        var hasCursor = style.cursor === 'pointer';
+        var hasOnclick = el.hasAttribute('onclick') || el.onclick != null;
+        var tabIdx = parseInt(el.getAttribute('tabindex'), 10);
+        var hasTabindex = !isNaN(tabIdx) && tabIdx >= 0;
+        if (hasCursor || hasOnclick || hasTabindex) {
+            var rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                var text = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 100);
+                if (!text) continue;
+                results.push({
+                    tag: tag,
+                    text: text,
+                    id: el.id || null,
+                    rect: {x: Math.round(rect.x), y: Math.round(rect.y),
+                           width: Math.round(rect.width), height: Math.round(rect.height)}
+                });
+                if (results.length >= 50) break;
+            }
+        }
+    }
+    return JSON.stringify(results);
+})();
+"#;
+
+        let raw = self
+            .execute_script_sync(script)
+            .map_err(|e| format!("cursor-interactive JS failed: {e}"))?;
+
+        // execute_script_sync returns the JSON-encoded result string (double-encoded)
+        let inner: String = serde_json::from_str(&raw)
+            .map_err(|e| format!("Failed to unquote cursor-interactive result: {e}"))?;
+
+        let elems: Vec<serde_json::Value> = serde_json::from_str(&inner)
+            .map_err(|e| format!("Failed to parse cursor-interactive elements: {e}"))?;
+
+        Ok(elems)
+    }
+
+    /// Get the AX tree for a specific frame by frameId (Phase 2 — Task 2.1).
+    ///
+    /// Calls `Accessibility.getFullAXTree` with `frameId` parameter.
+    /// Returns `Ok(None)` if the frame's AX tree is inaccessible (cross-origin restriction,
+    /// empty tree, etc.) so callers can skip gracefully.
+    fn get_ax_tree_for_frame(
+        &self,
+        frame_id: &str,
+    ) -> Result<Option<crate::webview::ax_types::AXTree>, String> {
+        use crate::webview::ax_types::{AXNode, AXTree};
+
+        let params = serde_json::json!({ "frameId": frame_id }).to_string();
+
+        match self.call_cdp_sync("Accessibility.getFullAXTree", &params) {
+            Ok(raw) => {
+                let parsed: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| format!("Failed to parse frame AX tree JSON: {e}"))?;
+                let nodes_json = match parsed.get("nodes") {
+                    Some(v) => v,
+                    None => return Ok(None), // no nodes field — inaccessible frame
+                };
+                let nodes: Vec<AXNode> = serde_json::from_value(nodes_json.clone())
+                    .map_err(|e| format!("Failed to deserialize frame AX nodes: {e}"))?;
+                if nodes.is_empty() {
+                    return Ok(None); // empty tree — nothing useful
+                }
+                Ok(Some(AXTree { nodes }))
+            }
+            Err(_) => Ok(None), // frame not accessible — skip silently
+        }
+    }
+
+    /// Collect all child frame IDs from the page frame tree (Phase 2 — Task 2.2).
+    fn get_child_frame_ids(&self) -> Vec<String> {
+        let Ok(raw) = self.call_cdp_sync("Page.getFrameTree", "{}") else {
+            return Vec::new();
+        };
+        let Ok(parsed): Result<serde_json::Value, _> = serde_json::from_str(&raw) else {
+            return Vec::new();
+        };
+
+        fn collect_child_ids(node: &serde_json::Value, is_root: bool, out: &mut Vec<String>) {
+            if let Some(frame) = node.get("frame") {
+                let id = frame.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if !is_root && !id.is_empty() {
+                    out.push(id.to_string());
+                }
+            }
+            if let Some(children) = node.get("childFrames").and_then(|v| v.as_array()) {
+                for child in children {
+                    collect_child_ids(child, false, out);
+                }
+            }
+        }
+
+        let mut ids = Vec::new();
+        if let Some(tree) = parsed.get("frameTree") {
+            collect_child_ids(tree, true, &mut ids);
+        }
+        ids
+    }
+
+    /// Get a full AX snapshot: AX tree + ref assignment + cursor-interactive + iframe support.
+    ///
+    /// Phase 1 (Tasks 1.2, 1.3, 1.4): main frame AX tree + ref assignment + cursor-interactive.
+    /// Phase 2 (Tasks 2.1, 2.2, 2.3): child frames fetched and merged with frameId tagging.
+    ///
+    /// Interactive roles receive sequential @e1, @e2, ... refs.
+    /// Cursor-interactive elements not covered by AX roles are appended after.
+    /// Returns an [`AXSnapshot`] ready for API/CLI consumption.
+    pub fn get_ax_snapshot(&self) -> Result<crate::webview::ax_types::AXSnapshot, String> {
+        use crate::webview::ax_types::{AXElement, AXSnapshot};
+
+        log_webview_start("WebViewInstance::get_ax_snapshot", "AX Tree + refs + iframes");
+
+        // Step 1: Get main frame AX tree
+        let main_tree = self.get_ax_tree()?;
+        let mut all_nodes = main_tree.nodes;
+        let mut total_nodes = all_nodes.len();
+
+        // Step 2 (Phase 2, Task 2.2): Collect child frames and merge their AX trees
+        let child_frame_ids = self.get_child_frame_ids();
+        for frame_id in &child_frame_ids {
+            match self.get_ax_tree_for_frame(frame_id) {
+                Ok(Some(frame_tree)) => {
+                    total_nodes += frame_tree.nodes.len();
+                    // Tag each child node with its frameId so click routing (Task 2.3) can
+                    // use the right CDP session context.
+                    for mut node in frame_tree.nodes {
+                        if node.frame_id.is_none() {
+                            node.frame_id = Some(frame_id.clone());
+                        }
+                        all_nodes.push(node);
+                    }
+                }
+                Ok(None) => {
+                    // Frame inaccessible (cross-origin or empty) — skip
+                }
+                Err(e) => {
+                    tracing::warn!("[AXSnapshot] Failed to get AX tree for frame {frame_id}: {e}");
+                }
+            }
+        }
+
+        // Step 3 (Task 1.3): Assign @eN refs to interactive AX nodes (main frame first, then iframes)
+        let mut elements: Vec<AXElement> = Vec::new();
+        let mut ref_counter: u32 = 0;
+
+        for node in &all_nodes {
+            if node.ignored {
+                continue;
+            }
+            if !node.is_interactive_role() {
+                continue;
+            }
+            // Skip unnamed nodes (no accessible name and no value — likely wrapper roles)
+            if node.name_str().is_empty() && node.value_str().is_empty() {
+                continue;
+            }
+
+            ref_counter += 1;
+            let ref_id = format!("e{ref_counter}");
+            elements.push(AXElement::from_ax_node(node, ref_id));
+        }
+
+        // Step 4 (Task 1.4): Append cursor-interactive elements not covered by AX roles
+        match self.detect_cursor_interactive() {
+            Ok(cursor_elems) => {
+                for ci in cursor_elems {
+                    let tag = ci["tag"].as_str().unwrap_or("div").to_string();
+                    let text = ci["text"].as_str().unwrap_or("").to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    ref_counter += 1;
+                    let ref_id = format!("e{ref_counter}");
+                    elements.push(AXElement {
+                        ref_id,
+                        role: tag,
+                        name: text,
+                        description: String::new(),
+                        value: String::new(),
+                        level: None,
+                        checked: None,
+                        expanded: None,
+                        disabled: false,
+                        focused: false,
+                        required: false,
+                        haspopup: None,
+                        backend_node_id: None,
+                        frame_id: String::new(),
+                        is_cursor_interactive: true,
+                    });
+                }
+            }
+            Err(e) => {
+                // cursor-interactive detection is best-effort; don't fail the whole snapshot
+                tracing::warn!("[AXSnapshot] cursor-interactive detection failed: {e}");
+            }
+        }
+
+        let ref_count = elements.len();
+        log_webview_success("WebViewInstance::get_ax_snapshot", Some(ref_count as u128));
+
+        Ok(AXSnapshot { elements, total_nodes, ref_count })
+    }
 }
 
 // ============================================================================

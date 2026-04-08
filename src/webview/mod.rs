@@ -5,6 +5,7 @@ use windows::{
     core::{Error, HSTRING, PCWSTR, Result, w},
 };
 
+pub mod ax_types;
 pub mod webview_instance;
 pub mod window;
 
