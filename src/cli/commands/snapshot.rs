@@ -136,6 +136,7 @@ fn format_ax_text(snap: &serde_json::Value) -> String {
     };
 
     text.push_str(&format!("\n--- {count} elements (ax mode) ---\n"));
+    text.push_str("Next: wb click @e<N> -s <SESSION>   wb type @e<N> \"text\" -s <SESSION>\n");
     text
 }
 
@@ -259,6 +260,8 @@ pub fn run(
 
     let (mut text, count) = format_dom_text(&snap);
     text.push_str(&format!("\n--- {count} interactive elements ---\n"));
+    text.push_str("Next: wb click @e<N> -s <SESSION>   wb type @e<N> \"text\" -s <SESSION>\n");
+    text.push_str("      wb snapshot --format ax  (semantic AX tree, no DOM injection)\n");
 
     save_or_print(opts, output_path, session, &text, &resp, count)
 }

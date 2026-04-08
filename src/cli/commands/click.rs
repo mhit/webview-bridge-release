@@ -25,6 +25,10 @@ pub fn run(
             opts,
             &format!("Clicked '{target}' [{} ms]", resp.elapsed_ms),
         );
+        // Workflow hint: re-snapshot to observe page state after the click
+        if !opts.quiet {
+            eprintln!("  Next: wb snapshot -s {session} --no-file   (observe page state)");
+        }
     }
     Ok(())
 }

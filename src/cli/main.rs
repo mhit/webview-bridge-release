@@ -34,8 +34,17 @@ LOGIN WORKFLOW:
   3. wb login status mysite                   Check login status
   4. wb login run mysite                      Perform auto-login (idempotent — safe to re-run)
 
+SNAPSHOT MODES (AI AGENT WORKFLOW):
+  wb snapshot -s S                          DOM mode (default) — fastest, most elements
+  wb snapshot -s S --format ax              AX mode — semantic roles, no DOM pollution
+  wb snapshot -s S --format ax --json       AX mode as structured JSON for parsing
+  wb snapshot -s S --all --within \".main\" --limit 30   Scoped DOM snapshot
+
+  After snapshot: use the printed @eN refs directly with click/type/extract.
+  DOM mode injects data-wb-ref into page; AX mode reads Accessibility tree only.
+  Use AX mode for: cross-origin iframes, SPAs that break DOM refs, ARIA-heavy UIs.
+
 EFFICIENT USAGE (for AI agents):
-  wb snapshot -s S --all --within \".main\" --limit 30   Focused full-page capture
   wb snapshot -s S --limit 20                           Minimal interactive-only view
   wb extract \".items\" -F \"name=h3,price=.cost\" -s S    Structured data extraction
   wb execute \"document.title\" -s S                      Quick JS data retrieval
@@ -44,9 +53,10 @@ EFFICIENT USAGE (for AI agents):
   For autonomous multi-step tasks, use the MCP 'agent' tool or POST /goal API.
 
 IFRAME SUPPORT:
-  wb frames -s S                       List all iframes
-  wb snapshot -s S --frame \"embed.co\"  Capture inside an iframe
-  wb click e2 -s S --frame \"content\"   Interact inside an iframe
+  wb frames -s S                              List all iframes
+  wb snapshot -s S --format ax               AX mode auto-fetches child frames (up to 8)
+  wb snapshot -s S --frame \"embed.co\"        DOM snapshot inside a specific iframe
+  wb click e2 -s S --frame \"content\"         Interact inside an iframe
 
 ENVIRONMENT VARIABLES:
   WB_HOST              Server address (default: http://127.0.0.1:9400)
@@ -120,33 +130,41 @@ enum Command {
         wait: u64,
     },
 
-    /// Capture interactive elements snapshot (token-efficient page view)
+    /// Extract interactive elements as numbered refs (@e1, @e2 ...) — the primary AI workflow tool.
+    ///
+    /// Two modes:
+    ///   dom (default): DOM injection — fast, supports --within/--all/--frame/--limit
+    ///   ax:            CDP Accessibility tree — semantic roles, no DOM pollution,
+    ///                  auto-fetches cross-origin iframes (up to 8 frames)
+    ///
+    /// Workflow: snapshot → identify ref → wb click/type/extract with that ref
     Snapshot {
         /// Session name
         #[arg(short, long, default_value = "default")]
         session: String,
 
-        /// Snapshot format: "dom" (default, DOM injection) or "ax" (CDP Accessibility tree)
+        /// Snapshot format: "dom" (default, DOM injection) or "ax" (CDP Accessibility tree).
+        /// Use "ax" for cross-origin iframes, ARIA-heavy SPAs, or when DOM injection breaks.
         #[arg(long, default_value = "dom", value_parser = ["dom", "ax"])]
         format: String,
 
-        /// Include all elements, not just interactive ones (dom mode only)
+        /// Include all elements, not just interactive ones [dom mode only]
         #[arg(long)]
         all: bool,
 
-        /// Limit scope to elements within a CSS selector (dom mode only)
+        /// Limit scope to elements within a CSS selector, e.g. "#login-form" [dom mode only]
         #[arg(long)]
         within: Option<String>,
 
-        /// Maximum number of elements (dom mode only)
+        /// Maximum number of elements to return [dom mode only]
         #[arg(long, default_value = "50")]
         limit: usize,
 
-        /// Output file path
+        /// Output file path (default: auto-saved to $TEMP/wb/snapshots/)
         #[arg(short, long)]
         output: Option<String>,
 
-        /// Target iframe (URL substring, frame name, or frame ID) (dom mode only)
+        /// Target iframe by URL substring, frame name, or frame ID [dom mode only]
         #[arg(short, long)]
         frame: Option<String>,
     },
