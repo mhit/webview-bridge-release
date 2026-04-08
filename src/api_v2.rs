@@ -298,6 +298,8 @@ pub fn create_v2_router(state: V2AppState) -> Router {
         .route("/ai/extract", post(ai_extract))
         .route("/ai/usage", get(ai_usage_stats))
         .route("/ai/models", get(ai_models_list))
+        .route("/ask", post(ai_ask))
+        .route("/login/setup", post(login_setup))
         // Download API
         .route("/download/trigger", post(download_trigger))
         .route("/download/status/:id", get(download_status))
@@ -435,8 +437,12 @@ async fn update_config(Json(updates): Json<serde_json::Value>) -> impl IntoRespo
             if let Some(model) = ai.get("model").and_then(|v| v.as_str()) {
                 config.ai.model = model.to_string();
             }
-            if let Some(api_key) = ai.get("api_key") {
-                config.ai.api_key = api_key.as_str().map(|s| s.to_string());
+            // Only update api_key if a non-empty string is provided.
+            // null or missing field means "keep existing key".
+            if let Some(api_key) = ai.get("api_key").and_then(|v| v.as_str()) {
+                if !api_key.is_empty() {
+                    config.ai.api_key = Some(api_key.to_string());
+                }
             }
             if let Some(timeout) = ai.get("timeout_ms").and_then(|v| v.as_u64()) {
                 config.ai.timeout_ms = timeout;
@@ -655,17 +661,33 @@ async fn ai_models_list(
                 })),
             }
         }
-        "gemini" => Json(json!({
-            "provider": "gemini",
-            "available": config.get_api_key().is_some(),
-            "models": [
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-1.5-pro",
-                "gemini-pro-vision"
-            ],
-            "current_model": config.ai.model
-        })),
+        "gemini" => {
+            let api_key = config.get_api_key();
+            let available = api_key.is_some();
+            let models = if let Some(key) = api_key {
+                let client = crate::core::ai::GeminiClient {
+                    api_key: key,
+                    model: config.ai.model.clone(),
+                    timeout_ms: 10000,
+                };
+                client.list_models().unwrap_or_else(|_| vec![
+                    "gemini-2.5-pro".to_string(),
+                    "gemini-2.5-flash".to_string(),
+                    "gemini-2.0-flash".to_string(),
+                    "gemini-2.0-flash-lite".to_string(),
+                    "gemini-1.5-flash".to_string(),
+                    "gemini-1.5-pro".to_string(),
+                ])
+            } else {
+                vec![]
+            };
+            Json(json!({
+                "provider": "gemini",
+                "available": available,
+                "models": models,
+                "current_model": config.ai.model
+            }))
+        }
         _ => Json(json!({
             "provider": provider,
             "available": false,
@@ -1456,17 +1478,31 @@ async fn session_auto_login(
             }
         }
 
-        // --- 9. Fill username via JS (sets .value + fires input/change events, works with SPAs) ---
+        // --- 9. Fill username via CDP (ClickCdp to focus + TypeCdp for isTrusted=true key events) ---
         {
+            // Click the username field to focus it
             let (tx, rx) = oneshot::channel();
-            let script = js_fill_input(&auto_login_cfg.username_selector, &creds.username);
-            let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+            let _ = state.cmd_tx.send(AppCommand::ClickCdp {
                 id: handle.id.clone(),
-                script,
+                selector: auto_login_cfg.username_selector.clone(),
+                human_mode: false,
                 resp_tx: tx,
             });
-            if let Ok(Ok(Ok(result))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
-                tracing::debug!("[AutoLogin] fill username result: {}", result);
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+        }
+        {
+            // Type username character-by-character via CDP Input.dispatchKeyEvent.
+            // This produces isTrusted=true events which bypasses bot detection on sites like X.
+            let (tx, rx) = oneshot::channel();
+            let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+                id: handle.id.clone(),
+                text: creds.username.clone(),
+                char_delay_ms: 50,
+                human_mode: false,
+                resp_tx: tx,
+            });
+            if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(10), rx).await {
+                tracing::debug!("[AutoLogin] fill username result: {:?}", r);
             }
         }
         if let Some(url) =
@@ -1833,17 +1869,30 @@ async fn session_auto_login(
             });
             let _ = tokio::time::timeout(Duration::from_secs(12), rx).await;
 
-            // Fill username via JS
+            // Fill username via CDP (ClickCdp to focus + TypeCdp for isTrusted=true)
             if let Some(ref sc) = step_creds {
-                let (tx, rx) = oneshot::channel();
-                let script = js_fill_input(sel, &sc.username);
-                let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
-                    id: handle.id.clone(),
-                    script,
-                    resp_tx: tx,
-                });
-                if let Ok(Ok(Ok(r))) = tokio::time::timeout(Duration::from_secs(5), rx).await {
-                    tracing::debug!("[AutoLogin] step {} fill username: {}", step_idx + 1, r);
+                {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::ClickCdp {
+                        id: handle.id.clone(),
+                        selector: sel.clone(),
+                        human_mode: false,
+                        resp_tx: tx,
+                    });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+                }
+                {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::TypeCdp {
+                        id: handle.id.clone(),
+                        text: sc.username.clone(),
+                        char_delay_ms: 50,
+                        human_mode: false,
+                        resp_tx: tx,
+                    });
+                    if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(10), rx).await {
+                        tracing::debug!("[AutoLogin] step {} fill username: {:?}", step_idx + 1, r);
+                    }
                 }
             }
             if let Some(url) = auto_login_debug_screenshot(
@@ -2024,6 +2073,23 @@ async fn session_auto_login(
             });
             if let Ok(Ok(r)) = tokio::time::timeout(Duration::from_secs(5), rx).await {
                 tracing::info!("[AutoLogin] step {} submit: {:?}", step_idx + 1, r);
+                // If selector failed, log available buttons to help diagnose wrong selector
+                if r.is_err() {
+                    let (dtx, drx) = oneshot::channel();
+                    let _ = state.cmd_tx.send(AppCommand::ExecuteScript {
+                        id: handle.id.clone(),
+                        script: r#"(function(){
+var btns=Array.from(document.querySelectorAll('button,[role="button"]'));
+return JSON.stringify(btns.slice(0,10).map(function(b){
+  return {tag:b.tagName,testid:b.dataset.testid||'',type:b.type||'',text:b.textContent.trim().substring(0,30)};
+}));
+})()"#.to_string(),
+                        resp_tx: dtx,
+                    });
+                    if let Ok(Ok(Ok(info))) = tokio::time::timeout(Duration::from_secs(3), drx).await {
+                        tracing::info!("[AutoLogin] step {} page buttons: {}", step_idx + 1, info);
+                    }
+                }
             }
             // Also try Enter key as fallback (some SPAs respond to keyboard submit)
             tokio::time::sleep(Duration::from_millis(300)).await;
@@ -5784,57 +5850,563 @@ async fn ai_images_analyze(Json(request): Json<AiImageAnalyzeRequest>) -> impl I
     )
 }
 
-/// POST /v2/ai/extract - AI-assisted data extraction
-async fn ai_extract(Json(request): Json<AiExtractRequest>) -> impl IntoResponse {
+/// POST /ai/extract - AI-assisted data extraction from page text
+async fn ai_extract(
+    State(state): State<V2AppState>,
+    Json(request): Json<AiExtractRequest>,
+) -> impl IntoResponse {
     let manager = get_session_manager_v2();
-
-    let _handle = match manager.get_handle(&request.session) {
+    let handle = match manager.get_handle(&request.session) {
         Some(h) => h,
         None => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({
                     "success": false,
-                    "error": {
-                        "code": "WBP2_001",
-                        "name": "SESSION_NOT_FOUND",
-                        "message": format!("Session '{}' not found", request.session)
-                    }
+                    "error": { "code": "WBP2_001", "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session) }
                 })),
             );
         }
     };
 
-    // Check AI availability
-    let ai_config = get_ai_config();
-    let is_available = ai_config.read().map(|c| c.is_available()).unwrap_or(false);
-
-    if !is_available {
+    let config = crate::core::config::get_config();
+    let ai_cfg = crate::core::ai::AiConfig {
+        enabled: config.ai.enabled,
+        provider: config.ai.provider.clone(),
+        model: config.ai.model.clone(),
+        api_key: config.ai.api_key.clone(),
+        timeout_ms: config.ai.timeout_ms,
+        daily_budget_usd: config.ai.daily_budget_usd,
+        daily_usage_usd: 0.0,
+    };
+    if !ai_cfg.is_available() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
                 "success": false,
-                "error": {
-                    "code": "WBP2_100",
-                    "name": "AI_NOT_AVAILABLE",
-                    "message": "AI is not configured or API key is missing"
-                }
+                "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                    "message": "AI is not configured or API key is missing" }
             })),
         );
     }
 
-    // TODO: Implement AI extraction
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "message": "AI extraction initiated",
-            "session": request.session,
-            "description": request.description,
-            "auto_scroll": request.auto_scroll,
-            "_note": "Full AI extraction pending Gemini integration"
-        })),
-    )
+    // Get page content (title + url + text)
+    let text_script = r#"JSON.stringify({
+        title: document.title,
+        url: location.href,
+        text: document.body ? document.body.innerText.substring(0, 12000) : ''
+    })"#;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = state.cmd_tx.send(crate::core::AppCommand::ExecuteScript {
+        id: handle.id.clone(),
+        script: text_script.to_string(),
+        resp_tx: tx,
+    });
+    let raw = match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(r))) => r,
+        _ => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": { "code": "WBP2_050",
+                "name": "EXECUTE_FAILED", "message": "Failed to get page content" } })),
+        ),
+    };
+
+    let page_info: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or(serde_json::json!({ "text": raw }));
+    let page_text  = page_info["text"].as_str().unwrap_or("").to_string();
+    let page_url   = page_info["url"].as_str().unwrap_or("").to_string();
+    let page_title = page_info["title"].as_str().unwrap_or("").to_string();
+
+    let schema_hint = if let Some(schema) = &request.schema {
+        format!(
+            "\n\nReturn data matching this JSON schema:\n```json\n{}\n```",
+            serde_json::to_string_pretty(schema).unwrap_or_default()
+        )
+    } else {
+        String::new()
+    };
+
+    let prompt = format!(
+        "You are a data extraction assistant. Extract the following from this webpage:\n\
+        {description}\
+        {schema_hint}\n\n\
+        Page: {page_title}\nURL: {page_url}\n---\n{page_text}\n---\n\
+        Return ONLY valid JSON (array or object). No markdown, no explanation.",
+        description = request.description,
+        schema_hint = schema_hint,
+        page_title = page_title,
+        page_url = page_url,
+        page_text = page_text,
+    );
+
+    match crate::core::ai::AiClient::new(&ai_cfg) {
+        Some(client) => match client.call(&prompt, None) {
+            Ok(raw_json) => {
+                let clean = raw_json.trim()
+                    .trim_start_matches("```json").trim_start_matches("```")
+                    .trim_end_matches("```").trim();
+                match serde_json::from_str::<serde_json::Value>(clean) {
+                    Ok(data) => {
+                        let count = data.as_array().map(|a| a.len()).unwrap_or(1);
+                        (StatusCode::OK, Json(json!({
+                            "success": true,
+                            "data": data,
+                            "count": count,
+                            "model": config.ai.model,
+                            "context_chars": page_text.len(),
+                            "page": { "title": page_title, "url": page_url }
+                        })))
+                    }
+                    Err(_) => (StatusCode::OK, Json(json!({
+                        "success": true,
+                        "data": raw_json.trim(),
+                        "count": 0,
+                        "model": config.ai.model,
+                        "warning": "AI response was not valid JSON — returned as string"
+                    }))),
+                }
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
+                    "message": format!("AI extraction failed: {e}") }
+            }))),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+            "success": false,
+            "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                "message": "AI client could not be initialized" }
+        }))),
+    }
+}
+
+/// POST /ask - Ask AI a question about the current page content
+#[derive(serde::Deserialize)]
+struct AiAskRequest {
+    session: String,
+    question: String,
+    #[serde(default = "default_ask_context_chars")]
+    context_chars: usize,
+}
+
+fn default_ask_context_chars() -> usize { 8000 }
+
+async fn ai_ask(
+    State(state): State<V2AppState>,
+    Json(request): Json<AiAskRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": { "code": "WBP2_001", "name": "SESSION_NOT_FOUND",
+                        "message": format!("Session '{}' not found", request.session) }
+                })),
+            );
+        }
+    };
+
+    let config = crate::core::config::get_config();
+    let ai_cfg = crate::core::ai::AiConfig {
+        enabled: config.ai.enabled,
+        provider: config.ai.provider.clone(),
+        model: config.ai.model.clone(),
+        api_key: config.ai.api_key.clone(),
+        timeout_ms: config.ai.timeout_ms,
+        daily_budget_usd: config.ai.daily_budget_usd,
+        daily_usage_usd: 0.0,
+    };
+    if !ai_cfg.is_available() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                    "message": "AI is not configured or API key is missing" }
+            })),
+        );
+    }
+
+    let limit = request.context_chars.min(20000);
+    let text_script = format!(
+        r#"JSON.stringify({{
+            title: document.title,
+            url: location.href,
+            text: document.body ? document.body.innerText.substring(0, {limit}) : ''
+        }})"#
+    );
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = state.cmd_tx.send(crate::core::AppCommand::ExecuteScript {
+        id: handle.id.clone(),
+        script: text_script,
+        resp_tx: tx,
+    });
+    let raw = match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(r))) => r,
+        _ => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": { "code": "WBP2_050",
+                "name": "EXECUTE_FAILED", "message": "Failed to get page content" } })),
+        ),
+    };
+
+    let page_info: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or(serde_json::json!({ "text": raw }));
+    let page_text  = page_info["text"].as_str().unwrap_or("").to_string();
+    let page_url   = page_info["url"].as_str().unwrap_or("").to_string();
+    let page_title = page_info["title"].as_str().unwrap_or("").to_string();
+
+    let prompt = format!(
+        "You are a helpful assistant. Answer the following question based on the webpage content.\n\
+        Be concise and accurate. If the answer is not on the page, say so clearly.\n\n\
+        Question: {question}\n\n\
+        Page: {page_title}\nURL: {page_url}\n---\n{page_text}",
+        question = request.question,
+        page_title = page_title,
+        page_url = page_url,
+        page_text = page_text,
+    );
+
+    match crate::core::ai::AiClient::new(&ai_cfg) {
+        Some(client) => match client.call(&prompt, None) {
+            Ok(answer) => (StatusCode::OK, Json(json!({
+                "success": true,
+                "answer": answer.trim(),
+                "question": request.question,
+                "model": config.ai.model,
+                "context_chars": page_text.len(),
+                "page": { "title": page_title, "url": page_url }
+            }))),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_101", "name": "AI_CALL_FAILED",
+                    "message": format!("AI call failed: {e}") }
+            }))),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+            "success": false,
+            "error": { "code": "WBP2_100", "name": "AI_NOT_AVAILABLE",
+                "message": "AI client could not be initialized" }
+        }))),
+    }
+}
+
+/// POST /login/setup - AI + 1Password-assisted auto_login.toml generation
+///
+/// Analyzes the current page's login form with AI, searches 1Password for matching credentials,
+/// and generates a ready-to-use auto_login.toml for the session.
+#[derive(serde::Deserialize)]
+struct LoginSetupRequest {
+    session: String,
+    /// Navigate to this URL first (optional — uses current page if omitted)
+    #[serde(default)]
+    url: Option<String>,
+    /// Override 1Password item ID/name (optional — auto-searches by URL if omitted)
+    #[serde(default)]
+    op_item: Option<String>,
+}
+
+async fn login_setup(
+    State(state): State<V2AppState>,
+    Json(request): Json<LoginSetupRequest>,
+) -> impl IntoResponse {
+    let manager = get_session_manager_v2();
+    let handle = match manager.get_handle(&request.session) {
+        Some(h) => h,
+        None => return (StatusCode::NOT_FOUND, Json(json!({
+            "success": false,
+            "error": { "code": "WBP2_001", "name": "SESSION_NOT_FOUND",
+                "message": format!("Session '{}' not found", request.session) }
+        }))).into_response(),
+    };
+
+    tracing::info!("[LoginSetup] session={} url={:?} op_item={:?}", request.session, request.url, request.op_item);
+
+    // Step 1: Navigate to login URL if provided
+    if let Some(ref url) = request.url {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = state.cmd_tx.send(crate::core::AppCommand::Navigate {
+            id: handle.id.clone(),
+            url: url.clone(),
+            resp_tx: tx,
+        });
+        match tokio::time::timeout(std::time::Duration::from_secs(12), rx).await {
+            Ok(Ok(Ok(_))) => {}
+            _ => return (StatusCode::GATEWAY_TIMEOUT, Json(json!({
+                "success": false,
+                "error": { "code": "WBP2_050", "name": "NAVIGATE_FAILED",
+                    "message": format!("Failed to navigate to {url}") }
+            }))).into_response(),
+        }
+        // Let the page settle — wait longer for JS-heavy SPAs (X, Google, etc.)
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    }
+
+    // Step 2: Capture form elements from the current page
+    // Retry once if page hasn't rendered any form elements yet (JS-heavy SPAs)
+    let mut page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
+    let initial_form_count = page_state.get("form_elements").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if initial_form_count == 0 {
+        tracing::info!("[LoginSetup] no form elements yet — waiting 2s for JS render");
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        page_state = capture_page_state(&state.cmd_tx, &handle.id).await;
+    }
+    let page_url = page_state.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let form_count = page_state.get("form_elements").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let submit_count = page_state.get("submit_candidates").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    tracing::info!("[LoginSetup] page={} form_elements={} submit_candidates={}", page_url, form_count, submit_count);
+    let page_title = page_state.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let form_elements = page_state.get("form_elements").cloned().unwrap_or(json!([]));
+    let submit_candidates = page_state.get("submit_candidates").cloned().unwrap_or(json!([]));
+
+    // Step 3: AI analysis of the form
+    let config = crate::core::config::get_config();
+    let ai_cfg = crate::core::ai::AiConfig {
+        enabled: config.ai.enabled,
+        provider: config.ai.provider.clone(),
+        model: config.ai.model.clone(),
+        api_key: config.ai.api_key.clone(),
+        timeout_ms: config.ai.timeout_ms,
+        daily_budget_usd: config.ai.daily_budget_usd,
+        daily_usage_usd: 0.0,
+    };
+
+    let ai_result = if ai_cfg.is_available() {
+        let form_json = serde_json::to_string_pretty(&form_elements).unwrap_or_default();
+        let submit_json = serde_json::to_string_pretty(&submit_candidates).unwrap_or_default();
+        let prompt = format!(
+            "You are a login form analyzer. Analyze this web page's form elements and return a complete JSON config for automated login, including multi-step flows.\n\n\
+            Page: {page_title}\nURL: {page_url}\n\n\
+            Form elements:\n{form_json}\n\n\
+            Submit candidates:\n{submit_json}\n\n\
+            Return ONLY this JSON (no markdown, no explanation):\n\
+            {{\n\
+              \"username_selector\": \"CSS selector for username/email input on this first page\",\n\
+              \"password_selector\": \"CSS selector for password input — empty string if password is NOT on this page (multi-step)\",\n\
+              \"submit_selector\": \"CSS selector for the button to proceed from this first page\",\n\
+              \"logged_in_selector\": \"CSS selector visible only when fully logged in (e.g. user avatar, logout link). Empty string if unsure.\",\n\
+              \"multi_step\": true,\n\
+              \"extra_steps\": [\n\
+                {{\n\
+                  \"wait_url_contains\": \"URL substring to wait for before this step (e.g. 'password', 'next', or empty string if same URL)\",\n\
+                  \"password_selector\": \"CSS selector for password input on this subsequent page\",\n\
+                  \"submit_selector\": \"CSS selector for the final login submit button\",\n\
+                  \"done_selector\": \"CSS selector visible after successful login (same as logged_in_selector if known)\"\n\
+                }}\n\
+              ],\n\
+              \"notes\": \"brief description of the login flow\"\n\
+            }}\n\n\
+            Rules:\n\
+            - Prefer specific selectors: input[name='password'], input[type='password'], button[data-testid='...'], button[type='submit']\n\
+            - NEVER use :contains() — use :has-text('text') if text matching is needed\n\
+            - For single-page login (username + password on same page): set password_selector, leave extra_steps as []\n\
+            - For multi-step login (e.g. X/Twitter, Google): username + \"next\" button on page 1, password + submit on page 2 via extra_steps\n\
+            - Use your knowledge of this site's login flow if the form elements alone are insufficient\n\
+            - Only put wait_url_contains if the URL actually changes between steps; use empty string if same URL",
+            page_title = page_title,
+            page_url = page_url,
+            form_json = form_json,
+            submit_json = submit_json,
+        );
+
+        match crate::core::ai::AiClient::new(&ai_cfg) {
+            Some(client) => {
+                tracing::info!("[LoginSetup] calling AI model={:?} prompt_len={}", ai_cfg.model, prompt.len());
+                match client.call(&prompt, None) {
+                    Ok(raw) => {
+                        tracing::info!("[LoginSetup] AI raw response: {}", raw.chars().take(500).collect::<String>());
+                        let clean = raw.trim()
+                            .trim_start_matches("```json").trim_start_matches("```")
+                            .trim_end_matches("```").trim();
+                        match serde_json::from_str::<serde_json::Value>(clean) {
+                            Ok(v) => {
+                                tracing::info!("[LoginSetup] AI parsed OK: username_selector={:?} password_selector={:?} submit_selector={:?}",
+                                    v.get("username_selector").and_then(|x| x.as_str()),
+                                    v.get("password_selector").and_then(|x| x.as_str()),
+                                    v.get("submit_selector").and_then(|x| x.as_str()),
+                                );
+                                Some(v)
+                            }
+                            Err(e) => {
+                                tracing::warn!("[LoginSetup] AI JSON parse failed: {e} | raw={}", &clean[..clean.len().min(200)]);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[LoginSetup] AI call failed: {e}");
+                        None
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("[LoginSetup] AI not available (provider={:?} api_key={})", ai_cfg.provider, if ai_cfg.api_key.is_some() { "set" } else { "missing" });
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let username_selector = ai_result.as_ref()
+        .and_then(|r| r.get("username_selector")).and_then(|v| v.as_str())
+        .unwrap_or("").to_string();
+    let password_selector = ai_result.as_ref()
+        .and_then(|r| r.get("password_selector")).and_then(|v| v.as_str())
+        .unwrap_or("").to_string();
+    let submit_selector = ai_result.as_ref()
+        .and_then(|r| r.get("submit_selector")).and_then(|v| v.as_str())
+        .unwrap_or("").to_string();
+    let logged_in_selector = ai_result.as_ref()
+        .and_then(|r| r.get("logged_in_selector")).and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty()).map(String::from);
+    let ai_notes = ai_result.as_ref()
+        .and_then(|r| r.get("notes")).and_then(|v| v.as_str())
+        .unwrap_or("").to_string();
+    let is_multi_step = ai_result.as_ref()
+        .and_then(|r| r.get("multi_step")).and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Parse extra_steps from AI response
+    let extra_steps: Vec<crate::core::config::AutoLoginStep> = ai_result.as_ref()
+        .and_then(|r| r.get("extra_steps"))
+        .and_then(|v| v.as_array())
+        .map(|steps| {
+            steps.iter().filter_map(|step| {
+                let wait_url = step.get("wait_url_contains").and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()).map(String::from);
+                let pwd_sel = step.get("password_selector").and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()).map(String::from);
+                let sub_sel = step.get("submit_selector").and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let done_sel = step.get("done_selector").and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()).map(String::from);
+                // Only include step if it has at least a submit_selector
+                sub_sel.map(|sub| crate::core::config::AutoLoginStep {
+                    wait_url_contains: wait_url,
+                    op_item: None,
+                    op_vault: None,
+                    username: None,
+                    password: None,
+                    username_selector: None,
+                    next_selector: None,
+                    wait_password_selector: None,
+                    password_selector: pwd_sel,
+                    submit_selector: Some(sub.to_string()),
+                    done_selector: done_sel,
+                    otp_selector: None,
+                    otp_op_ref: None,
+                    pre_submit_wait_ms: 1000,
+                    submit_ready_selector: None,
+                    challenge_done_js: None,
+                    challenge_timeout_ms: 15000,
+                    optional: false,
+                })
+            }).collect()
+        })
+        .unwrap_or_default();
+
+    tracing::info!("[LoginSetup] multi_step={} extra_steps={}", is_multi_step, extra_steps.len());
+
+    // Step 4: Search 1Password for matching credentials
+    let op_path_cfg = config.session.op_path.clone();
+    let op_path_opt = crate::auto_login::find_op_binary(op_path_cfg.as_deref());
+
+    let (op_candidates, resolved_op_item, resolved_op_vault) = if let Some(ref op_path) = op_path_opt {
+        tracing::info!("[LoginSetup] searching 1Password for url={}", page_url);
+        let op_p = op_path.clone();
+        let search_url = page_url.clone();
+        let candidates = tokio::task::spawn_blocking(move || {
+            crate::auto_login::search_items_by_url(&op_p, &search_url)
+        }).await.ok().and_then(|r| r.ok()).unwrap_or_default();
+
+        tracing::info!("[LoginSetup] 1Password candidates: {:?}", candidates.iter().map(|(id, title, vault)| format!("{title}({id}) vault={vault}")).collect::<Vec<_>>());
+        let resolved = request.op_item.clone()
+            .or_else(|| candidates.first().map(|(id, _, _)| id.clone()));
+        let resolved_vault = candidates.first().map(|(_, _, vault)| vault.clone()).filter(|v| !v.is_empty());
+        (candidates, resolved, resolved_vault)
+    } else {
+        tracing::info!("[LoginSetup] 1Password not available");
+        (vec![], request.op_item.clone(), None)
+    };
+
+    // Step 5: Build and save auto_login.toml
+    let auto_login_config = crate::core::config::AutoLoginConfig {
+        op_item: resolved_op_item.clone(),
+        op_vault: resolved_op_vault.clone(),
+        username: None,
+        password: None,
+        username_selector: username_selector.clone(),
+        password_selector: password_selector.clone(),
+        submit_selector: submit_selector.clone(),
+        logged_in_selector: logged_in_selector.clone(),
+        login_url: Some(page_url.clone()),
+        otp_selector: None,
+        otp_op_ref: None,
+        pre_submit_wait_ms: 0,
+        submit_ready_selector: None,
+        passkey_mode: crate::core::config::PasskeyMode::default(),
+        extra_steps,
+    };
+
+    let toml_str = match toml::to_string_pretty(&auto_login_config) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "success": false,
+            "error": { "code": "WBP2_099", "name": "SERIALIZE_FAILED",
+                "message": format!("Failed to serialize config: {e}") }
+        }))).into_response(),
+    };
+
+    let config_path = crate::core::config::AppConfig::session_auto_login_path(&request.session);
+    tracing::info!("[LoginSetup] saving config to {:?}", config_path);
+    if let Some(parent) = config_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&config_path, &toml_str) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+            "success": false,
+            "error": { "code": "WBP2_099", "name": "WRITE_FAILED",
+                "message": format!("Failed to write config: {e}") }
+        }))).into_response();
+    }
+
+    let candidates_json: Vec<_> = op_candidates.iter()
+        .map(|(id, title, vault)| json!({"id": id, "title": title, "vault": vault}))
+        .collect();
+
+    let extra_steps_json: Vec<_> = auto_login_config.extra_steps.iter().map(|s| json!({
+        "wait_url_contains": s.wait_url_contains,
+        "password_selector": s.password_selector,
+        "submit_selector": s.submit_selector,
+        "done_selector": s.done_selector,
+    })).collect();
+
+    (StatusCode::OK, Json(json!({
+        "success": true,
+        "session": request.session,
+        "config_path": config_path.to_string_lossy(),
+        "config": {
+            "login_url": page_url,
+            "username_selector": username_selector,
+            "password_selector": password_selector,
+            "submit_selector": submit_selector,
+            "logged_in_selector": logged_in_selector,
+            "op_item": resolved_op_item,
+            "multi_step": is_multi_step,
+            "extra_steps": extra_steps_json,
+        },
+        "op_candidates": candidates_json,
+        "op_available": op_path_opt.is_some(),
+        "ai_used": ai_cfg.is_available(),
+        "ai_notes": ai_notes,
+        "model": config.ai.model,
+    }))).into_response()
 }
 
 /// GET /v2/ai/usage - Get AI usage statistics

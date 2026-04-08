@@ -416,6 +416,29 @@ enum Command {
         #[command(subcommand)]
         action: LoginAction,
     },
+
+    /// Ask AI a question about the current page content
+    #[command(after_help = "\
+EXAMPLES:
+  wb ask \"What is the main topic of this page?\" -s mysite
+  wb ask \"List all prices visible on this page\" -s mysite
+  wb ask \"Is there a login button?\" -s mysite --no-file
+  wb ask \"Summarize this article in 3 bullet points\" -s mysite
+
+AI reads the page text and answers your question. Requires AI configured on the server.
+Use 'wb extract' for CSS-selector based data extraction (no AI, faster).")]
+    Ask {
+        /// Question to ask about the current page
+        question: String,
+
+        /// Session name
+        #[arg(short, long, default_value = "default")]
+        session: String,
+
+        /// Maximum page content characters to send to AI (default: 8000)
+        #[arg(long, default_value = "8000")]
+        context_chars: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -454,6 +477,23 @@ enum LoginAction {
         /// JSON file path or - for stdin
         #[arg(default_value = "-")]
         file: String,
+    },
+    /// AI-powered: analyze login form + search 1Password → generate auto_login.toml
+    #[command(after_help = "\
+EXAMPLES:
+  wb login setup mysite                          # Analyze current page in session
+  wb login setup mysite --url https://example.com/login   # Navigate first, then analyze
+  wb login setup mysite --op-item \"Example Login\"         # Force specific 1Password item")]
+    Setup {
+        /// Session name
+        #[arg(default_value = "default")]
+        name: String,
+        /// URL to navigate to before analyzing (optional — uses current page if omitted)
+        #[arg(long)]
+        url: Option<String>,
+        /// Override 1Password item name/ID (skips URL-based search)
+        #[arg(long)]
+        op_item: Option<String>,
     },
 }
 
@@ -772,7 +812,13 @@ fn main() -> ExitCode {
             LoginAction::ConfigSet { name, file } => {
                 commands::login::config_set(&client, &opts, &name, &file)
             }
+            LoginAction::Setup { name, url, op_item } => {
+                commands::login::setup(&client, &opts, &name, url.as_deref(), op_item.as_deref())
+            }
         },
+        Command::Ask { question, session, context_chars } => {
+            commands::ask::run(&client, &opts, &session, &question, context_chars)
+        }
     };
 
     // H7: Collect background update check (non-blocking, 1s timeout)

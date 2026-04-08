@@ -705,6 +705,79 @@ No markdown formatting, no explanation, just the JSON.
             description, schema_hint
         )
     }
+
+    /// List available Gemini models that support generateContent.
+    /// Calls the Gemini Models API and returns a filtered, sorted list.
+    /// Falls back to a static list if the API call fails.
+    pub fn list_models(&self) -> Result<Vec<String>, String> {
+        const FALLBACK: &[&str] = &[
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        ];
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+            self.api_key
+        );
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
+            .build();
+
+        let response = match client.get(&url).call() {
+            Ok(r) => r,
+            Err(_) => {
+                return Ok(FALLBACK.iter().map(|s| s.to_string()).collect());
+            }
+        };
+
+        let body: serde_json::Value = match response.into_json() {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(FALLBACK.iter().map(|s| s.to_string()).collect());
+            }
+        };
+
+        let models: Vec<String> = body
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|m| {
+                        // Only include models that support generateContent
+                        m.get("supportedGenerationMethods")
+                            .and_then(|v| v.as_array())
+                            .map(|methods| {
+                                methods.iter().any(|method| method.as_str() == Some("generateContent"))
+                            })
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|m| {
+                        m.get("name").and_then(|n| n.as_str()).map(|name| {
+                            // Strip "models/" prefix
+                            name.strip_prefix("models/").unwrap_or(name).to_string()
+                        })
+                    })
+                    .filter(|name| {
+                        // Exclude non-chat models (TTS, robotics, image-only, specialized previews)
+                        let skip_prefixes = ["gemma-", "lyria-", "nano-banana", "deep-research"];
+                        let skip_substrings = ["-tts", "-robotics", "-clip", "-computer-use"];
+                        !skip_prefixes.iter().any(|p| name.starts_with(p))
+                            && !skip_substrings.iter().any(|s| name.contains(s))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if models.is_empty() {
+            Ok(FALLBACK.iter().map(|s| s.to_string()).collect())
+        } else {
+            Ok(models)
+        }
+    }
 }
 
 // ============================================================================

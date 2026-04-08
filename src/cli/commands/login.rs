@@ -360,6 +360,188 @@ pub fn config_set(
     }
 }
 
+/// POST /login/setup — AI-powered: analyze login form + 1Password search → auto_login.toml
+pub fn setup(
+    client: &WbClient,
+    opts: &OutputOpts,
+    name: &str,
+    url: Option<&str>,
+    op_item: Option<&str>,
+) -> Result<(), WbError> {
+    let mut body = serde_json::json!({ "session": name });
+    if let Some(u) = url {
+        body["url"] = serde_json::Value::String(u.to_string());
+    }
+    if let Some(item) = op_item {
+        body["op_item"] = serde_json::Value::String(item.to_string());
+    }
+
+    let resp = client.post("/login/setup", &body)?;
+
+    if opts.json {
+        output::print_json(&resp.body);
+        return Ok(());
+    }
+
+    let success = resp
+        .body
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !success {
+        let msg = resp
+            .body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Setup failed");
+        eprintln!("Error: {msg}");
+        return Err(WbError::general(format!(
+            "login setup failed for session '{name}'"
+        )));
+    }
+
+    let config_path = resp
+        .body
+        .get("config_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let ai_used = resp
+        .body
+        .get("ai_used")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let op_available = resp
+        .body
+        .get("op_available")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let ai_notes = resp
+        .body
+        .get("ai_notes")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let cfg = &resp.body["config"];
+    let login_url = cfg.get("login_url").and_then(|v| v.as_str()).unwrap_or("");
+    let username_sel = cfg
+        .get("username_selector")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(not found)");
+    let password_sel = cfg
+        .get("password_selector")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(not found)");
+    let submit_sel = cfg
+        .get("submit_selector")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(not found)");
+    let logged_in_sel = cfg
+        .get("logged_in_selector")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let op_item_resolved = cfg.get("op_item").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mode = match (ai_used, op_available) {
+        (true, true) => "AI + 1Password",
+        (true, false) => "AI only (1Password not found)",
+        (false, true) => "1Password only (AI disabled)",
+        (false, false) => "manual (AI and 1Password both unavailable)",
+    };
+
+    println!("Auto-login config generated [{} ms]", resp.elapsed_ms);
+    println!("  Session: {name}");
+    println!("  Mode:    {mode}");
+    if !login_url.is_empty() {
+        println!("  Page:    {login_url}");
+    }
+    println!();
+    let is_multi_step = cfg
+        .get("multi_step")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    println!("Selectors (step 1 — username page):");
+    println!("  username: {username_sel}");
+    if !password_sel.is_empty() {
+        println!("  password: {password_sel}");
+    }
+    println!("  submit:   {submit_sel}");
+    if !logged_in_sel.is_empty() {
+        println!("  logged-in check: {logged_in_sel}");
+    } else {
+        println!("  logged-in check: (not detected — add manually for reliability)");
+    }
+
+    // Show extra_steps for multi-step login
+    if let Some(steps) = cfg.get("extra_steps").and_then(|v| v.as_array()) {
+        if !steps.is_empty() {
+            for (i, step) in steps.iter().enumerate() {
+                let wait = step.get("wait_url_contains").and_then(|v| v.as_str()).unwrap_or("");
+                let pwd = step.get("password_selector").and_then(|v| v.as_str()).unwrap_or("");
+                let sub = step.get("submit_selector").and_then(|v| v.as_str()).unwrap_or("?");
+                let done = step.get("done_selector").and_then(|v| v.as_str()).unwrap_or("");
+                println!();
+                println!("Selectors (step {} — password page):", i + 2);
+                if !wait.is_empty() {
+                    println!("  wait for URL containing: {wait}");
+                }
+                if !pwd.is_empty() {
+                    println!("  password: {pwd}");
+                }
+                println!("  submit:   {sub}");
+                if !done.is_empty() {
+                    println!("  done check: {done}");
+                }
+            }
+        } else if is_multi_step {
+            println!();
+            println!("  (multi-step detected but extra_steps could not be generated — edit TOML manually)");
+        }
+    }
+
+    if !ai_notes.is_empty() {
+        println!();
+        println!("AI notes: {ai_notes}");
+    }
+
+    // Show 1Password candidates
+    if let Some(candidates) = resp.body.get("op_candidates").and_then(|v| v.as_array()) {
+        if !candidates.is_empty() {
+            println!();
+            println!("1Password candidates:");
+            for c in candidates.iter().take(5) {
+                let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let title = c.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                let marker = if id == op_item_resolved || title == op_item_resolved {
+                    " ← selected"
+                } else {
+                    ""
+                };
+                println!("  {title} ({id}){marker}");
+            }
+        }
+    }
+
+    if !op_item_resolved.is_empty() {
+        println!();
+        println!("1Password item: {op_item_resolved}");
+    }
+
+    println!();
+    println!("Config saved: {config_path}");
+    println!();
+    println!("Next steps:");
+    println!("  wb login run {name}        # Test auto-login now");
+    println!("  wb login status {name}     # Check login status");
+    println!(
+        "  wb login config-get {name} # Review the full config"
+    );
+
+    Ok(())
+}
+
 fn urlencoding(s: &str) -> String {
     s.chars()
         .map(|c| {
