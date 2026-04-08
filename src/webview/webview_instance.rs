@@ -4214,9 +4214,11 @@ impl WebViewInstance {
         let mut all_nodes = main_tree.nodes;
         let mut total_nodes = all_nodes.len();
 
-        // Step 2 (Phase 2, Task 2.2): Collect child frames and merge their AX trees
+        // Step 2 (Phase 2, Task 2.2): Collect child frames and merge their AX trees.
+        // Limit to 8 frames max to prevent excessive CDP round-trips on pages with many iframes.
+        const MAX_IFRAME_AX_FRAMES: usize = 8;
         let child_frame_ids = self.get_child_frame_ids();
-        for frame_id in &child_frame_ids {
+        for frame_id in child_frame_ids.iter().take(MAX_IFRAME_AX_FRAMES) {
             match self.get_ax_tree_for_frame(frame_id) {
                 Ok(Some(frame_tree)) => {
                     total_nodes += frame_tree.nodes.len();
